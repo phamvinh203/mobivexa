@@ -2,6 +2,7 @@ import prisma from '../config/db'
 import { Prisma } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { generateUniqueSlug, slugTaken } from '../utils/slug'
+import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import type {
   CreateProductBody,
   UpdateProductBody,
@@ -68,6 +69,7 @@ const PRODUCT_DETAIL_INCLUDE = {
   brand: true,
   variants: { orderBy: { salePrice: 'asc' } },
   productTags: { include: { tag: true } },
+  images: { orderBy: { sortOrder: 'asc' } },
 } satisfies Prisma.ProductInclude
 
 // ─── Public ─────────────────────────────────────────────────────────────────
@@ -103,6 +105,7 @@ export async function listProducts(query: ProductListQuery) {
         category: { select: { id: true, name: true, slug: true } },
         brand: { select: { id: true, name: true, slug: true } },
         variants: { where: { isActive: true }, orderBy: { salePrice: 'asc' } },
+        images: { where: { isCover: true }, take: 1 },
       },
     }),
     prisma.product.count({ where }),
@@ -144,16 +147,16 @@ export function getFeaturedProducts(limit = 8) {
     include: {
       brand: { select: { id: true, name: true, slug: true } },
       variants: { where: { isActive: true }, orderBy: { salePrice: 'asc' } },
+      images: { where: { isCover: true }, take: 1 },
     },
   })
 }
 
 // ─── Admin: Product ───────────────────────────────────────────────────────────
 
-export async function createProduct(body: CreateProductBody) {
+export async function createProduct(body: CreateProductBody, files?: Express.Multer.File[]) {
   const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds = [], variants } = body
 
-  // Các kiểm tra độc lập → chạy song song để gộp round-trip
   await Promise.all([
     assertCategoryExists(categoryId),
     assertBrandExists(brandId),
@@ -163,6 +166,10 @@ export async function createProduct(body: CreateProductBody) {
 
   const finalSlug = await generateUniqueSlug(slug || name, slugTaken(findBySlug))
 
+  const uploadedImages = files?.length
+    ? await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
+    : []
+
   return prisma.product.create({
     data: {
       name: name.trim(),
@@ -170,20 +177,22 @@ export async function createProduct(body: CreateProductBody) {
       description,
       categoryId,
       brandId,
-      isActive: isActive ?? true,
-      isFeatured: isFeatured ?? false,
+      isActive: isActive != null ? String(isActive) !== 'false' : true,
+      isFeatured: isFeatured != null ? String(isFeatured) !== 'false' : false,
       variants: { create: variants.map(variantCreateData) },
       productTags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
+      images: uploadedImages.length
+        ? { create: uploadedImages.map((img, i) => ({ url: img.url, publicId: img.publicId, isCover: i === 0, sortOrder: i })) }
+        : undefined,
     },
     include: PRODUCT_DETAIL_INCLUDE,
   })
 }
 
-export async function updateProduct(id: string, body: UpdateProductBody) {
+export async function updateProduct(id: string, body: UpdateProductBody, files?: Express.Multer.File[]) {
   await findProductOrThrow(id)
   const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds } = body
 
-  // Chỉ kiểm tra field nào được gửi lên, và chạy song song vì độc lập nhau
   const checks: Promise<void>[] = []
   if (categoryId !== undefined) checks.push(assertCategoryExists(categoryId))
   if (brandId !== undefined) checks.push(assertBrandExists(brandId))
@@ -196,10 +205,18 @@ export async function updateProduct(id: string, body: UpdateProductBody) {
   if (description !== undefined) data.description = description
   if (categoryId !== undefined) data.category = { connect: { id: categoryId } }
   if (brandId !== undefined) data.brand = { connect: { id: brandId } }
-  if (isActive !== undefined) data.isActive = isActive
-  if (isFeatured !== undefined) data.isFeatured = isFeatured
+  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
+  if (isFeatured !== undefined) data.isFeatured = String(isFeatured) !== 'false'
 
-  // Cập nhật tag: xóa hết tag cũ rồi gắn tag mới (trong transaction nếu có thay đổi tag)
+  if (files?.length) {
+    const uploadedImages = await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
+    // Đếm ảnh hiện tại để tính sortOrder tiếp theo
+    const existingCount = await prisma.productImage.count({ where: { productId: id } })
+    data.images = {
+      create: uploadedImages.map((img, i) => ({ url: img.url, publicId: img.publicId, isCover: false, sortOrder: existingCount + i })),
+    }
+  }
+
   if (tagIds !== undefined) {
     return prisma.$transaction(async (tx) => {
       await tx.productTag.deleteMany({ where: { productId: id } })
@@ -214,9 +231,55 @@ export async function updateProduct(id: string, body: UpdateProductBody) {
 }
 
 export async function deleteProduct(id: string) {
-  await findProductOrThrow(id)
-  // variants & productTags có onDelete: Cascade nên xóa product là đủ
+  const images = await prisma.productImage.findMany({ where: { productId: id }, select: { publicId: true } })
   await prisma.product.delete({ where: { id } })
+  images.forEach((img) => void destroyImage(img.publicId))
+}
+
+// ─── Admin: Product Images ────────────────────────────────────────────────────
+
+export async function addProductImages(productId: string, files: Express.Multer.File[]) {
+  await findProductOrThrow(productId)
+
+  const existingCount = await prisma.productImage.count({ where: { productId } })
+  const uploaded = await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
+
+  return prisma.productImage.createMany({
+    data: uploaded.map((img, i) => ({
+      productId,
+      url: img.url,
+      publicId: img.publicId,
+      isCover: existingCount === 0 && i === 0, // ảnh đầu tiên của sản phẩm tự thành cover
+      sortOrder: existingCount + i,
+    })),
+  })
+}
+
+export async function deleteProductImage(productId: string, imageId: string) {
+  const image = await prisma.productImage.findUnique({ where: { id: imageId } })
+  if (!image || image.productId !== productId) throw new AppError(404, 'Ảnh không tồn tại')
+
+  await prisma.productImage.delete({ where: { id: imageId } })
+  void destroyImage(image.publicId)
+
+  // Nếu xóa ảnh cover, tự động set ảnh đầu tiên còn lại làm cover
+  if (image.isCover) {
+    const next = await prisma.productImage.findFirst({ where: { productId }, orderBy: { sortOrder: 'asc' } })
+    if (next) await prisma.productImage.update({ where: { id: next.id }, data: { isCover: true } })
+  }
+}
+
+export async function setProductImageCover(productId: string, imageId: string) {
+  const image = await prisma.productImage.findUnique({ where: { id: imageId } })
+  if (!image || image.productId !== productId) throw new AppError(404, 'Ảnh không tồn tại')
+
+  // Bỏ cover tất cả ảnh cũ rồi set ảnh mới
+  await prisma.$transaction([
+    prisma.productImage.updateMany({ where: { productId }, data: { isCover: false } }),
+    prisma.productImage.update({ where: { id: imageId }, data: { isCover: true } }),
+  ])
+
+  return prisma.productImage.findMany({ where: { productId }, orderBy: { sortOrder: 'asc' } })
 }
 
 export async function toggleProductStatus(id: string) {

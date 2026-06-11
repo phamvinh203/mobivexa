@@ -27,12 +27,12 @@ export const refreshToken = asyncHandler(async (req, res) => {
 export const forgotPassword = asyncHandler(async (req, res) => {
   await forgotPasswordService(req.body.email)
   // Luôn trả về 200 để không tiết lộ email có tồn tại hay không
-  sendSuccess(res, { message: 'Nếu email tồn tại, link đặt lại mật khẩu đã được gửi' })
+  sendSuccess(res, { message: 'Nếu email tồn tại, mã OTP đã được gửi' })
 })
 
 export const resetPassword = asyncHandler(async (req, res) => {
-  const { token, newPassword } = req.body
-  await resetPasswordService(token, newPassword)
+  const { otp, newPassword } = req.body
+  await resetPasswordService(otp, newPassword)
   sendSuccess(res, { message: 'Đặt lại mật khẩu thành công' })
 })
 

@@ -10,17 +10,16 @@ const transporter = nodemailer.createTransport({
   },
 })
 
-export async function sendResetPasswordEmail(to: string, token: string): Promise<void> {
-  const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`
-
+export async function sendResetPasswordEmail(to: string, otp: string): Promise<void> {
   await transporter.sendMail({
     from: process.env.SMTP_FROM,
     to,
-    subject: 'Đặt lại mật khẩu - Mobivexa',
+    subject: 'Mã OTP đặt lại mật khẩu - Mobivexa',
     html: `
       <p>Bạn đã yêu cầu đặt lại mật khẩu.</p>
-      <p>Nhấn vào link bên dưới để đặt lại mật khẩu (hết hạn sau 15 phút):</p>
-      <a href="${resetUrl}">${resetUrl}</a>
+      <p>Mã OTP của bạn là:</p>
+      <h2 style="letter-spacing:6px;font-size:36px;color:#333">${otp}</h2>
+      <p>Mã có hiệu lực trong <strong>15 phút</strong>. Không chia sẻ mã này với ai.</p>
       <p>Nếu bạn không yêu cầu, hãy bỏ qua email này.</p>
     `,
   })

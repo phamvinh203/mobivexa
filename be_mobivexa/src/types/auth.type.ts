@@ -19,7 +19,7 @@ export interface ForgotPasswordBody {
 }
 
 export interface ResetPasswordBody {
-  token: string
+  otp: string
   newPassword: string
 }
 

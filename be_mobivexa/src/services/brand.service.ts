@@ -51,7 +51,7 @@ export async function createBrand(body: CreateBrandBody, file?: Express.Multer.F
       name: trimmedName,
       slug: finalSlug,
       description,
-      isActive: isActive ?? true,
+      isActive: isActive != null ? String(isActive) !== 'false' : true,
       logoUrl: logo?.url,
       logoPublicId: logo?.publicId,
     },
@@ -70,7 +70,7 @@ export async function updateBrand(id: string, body: UpdateBrandBody, file?: Expr
   }
   if (slug !== undefined) data.slug = await generateUniqueSlug(slug, slugTaken(findBySlug, id))
   if (description !== undefined) data.description = description
-  if (isActive !== undefined) data.isActive = isActive
+  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
 
   if (file) {
     const logo = await uploadEntityImage(file.buffer, 'brands')

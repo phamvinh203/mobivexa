@@ -46,10 +46,10 @@ export function validateForgotPassword(req: Request, res: Response, next: NextFu
 }
 
 export function validateResetPassword(req: Request, res: Response, next: NextFunction): void {
-  const { token, newPassword } = req.body
+  const { otp, newPassword } = req.body
 
-  if (!token || String(token).trim().length === 0) {
-    sendError(res, 400, 'Token không hợp lệ')
+  if (!otp || !/^\d{6}$/.test(String(otp))) {
+    sendError(res, 400, 'OTP phải là 6 chữ số')
     return
   }
   if (!newPassword || String(newPassword).length < 8) {

@@ -13,6 +13,9 @@ import {
   addVariant,
   updateVariant,
   deleteVariant,
+  addProductImages,
+  deleteProductImage,
+  setProductImageCover,
 } from '../services/product.service'
 
 // ─── Public ─────────────────────────────────────────────────────────────────
@@ -35,12 +38,12 @@ export const detail = asyncHandler(async (req: Request, res: Response) => {
 // ─── Admin: Product ───────────────────────────────────────────────────────────
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
-  const product = await createProduct(req.body)
+  const product = await createProduct(req.body, req.files as Express.Multer.File[])
   sendSuccess(res, { message: 'Tạo sản phẩm thành công', product }, 201)
 })
 
 export const update = asyncHandler(async (req: Request, res: Response) => {
-  const product = await updateProduct(req.params.id as string, req.body)
+  const product = await updateProduct(req.params.id as string, req.body, req.files as Express.Multer.File[])
   sendSuccess(res, { message: 'Cập nhật sản phẩm thành công', product })
 })
 
@@ -57,6 +60,28 @@ export const toggleStatus = asyncHandler(async (req: Request, res: Response) => 
 export const toggleFeatured = asyncHandler(async (req: Request, res: Response) => {
   const product = await toggleProductFeatured(req.params.id as string)
   sendSuccess(res, { message: 'Cập nhật nổi bật thành công', product })
+})
+
+// ─── Admin: Product Images ────────────────────────────────────────────────────
+
+export const uploadImages = asyncHandler(async (req: Request, res: Response) => {
+  const files = req.files as Express.Multer.File[]
+  if (!files?.length) {
+    res.status(400).json({ message: 'Vui lòng chọn ít nhất 1 ảnh' })
+    return
+  }
+  const result = await addProductImages(req.params.id as string, files)
+  sendSuccess(res, { message: `Đã thêm ${result.count} ảnh`, count: result.count }, 201)
+})
+
+export const removeImage = asyncHandler(async (req: Request, res: Response) => {
+  await deleteProductImage(req.params.id as string, req.params.imageId as string)
+  sendSuccess(res, { message: 'Đã xóa ảnh' })
+})
+
+export const setCover = asyncHandler(async (req: Request, res: Response) => {
+  const images = await setProductImageCover(req.params.id as string, req.params.imageId as string)
+  sendSuccess(res, { message: 'Đã đặt làm ảnh bìa', images })
 })
 
 // ─── Admin: Variant ─────────────────────────────────────────────────────────

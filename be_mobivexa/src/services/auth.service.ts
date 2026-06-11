@@ -87,20 +87,21 @@ export async function forgotPasswordService(email: string) {
   // Không tiết lộ user tồn tại hay không
   if (!user) return
 
-  const rawToken = crypto.randomBytes(32).toString('hex')
-  const hashedToken = hashResetToken(rawToken)
+  // OTP 6 chữ số — hash trước khi lưu DB, chỉ gửi bản gốc qua email
+  const otp = String(Math.floor(100000 + Math.random() * 900000))
+  const hashedOtp = hashResetToken(otp)
   const expires = new Date(Date.now() + RESET_TOKEN_EXPIRES_MS)
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { resetPasswordToken: hashedToken, resetPasswordExpires: expires },
+    data: { resetPasswordToken: hashedOtp, resetPasswordExpires: expires },
   })
 
-  await sendResetPasswordEmail(email, rawToken)
+  await sendResetPasswordEmail(email, otp)
 }
 
-export async function resetPasswordService(token: string, newPassword: string) {
-  const hashedToken = hashResetToken(token)
+export async function resetPasswordService(otp: string, newPassword: string) {
+  const hashedToken = hashResetToken(otp)
 
   const user = await prisma.user.findFirst({
     where: {

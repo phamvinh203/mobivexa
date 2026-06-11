@@ -57,8 +57,8 @@ export async function createCategory(body: CreateCategoryBody, file?: Express.Mu
       slug: finalSlug,
       description,
       parentId: parentId || null,
-      sortOrder: sortOrder ?? 0,
-      isActive: isActive ?? true,
+      sortOrder: sortOrder != null ? Number(sortOrder) : 0,
+      isActive: isActive != null ? String(isActive) !== 'false' : true,
       imageUrl: image?.url,
       imagePublicId: image?.publicId,
     },
@@ -76,8 +76,8 @@ export async function updateCategory(id: string, body: UpdateCategoryBody, file?
   if (slug !== undefined) data.slug = await generateUniqueSlug(slug, slugTaken(findBySlug, id))
   if (description !== undefined) data.description = description
   if (parentId !== undefined) data.parentId = parentId || null
-  if (sortOrder !== undefined) data.sortOrder = sortOrder
-  if (isActive !== undefined) data.isActive = isActive
+  if (sortOrder !== undefined) data.sortOrder = Number(sortOrder)
+  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
 
   if (file) {
     const image = await uploadEntityImage(file.buffer, 'categories')

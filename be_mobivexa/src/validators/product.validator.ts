@@ -15,6 +15,16 @@ function checkVariant(v: unknown): string | null {
 }
 
 export function validateCreateProduct(req: Request, res: Response, next: NextFunction): void {
+  // multipart/form-data gửi variants dưới dạng JSON string
+  if (typeof req.body.variants === 'string') {
+    try {
+      req.body.variants = JSON.parse(req.body.variants)
+    } catch {
+      sendError(res, 400, 'variants phải là JSON hợp lệ')
+      return
+    }
+  }
+
   const { categoryId, brandId, variants } = req.body
 
   if (!checkName(res, req.body.name, 'Tên sản phẩm')) return
