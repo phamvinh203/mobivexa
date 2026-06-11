@@ -1,12 +1,11 @@
 import crypto from 'crypto'
-import bcrypt from 'bcrypt'
 import prisma from '../config/db'
 import { AppError } from '../helpers/app_error'
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/token_manager'
+import { hashPassword, verifyPassword } from '../utils/password'
 import { sendResetPasswordEmail } from '../utils/mailer'
 import type { RegisterBody, LoginBody, JwtPayload } from '../types/auth.type'
 
-const BCRYPT_ROUNDS = 12
 const RESET_TOKEN_EXPIRES_MS = 15 * 60 * 1000 // 15 phút
 const REFRESH_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000 // 7 ngày
 
@@ -24,7 +23,7 @@ export async function registerService(body: RegisterBody) {
   const exists = await prisma.user.findUnique({ where: { email } })
   if (exists) throw new AppError(409, 'Email đã được sử dụng')
 
-  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS)
+  const passwordHash = await hashPassword(password)
 
   return prisma.user.create({
     data: { email, fullName, passwordHash, phone },
@@ -39,7 +38,7 @@ export async function loginService(body: LoginBody) {
   if (!user || !user.passwordHash) throw new AppError(401, 'Email hoặc mật khẩu không đúng')
   if (!user.isActive) throw new AppError(403, 'Tài khoản đã bị khóa')
 
-  const valid = await bcrypt.compare(password, user.passwordHash)
+  const valid = await verifyPassword(password, user.passwordHash)
   if (!valid) throw new AppError(401, 'Email hoặc mật khẩu không đúng')
 
   const payload: JwtPayload = { userId: user.id, email: user.email, role: user.role }
@@ -112,7 +111,7 @@ export async function resetPasswordService(token: string, newPassword: string) {
 
   if (!user) throw new AppError(400, 'Token không hợp lệ hoặc đã hết hạn')
 
-  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS)
+  const passwordHash = await hashPassword(newPassword)
 
   // Đổi mật khẩu + revoke toàn bộ refresh token cũ trong 1 transaction
   await prisma.$transaction([
