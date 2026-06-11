@@ -1,9 +1,27 @@
 import { Express } from 'express'
 import { authRoutes } from './auth.route'
 import { userRoutes } from './user.route'
+import { categoryRoutes, categoryAdminRoutes } from './category.route'
+import { brandRoutes, brandAdminRoutes } from './brand.route'
+import { productRoutes, productAdminRoutes } from './product.route'
+import { tagRoutes, tagAdminRoutes } from './tag.route'
+import { adminUserRoutes } from './admin.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
-  app.use(`${v}/auth`,  authRoutes)
+
+  // Public + auth
+  app.use(`${v}/auth`, authRoutes)
   app.use(`${v}/users`, userRoutes)
+  app.use(`${v}/categories`, categoryRoutes)
+  app.use(`${v}/brands`, brandRoutes)
+  app.use(`${v}/products`, productRoutes)
+  app.use(`${v}/tags`, tagRoutes)
+
+  // Admin
+  app.use(`${v}/admin/users`, adminUserRoutes)
+  app.use(`${v}/admin/categories`, categoryAdminRoutes)
+  app.use(`${v}/admin/brands`, brandAdminRoutes)
+  app.use(`${v}/admin/products`, productAdminRoutes)
+  app.use(`${v}/admin/tags`, tagAdminRoutes)
 }

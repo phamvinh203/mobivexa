@@ -7,7 +7,7 @@ import type { UpdateProfileBody, ChangePasswordBody, AddressBody, UpdateAddressB
 
 // ─── Selectors ────────────────────────────────────────────────────────────────
 
-const USER_PUBLIC_SELECT = {
+export const USER_PUBLIC_SELECT = {
   id: true,
   email: true,
   phone: true,

@@ -1,0 +1,274 @@
+import prisma from '../config/db'
+import { Prisma } from '../generated/prisma/client'
+import { AppError } from '../helpers/app_error'
+import { generateUniqueSlug, slugTaken } from '../utils/slug'
+import type {
+  CreateProductBody,
+  UpdateProductBody,
+  VariantInput,
+  UpdateVariantBody,
+  ProductListQuery,
+} from '../types/product.type'
+
+const DEFAULT_LIMIT = 12
+const MAX_LIMIT = 50
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const findBySlug = (slug: string) => prisma.product.findUnique({ where: { slug }, select: { id: true } })
+
+async function findProductOrThrow(id: string) {
+  const product = await prisma.product.findUnique({ where: { id } })
+  if (!product) throw new AppError(404, 'Sản phẩm không tồn tại')
+  return product
+}
+
+async function assertCategoryExists(categoryId: string) {
+  const found = await prisma.category.findUnique({ where: { id: categoryId }, select: { id: true } })
+  if (!found) throw new AppError(400, 'Danh mục không tồn tại')
+}
+
+async function assertBrandExists(brandId: string) {
+  const found = await prisma.brand.findUnique({ where: { id: brandId }, select: { id: true } })
+  if (!found) throw new AppError(400, 'Thương hiệu không tồn tại')
+}
+
+async function assertTagsExist(tagIds: string[]) {
+  if (tagIds.length === 0) return
+  const count = await prisma.tag.count({ where: { id: { in: tagIds } } })
+  if (count !== new Set(tagIds).size) throw new AppError(400, 'Có tag không tồn tại')
+}
+
+// SKU phải unique toàn hệ thống — chặn trùng trong payload lẫn trong DB
+async function assertSkusAvailable(skus: string[], excludeVariantId?: string) {
+  const unique = new Set(skus)
+  if (unique.size !== skus.length) throw new AppError(409, 'SKU bị trùng trong danh sách phiên bản')
+
+  const existing = await prisma.productVariant.findMany({
+    where: { sku: { in: skus }, id: excludeVariantId ? { not: excludeVariantId } : undefined },
+    select: { sku: true },
+  })
+  if (existing.length > 0) throw new AppError(409, `SKU đã tồn tại: ${existing.map((v) => v.sku).join(', ')}`)
+}
+
+function variantCreateData(v: VariantInput) {
+  return {
+    sku: v.sku.trim(),
+    color: v.color,
+    storage: v.storage,
+    ram: v.ram,
+    originalPrice: v.originalPrice,
+    salePrice: v.salePrice,
+    isActive: v.isActive ?? true,
+  }
+}
+
+const PRODUCT_DETAIL_INCLUDE = {
+  category: true,
+  brand: true,
+  variants: { orderBy: { salePrice: 'asc' } },
+  productTags: { include: { tag: true } },
+} satisfies Prisma.ProductInclude
+
+// ─── Public ─────────────────────────────────────────────────────────────────
+
+export async function listProducts(query: ProductListQuery) {
+  const page = Math.max(1, Number(query.page) || 1)
+  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
+
+  const where: Prisma.ProductWhereInput = { isActive: true }
+
+  if (query.category) where.category = { slug: query.category }
+  if (query.brand) where.brand = { slug: query.brand }
+  if (query.tag) where.productTags = { some: { tag: { slug: query.tag } } }
+  if (query.search) where.name = { contains: query.search, mode: 'insensitive' }
+
+  // Lọc theo khoảng giá: sản phẩm có ít nhất 1 variant nằm trong khoảng
+  const priceFilter: Prisma.DecimalFilter = {}
+  if (query.minPrice) priceFilter.gte = Number(query.minPrice)
+  if (query.maxPrice) priceFilter.lte = Number(query.maxPrice)
+  if (priceFilter.gte !== undefined || priceFilter.lte !== undefined) {
+    where.variants = { some: { salePrice: priceFilter } }
+  }
+
+  const orderBy = resolveSort(query.sort)
+
+  const [products, total] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      orderBy,
+      skip: (page - 1) * limit,
+      take: limit,
+      include: {
+        category: { select: { id: true, name: true, slug: true } },
+        brand: { select: { id: true, name: true, slug: true } },
+        variants: { where: { isActive: true }, orderBy: { salePrice: 'asc' } },
+      },
+    }),
+    prisma.product.count({ where }),
+  ])
+
+  return {
+    products,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  }
+}
+
+function resolveSort(sort?: string): Prisma.ProductOrderByWithRelationInput {
+  switch (sort) {
+    case 'oldest':
+      return { createdAt: 'asc' }
+    case 'name_asc':
+      return { name: 'asc' }
+    case 'name_desc':
+      return { name: 'desc' }
+    default:
+      return { createdAt: 'desc' } // newest
+  }
+}
+
+export async function getProductBySlug(slug: string) {
+  const product = await prisma.product.findUnique({
+    where: { slug },
+    include: PRODUCT_DETAIL_INCLUDE,
+  })
+  if (!product || !product.isActive) throw new AppError(404, 'Sản phẩm không tồn tại')
+  return product
+}
+
+export function getFeaturedProducts(limit = 8) {
+  return prisma.product.findMany({
+    where: { isActive: true, isFeatured: true },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    include: {
+      brand: { select: { id: true, name: true, slug: true } },
+      variants: { where: { isActive: true }, orderBy: { salePrice: 'asc' } },
+    },
+  })
+}
+
+// ─── Admin: Product ───────────────────────────────────────────────────────────
+
+export async function createProduct(body: CreateProductBody) {
+  const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds = [], variants } = body
+
+  // Các kiểm tra độc lập → chạy song song để gộp round-trip
+  await Promise.all([
+    assertCategoryExists(categoryId),
+    assertBrandExists(brandId),
+    assertTagsExist(tagIds),
+    assertSkusAvailable(variants.map((v) => v.sku.trim())),
+  ])
+
+  const finalSlug = await generateUniqueSlug(slug || name, slugTaken(findBySlug))
+
+  return prisma.product.create({
+    data: {
+      name: name.trim(),
+      slug: finalSlug,
+      description,
+      categoryId,
+      brandId,
+      isActive: isActive ?? true,
+      isFeatured: isFeatured ?? false,
+      variants: { create: variants.map(variantCreateData) },
+      productTags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
+    },
+    include: PRODUCT_DETAIL_INCLUDE,
+  })
+}
+
+export async function updateProduct(id: string, body: UpdateProductBody) {
+  await findProductOrThrow(id)
+  const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds } = body
+
+  // Chỉ kiểm tra field nào được gửi lên, và chạy song song vì độc lập nhau
+  const checks: Promise<void>[] = []
+  if (categoryId !== undefined) checks.push(assertCategoryExists(categoryId))
+  if (brandId !== undefined) checks.push(assertBrandExists(brandId))
+  if (tagIds !== undefined) checks.push(assertTagsExist(tagIds))
+  await Promise.all(checks)
+
+  const data: Prisma.ProductUpdateInput = {}
+  if (name !== undefined) data.name = name.trim()
+  if (slug !== undefined) data.slug = await generateUniqueSlug(slug, slugTaken(findBySlug, id))
+  if (description !== undefined) data.description = description
+  if (categoryId !== undefined) data.category = { connect: { id: categoryId } }
+  if (brandId !== undefined) data.brand = { connect: { id: brandId } }
+  if (isActive !== undefined) data.isActive = isActive
+  if (isFeatured !== undefined) data.isFeatured = isFeatured
+
+  // Cập nhật tag: xóa hết tag cũ rồi gắn tag mới (trong transaction nếu có thay đổi tag)
+  if (tagIds !== undefined) {
+    return prisma.$transaction(async (tx) => {
+      await tx.productTag.deleteMany({ where: { productId: id } })
+      if (tagIds.length) {
+        await tx.productTag.createMany({ data: tagIds.map((tagId) => ({ productId: id, tagId })) })
+      }
+      return tx.product.update({ where: { id }, data, include: PRODUCT_DETAIL_INCLUDE })
+    })
+  }
+
+  return prisma.product.update({ where: { id }, data, include: PRODUCT_DETAIL_INCLUDE })
+}
+
+export async function deleteProduct(id: string) {
+  await findProductOrThrow(id)
+  // variants & productTags có onDelete: Cascade nên xóa product là đủ
+  await prisma.product.delete({ where: { id } })
+}
+
+export async function toggleProductStatus(id: string) {
+  const product = await findProductOrThrow(id)
+  return prisma.product.update({ where: { id }, data: { isActive: !product.isActive } })
+}
+
+export async function toggleProductFeatured(id: string) {
+  const product = await findProductOrThrow(id)
+  return prisma.product.update({ where: { id }, data: { isFeatured: !product.isFeatured } })
+}
+
+// ─── Admin: Variant ─────────────────────────────────────────────────────────
+
+async function findOwnedVariant(productId: string, variantId: string) {
+  const variant = await prisma.productVariant.findUnique({ where: { id: variantId } })
+  if (!variant || variant.productId !== productId) throw new AppError(404, 'Phiên bản không tồn tại')
+  return variant
+}
+
+export async function addVariant(productId: string, body: VariantInput) {
+  await findProductOrThrow(productId)
+  await assertSkusAvailable([body.sku.trim()])
+
+  return prisma.productVariant.create({
+    data: { ...variantCreateData(body), productId },
+  })
+}
+
+export async function updateVariant(productId: string, variantId: string, body: UpdateVariantBody) {
+  await findOwnedVariant(productId, variantId)
+
+  const data: Prisma.ProductVariantUpdateInput = {}
+  if (body.sku !== undefined) {
+    await assertSkusAvailable([body.sku.trim()], variantId)
+    data.sku = body.sku.trim()
+  }
+  if (body.color !== undefined) data.color = body.color
+  if (body.storage !== undefined) data.storage = body.storage
+  if (body.ram !== undefined) data.ram = body.ram
+  if (body.originalPrice !== undefined) data.originalPrice = body.originalPrice
+  if (body.salePrice !== undefined) data.salePrice = body.salePrice
+  if (body.isActive !== undefined) data.isActive = body.isActive
+
+  return prisma.productVariant.update({ where: { id: variantId }, data })
+}
+
+export async function deleteVariant(productId: string, variantId: string) {
+  await findOwnedVariant(productId, variantId)
+
+  const count = await prisma.productVariant.count({ where: { productId } })
+  if (count <= 1) throw new AppError(409, 'Sản phẩm phải có ít nhất một phiên bản')
+
+  await prisma.productVariant.delete({ where: { id: variantId } })
+}
