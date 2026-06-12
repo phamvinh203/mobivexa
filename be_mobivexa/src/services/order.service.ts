@@ -82,10 +82,11 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   })
 
   const variantMap = new Map(variants.map((v) => [v.id, v]))
-  for (const { variantId } of resolvedItems) {
+  for (const { variantId, quantity } of resolvedItems) {
     const v = variantMap.get(variantId)
     if (!v)          throw new AppError(400, `Sản phẩm không tồn tại: ${variantId}`)
     if (!v.isActive) throw new AppError(400, `Sản phẩm đã ngừng bán: ${v.sku}`)
+    if (v.stock < quantity) throw new AppError(400, `Sản phẩm "${v.sku}" không đủ hàng (còn ${v.stock})`)
   }
 
   const orderItems = resolvedItems.map(({ variantId, quantity }) => {
@@ -131,6 +132,16 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
       include: ORDER_INCLUDE,
     })
 
+    // Deduct stock for each variant
+    await Promise.all(
+      resolvedItems.map(({ variantId, quantity }) =>
+        tx.productVariant.update({
+          where: { id: variantId },
+          data:  { stock: { decrement: quantity } },
+        })
+      )
+    )
+
     if (!itemsInput || itemsInput.length === 0) {
       await tx.cartItem.deleteMany({ where: { cart: { userId } } })
     }
@@ -166,10 +177,24 @@ export async function cancelMyOrder(userId: string, orderId: string, reason?: st
     throw new AppError(400, 'Không thể hủy đơn hàng ở trạng thái hiện tại')
   }
 
-  return prisma.order.update({
-    where: { id: orderId },
-    data:  { status: OrderStatus.CANCELLED, cancelReason: reason ?? 'Khách hàng hủy đơn' },
-    include: ORDER_INCLUDE,
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data:  { status: OrderStatus.CANCELLED, cancelReason: reason ?? 'Khách hàng hủy đơn' },
+      include: ORDER_INCLUDE,
+    })
+
+    // Restore stock for each item
+    await Promise.all(
+      order.items.map((item) =>
+        tx.productVariant.update({
+          where: { id: item.variantId! },
+          data:  { stock: { increment: item.quantity } },
+        })
+      )
+    )
+
+    return updated
   })
 }
 
@@ -205,21 +230,39 @@ export function getOrder(orderId: string) {
 }
 
 export async function updateOrderStatus(orderId: string, body: UpdateOrderStatusBody) {
-  // Lean select — chỉ cần status để kiểm tra transition, không cần load items
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true, status: true } })
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, status: true, items: { select: { variantId: true, quantity: true } } },
+  })
   if (!order) throw new AppError(404, 'Đơn hàng không tồn tại')
 
   if (!VALID_TRANSITIONS[order.status].includes(body.status)) {
     throw new AppError(400, `Không thể chuyển từ "${order.status}" sang "${body.status}"`)
   }
 
-  return prisma.order.update({
-    where: { id: orderId },
-    data:  {
-      status:       body.status,
-      cancelReason: body.status === OrderStatus.CANCELLED ? body.cancelReason : undefined,
-    },
-    include: ORDER_INCLUDE,
+  const data: Prisma.OrderUpdateInput = {
+    status:       body.status,
+    cancelReason: body.status === OrderStatus.CANCELLED ? (body.cancelReason ?? undefined) : undefined,
+  }
+
+  if (body.status !== OrderStatus.CANCELLED) {
+    return prisma.order.update({ where: { id: orderId }, data, include: ORDER_INCLUDE })
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.order.update({ where: { id: orderId }, data, include: ORDER_INCLUDE })
+
+    // Restore stock when admin cancels
+    await Promise.all(
+      order.items.map((item) =>
+        tx.productVariant.update({
+          where: { id: item.variantId! },
+          data:  { stock: { increment: item.quantity } },
+        })
+      )
+    )
+
+    return updated
   })
 }
 

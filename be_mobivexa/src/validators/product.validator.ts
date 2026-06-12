@@ -64,3 +64,12 @@ export function validateVariant(req: Request, res: Response, next: NextFunction)
   }
   next()
 }
+
+export function validateUpdateStock(req: Request, res: Response, next: NextFunction): void {
+  const stock = Number(req.body.stock)
+  if (!Number.isInteger(stock) || stock < 0) {
+    sendError(res, 400, 'Tồn kho phải là số nguyên không âm')
+    return
+  }
+  next()
+}

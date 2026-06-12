@@ -56,11 +56,12 @@ export async function addItem(userId: string, body: AddCartItemBody) {
 
   // Variant check and cart upsert are independent — run in parallel
   const [variant, cart] = await Promise.all([
-    prisma.productVariant.findUnique({ where: { id: variantId }, select: { id: true, isActive: true } }),
+    prisma.productVariant.findUnique({ where: { id: variantId }, select: { id: true, isActive: true, stock: true } }),
     prisma.cart.upsert({ where: { userId }, create: { userId }, update: {}, select: { id: true } }),
   ])
 
   if (!variant || !variant.isActive) throw new AppError(404, 'Sản phẩm không tồn tại hoặc đã ngừng bán')
+  if (variant.stock < quantity) throw new AppError(400, `Sản phẩm không đủ hàng (còn ${variant.stock})`)
 
   const existing = await prisma.cartItem.findUnique({
     where: { cartId_variantId: { cartId: cart.id, variantId } },
@@ -69,7 +70,7 @@ export async function addItem(userId: string, body: AddCartItemBody) {
 
   if (existing) {
     const newQty = existing.quantity + quantity
-    if (newQty > 100) throw new AppError(400, 'Số lượng tối đa mỗi sản phẩm là 100')
+    if (newQty > variant.stock) throw new AppError(400, `Số lượng vượt quá tồn kho (còn ${variant.stock})`)
     await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity: newQty } })
   } else {
     await prisma.cartItem.create({ data: { cartId: cart.id, variantId, quantity } })
@@ -80,7 +81,16 @@ export async function addItem(userId: string, body: AddCartItemBody) {
 
 export async function updateItem(userId: string, itemId: string, body: UpdateCartItemBody) {
   const cart = await getCartOrThrow(userId)
-  await findOwnedItem(cart.id, itemId)
+  const item = await findOwnedItem(cart.id, itemId)
+
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: item.variantId },
+    select: { stock: true },
+  })
+  if (!variant || body.quantity > variant.stock) {
+    throw new AppError(400, `Số lượng vượt quá tồn kho${variant ? ` (còn ${variant.stock})` : ''}`)
+  }
+
   await prisma.cartItem.update({ where: { id: itemId }, data: { quantity: body.quantity } })
   return fetchCart(cart.id)
 }

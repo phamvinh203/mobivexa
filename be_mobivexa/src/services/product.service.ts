@@ -9,10 +9,21 @@ import type {
   VariantInput,
   UpdateVariantBody,
   ProductListQuery,
+  InventoryQuery,
 } from '../types/product.type'
 
 const DEFAULT_LIMIT = 12
 const MAX_LIMIT = 50
+
+// ─── Pagination helpers ───────────────────────────────────────────────────────
+
+function parsePage(raw: unknown) {
+  return Math.max(1, Number(raw) || 1)
+}
+
+function parseLimit(raw: unknown, defaultVal: number, max: number) {
+  return Math.min(max, Math.max(1, Number(raw) || defaultVal))
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +71,7 @@ function variantCreateData(v: VariantInput) {
     ram: v.ram,
     originalPrice: v.originalPrice,
     salePrice: v.salePrice,
+    stock: v.stock ?? 0,
     isActive: v.isActive ?? true,
   }
 }
@@ -75,8 +87,8 @@ const PRODUCT_DETAIL_INCLUDE = {
 // ─── Public ─────────────────────────────────────────────────────────────────
 
 export async function listProducts(query: ProductListQuery) {
-  const page = Math.max(1, Number(query.page) || 1)
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
+  const page = parsePage(query.page)
+  const limit = parseLimit(query.limit, DEFAULT_LIMIT, MAX_LIMIT)
 
   const where: Prisma.ProductWhereInput = { isActive: true }
 
@@ -322,6 +334,7 @@ export async function updateVariant(productId: string, variantId: string, body: 
   if (body.ram !== undefined) data.ram = body.ram
   if (body.originalPrice !== undefined) data.originalPrice = body.originalPrice
   if (body.salePrice !== undefined) data.salePrice = body.salePrice
+  if (body.stock !== undefined) data.stock = body.stock
   if (body.isActive !== undefined) data.isActive = body.isActive
 
   return prisma.productVariant.update({ where: { id: variantId }, data })
@@ -334,4 +347,61 @@ export async function deleteVariant(productId: string, variantId: string) {
   if (count <= 1) throw new AppError(409, 'Sản phẩm phải có ít nhất một phiên bản')
 
   await prisma.productVariant.delete({ where: { id: variantId } })
+}
+
+// ─── Admin: Inventory report ─────────────────────────────────────────────────
+
+const DEFAULT_INV_LIMIT = 20
+const MAX_INV_LIMIT = 100
+const DEFAULT_LOW_THRESHOLD = 5
+
+export async function getInventory(query: InventoryQuery) {
+  const page      = parsePage(query.page)
+  const limit     = parseLimit(query.limit, DEFAULT_INV_LIMIT, MAX_INV_LIMIT)
+  const threshold = Math.max(1, Number(query.lowThreshold) || DEFAULT_LOW_THRESHOLD)
+
+  const where: Prisma.ProductVariantWhereInput = {}
+
+  if (query.search) {
+    where.product = { name: { contains: query.search, mode: 'insensitive' } }
+  }
+
+  switch (query.stockStatus) {
+    case 'out_of_stock': where.stock = { equals: 0 };            break
+    case 'low_stock':    where.stock = { gt: 0, lte: threshold }; break
+    case 'in_stock':     where.stock = { gt: threshold };         break
+  }
+
+  const [variants, total, summary, outOfStock, lowStock] = await Promise.all([
+    prisma.productVariant.findMany({
+      where,
+      orderBy: { stock: 'asc' },
+      skip:  (page - 1) * limit,
+      take:  limit,
+      select: {
+        id: true, sku: true, color: true, storage: true, ram: true,
+        stock: true, isActive: true, salePrice: true,
+        product: { select: { id: true, name: true, slug: true } },
+      },
+    }),
+    prisma.productVariant.count({ where }),
+    prisma.productVariant.aggregate({
+      _count: { id: true },
+      _sum:   { stock: true },
+    }),
+    prisma.productVariant.count({ where: { stock: { equals: 0 } } }),
+    prisma.productVariant.count({ where: { stock: { gt: 0, lte: threshold } } }),
+  ])
+
+  return {
+    variants,
+    summary: {
+      totalVariants: summary._count.id,
+      totalStock:    summary._sum.stock ?? 0,
+      outOfStock,
+      lowStock,
+      inStock:       summary._count.id - outOfStock - lowStock,
+    },
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  }
 }

@@ -16,6 +16,7 @@ import {
   addProductImages,
   deleteProductImage,
   setProductImageCover,
+  getInventory,
 } from '../services/product.service'
 
 // ─── Public ─────────────────────────────────────────────────────────────────
@@ -99,4 +100,18 @@ export const editVariant = asyncHandler(async (req: Request, res: Response) => {
 export const removeVariant = asyncHandler(async (req: Request, res: Response) => {
   await deleteVariant(req.params.id as string, req.params.variantId as string)
   sendSuccess(res, { message: 'Xóa phiên bản thành công' })
+})
+
+// ─── Admin: Stock ─────────────────────────────────────────────────────────────
+
+export const patchStock = asyncHandler(async (req: Request, res: Response) => {
+  const variant = await updateVariant(req.params.id as string, req.params.variantId as string, { stock: Number(req.body.stock) })
+  sendSuccess(res, { message: 'Cập nhật tồn kho thành công', variant })
+})
+
+// ─── Admin: Inventory ─────────────────────────────────────────────────────────
+
+export const inventory = asyncHandler(async (req: Request, res: Response) => {
+  const result = await getInventory(req.query)
+  sendSuccess(res, result)
 })

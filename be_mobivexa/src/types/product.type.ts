@@ -5,6 +5,7 @@ export interface VariantInput {
   ram?: string
   originalPrice: number
   salePrice: number
+  stock?: number
   isActive?: boolean
 }
 
@@ -24,6 +25,18 @@ export interface CreateProductBody {
 export type UpdateProductBody = Partial<Omit<CreateProductBody, 'variants'>>
 
 export type UpdateVariantBody = Partial<VariantInput>
+
+export interface UpdateStockBody {
+  stock: number
+}
+
+export interface InventoryQuery {
+  page?: string
+  limit?: string
+  search?: string
+  stockStatus?: 'all' | 'in_stock' | 'low_stock' | 'out_of_stock'
+  lowThreshold?: string // ngưỡng cảnh báo tồn kho thấp, mặc định 5
+}
 
 // Query params cho listing công khai
 export interface ProductListQuery {
