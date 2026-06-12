@@ -4,6 +4,7 @@ import type { AddCartItemBody, UpdateCartItemBody } from '../types/cart.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Full include — chỉ dùng cho GET /cart (trang giỏ hàng)
 const CART_INCLUDE = {
   items: {
     orderBy: { createdAt: 'asc' as const },
@@ -24,8 +25,11 @@ const CART_INCLUDE = {
   },
 }
 
-function fetchCart(cartId: string) {
-  return prisma.cart.findUnique({ where: { id: cartId }, include: CART_INCLUDE })
+// Lean response — trả về sau mutations (add/update/remove)
+// Frontend dùng để cập nhật badge, không cần load lại toàn bộ cart
+async function fetchCartSummary(cartId: string) {
+  const itemCount = await prisma.cartItem.count({ where: { cartId } })
+  return { cartId, itemCount }
 }
 
 async function getCartOrThrow(userId: string) {
@@ -42,6 +46,7 @@ async function findOwnedItem(cartId: string, itemId: string) {
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
+// GET /cart — trả full data với 4 cấp join (chỉ gọi khi user vào trang giỏ hàng)
 export function getCart(userId: string) {
   return prisma.cart.upsert({
     where: { userId },
@@ -51,10 +56,10 @@ export function getCart(userId: string) {
   })
 }
 
+// POST /cart/items — trả lean summary sau khi thêm
 export async function addItem(userId: string, body: AddCartItemBody) {
   const { variantId, quantity } = body
 
-  // Variant check and cart upsert are independent — run in parallel
   const [variant, cart] = await Promise.all([
     prisma.productVariant.findUnique({ where: { id: variantId }, select: { id: true, isActive: true, stock: true } }),
     prisma.cart.upsert({ where: { userId }, create: { userId }, update: {}, select: { id: true } }),
@@ -76,9 +81,10 @@ export async function addItem(userId: string, body: AddCartItemBody) {
     await prisma.cartItem.create({ data: { cartId: cart.id, variantId, quantity } })
   }
 
-  return fetchCart(cart.id)
+  return fetchCartSummary(cart.id)
 }
 
+// PUT /cart/items/:id — trả lean summary sau khi cập nhật
 export async function updateItem(userId: string, itemId: string, body: UpdateCartItemBody) {
   const cart = await getCartOrThrow(userId)
   const item = await findOwnedItem(cart.id, itemId)
@@ -92,14 +98,15 @@ export async function updateItem(userId: string, itemId: string, body: UpdateCar
   }
 
   await prisma.cartItem.update({ where: { id: itemId }, data: { quantity: body.quantity } })
-  return fetchCart(cart.id)
+  return fetchCartSummary(cart.id)
 }
 
+// DELETE /cart/items/:id — trả lean summary sau khi xóa
 export async function removeItem(userId: string, itemId: string) {
   const cart = await getCartOrThrow(userId)
   await findOwnedItem(cart.id, itemId)
   await prisma.cartItem.delete({ where: { id: itemId } })
-  return fetchCart(cart.id)
+  return fetchCartSummary(cart.id)
 }
 
 export async function clearCart(userId: string) {
