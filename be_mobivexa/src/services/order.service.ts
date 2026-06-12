@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 import prisma from '../config/db'
 import { Prisma, OrderStatus, PaymentStatus } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
+import { parsePagination, paginationMeta } from '../utils/pagination'
 import type {
   CreateOrderBody,
   OrderItemInput,
@@ -10,9 +11,6 @@ import type {
   UpdateOrderStatusBody,
   UpdatePaymentStatusBody,
 } from '../types/order.type'
-
-const DEFAULT_LIMIT = 10
-const MAX_LIMIT = 50
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,12 +22,6 @@ function generateOrderCode(): string {
   const ymd  = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const rand = randomBytes(3).toString('hex').toUpperCase()
   return `ORD-${ymd}-${rand}`
-}
-
-function parsePagination(query: { page?: string; limit?: string }) {
-  const page  = Math.max(1, Number(query.page) || 1)
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
-  return { page, limit }
 }
 
 async function findOrderOrThrow(id: string) {
@@ -168,7 +160,7 @@ export async function listMyOrders(userId: string, query: OrderListQuery) {
     prisma.order.count({ where }),
   ])
 
-  return { orders, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+  return { orders, pagination: paginationMeta(page, limit, total) }
 }
 
 export function getMyOrder(userId: string, orderId: string) {
@@ -227,7 +219,7 @@ export async function listOrders(query: AdminOrderListQuery) {
     prisma.order.count({ where }),
   ])
 
-  return { orders, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+  return { orders, pagination: paginationMeta(page, limit, total) }
 }
 
 export function getOrder(orderId: string) {

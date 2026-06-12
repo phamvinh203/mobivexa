@@ -2,10 +2,8 @@ import prisma from '../config/db'
 import { Prisma, UserRole } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { USER_PUBLIC_SELECT } from './user.service'
+import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type { AdminUserListQuery } from '../types/admin.type'
-
-const DEFAULT_LIMIT = 20
-const MAX_LIMIT = 100
 
 // Set cho O(1) lookup — không tái tính mỗi request
 const VALID_ROLES = new Set(Object.values(UserRole))
@@ -40,8 +38,7 @@ export async function findUserOrThrow(id: string) {
 // ─── Admin services ──────────────────────────────────────────────────────────
 
 export async function listUsers(query: AdminUserListQuery) {
-  const page = Math.max(1, Number(query.page) || 1)
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
+  const { page, limit } = parsePagination(query, LIMITS.INVENTORY, LIMITS.MAX_INVENTORY)
 
   const where: Prisma.UserWhereInput = {}
   if (query.search) {
@@ -70,7 +67,7 @@ export async function listUsers(query: AdminUserListQuery) {
 
   return {
     users,
-    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    pagination: paginationMeta(page, limit, total),
   }
 }
 

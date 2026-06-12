@@ -5,6 +5,7 @@ import { generateUniqueSlug, slugTaken } from '../utils/slug'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import { cacheGet, cacheSet, cacheBust, TTL } from '../utils/cache'
 import { toTsQuery } from '../utils/search'
+import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type {
   CreateProductBody,
   UpdateProductBody,
@@ -13,19 +14,6 @@ import type {
   ProductListQuery,
   InventoryQuery,
 } from '../types/product.type'
-
-const DEFAULT_LIMIT = 12
-const MAX_LIMIT = 50
-
-// ─── Pagination helpers ───────────────────────────────────────────────────────
-
-function parsePage(raw: unknown) {
-  return Math.max(1, Number(raw) || 1)
-}
-
-function parseLimit(raw: unknown, defaultVal: number, max: number) {
-  return Math.min(max, Math.max(1, Number(raw) || defaultVal))
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,8 +77,7 @@ const PRODUCT_DETAIL_INCLUDE = {
 // ─── Public ─────────────────────────────────────────────────────────────────
 
 export async function listProducts(query: ProductListQuery) {
-  const page = parsePage(query.page)
-  const limit = parseLimit(query.limit, DEFAULT_LIMIT, MAX_LIMIT)
+  const { page, limit } = parsePagination(query, LIMITS.PRODUCT)
 
   const cacheKey = `products:list:${JSON.stringify({ ...query, page, limit })}`
   const cached = await cacheGet(cacheKey)
@@ -105,7 +92,7 @@ export async function listProducts(query: ProductListQuery) {
   if (query.search) {
     const tsQuery = toTsQuery(query.search)
     if (!tsQuery) {
-      return { products: [], pagination: { page, limit, total: 0, totalPages: 0 } }
+      return { products: [], pagination: paginationMeta(page, limit, 0) }
     }
     // Dùng GIN index — nhanh hơn ILIKE '%keyword%' nhiều lần
     const rows = await prisma.$queryRaw<{ id: string }[]>`
@@ -113,7 +100,7 @@ export async function listProducts(query: ProductListQuery) {
       WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
     `
     if (rows.length === 0) {
-      return { products: [], pagination: { page, limit, total: 0, totalPages: 0 } }
+      return { products: [], pagination: paginationMeta(page, limit, 0) }
     }
     where.id = { in: rows.map((r) => r.id) }
   }
@@ -146,7 +133,7 @@ export async function listProducts(query: ProductListQuery) {
 
   const result = {
     products,
-    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    pagination: paginationMeta(page, limit, total),
   }
 
   await cacheSet(cacheKey, result, TTL.PRODUCT_LIST)
@@ -269,9 +256,10 @@ export async function updateProduct(id: string, body: UpdateProductBody, files?:
   if (isFeatured !== undefined) data.isFeatured = String(isFeatured) !== 'false'
 
   if (files?.length) {
-    const uploadedImages = await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
-    // Đếm ảnh hiện tại để tính sortOrder tiếp theo
-    const existingCount = await prisma.productImage.count({ where: { productId: id } })
+    const [uploadedImages, existingCount] = await Promise.all([
+      Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products'))),
+      prisma.productImage.count({ where: { productId: id } }),
+    ])
     data.images = {
       create: uploadedImages.map((img, i) => ({ url: img.url, publicId: img.publicId, isCover: false, sortOrder: existingCount + i })),
     }
@@ -309,8 +297,10 @@ export async function deleteProduct(id: string) {
 export async function addProductImages(productId: string, files: Express.Multer.File[]) {
   await findProductOrThrow(productId)
 
-  const existingCount = await prisma.productImage.count({ where: { productId } })
-  const uploaded = await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
+  const [uploaded, existingCount] = await Promise.all([
+    Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products'))),
+    prisma.productImage.count({ where: { productId } }),
+  ])
 
   const result = await prisma.productImage.createMany({
     data: uploaded.map((img, i) => ({
@@ -426,8 +416,6 @@ export async function deleteVariant(productId: string, variantId: string) {
 
 // ─── Admin: Inventory report ─────────────────────────────────────────────────
 
-const DEFAULT_INV_LIMIT = 20
-const MAX_INV_LIMIT = 100
 const DEFAULT_LOW_THRESHOLD = 5
 
 // In-memory cache cho inventory summary — tính lại sau mỗi 60 giây
@@ -465,23 +453,25 @@ async function getInventorySummary(threshold: number): Promise<InventorySummary>
 }
 
 export async function getInventory(query: InventoryQuery) {
-  const page      = parsePage(query.page)
-  const limit     = parseLimit(query.limit, DEFAULT_INV_LIMIT, MAX_INV_LIMIT)
+  const { page, limit } = parsePagination(query, LIMITS.INVENTORY, LIMITS.MAX_INVENTORY)
   const threshold = Math.max(1, Number(query.lowThreshold) || DEFAULT_LOW_THRESHOLD)
+
+  // Khởi động song song với FTS query — không cần chờ nhau
+  const summaryPromise = getInventorySummary(threshold)
 
   const where: Prisma.ProductVariantWhereInput = {}
 
   if (query.search) {
     const tsQuery = toTsQuery(query.search)
     if (!tsQuery) {
-      return { variants: [], summary: await getInventorySummary(threshold), pagination: { page, limit, total: 0, totalPages: 0 } }
+      return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
     }
     const rows = await prisma.$queryRaw<{ id: string }[]>`
       SELECT id FROM products
       WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
     `
     if (rows.length === 0) {
-      return { variants: [], summary: await getInventorySummary(threshold), pagination: { page, limit, total: 0, totalPages: 0 } }
+      return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
     }
     where.productId = { in: rows.map((r) => r.id) }
   }
@@ -505,7 +495,7 @@ export async function getInventory(query: InventoryQuery) {
       },
     }),
     prisma.productVariant.count({ where }),
-    getInventorySummary(threshold),
+    summaryPromise,
   ])
 
   return {
@@ -514,6 +504,6 @@ export async function getInventory(query: InventoryQuery) {
       ...summary,
       inStock: summary.totalVariants - summary.outOfStock - summary.lowStock,
     },
-    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    pagination: paginationMeta(page, limit, total),
   }
 }
