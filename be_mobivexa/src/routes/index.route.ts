@@ -10,6 +10,13 @@ import { adminUserRoutes } from './admin.route'
 import { cartRoutes } from './cart.route'
 import { orderRoutes, orderAdminRoutes } from './order.route'
 import { paymentRoutes } from './payment.route'
+import {
+  reviewPublicRoutes,
+  reviewUserRoutes,
+  reviewOrderItemRoutes,
+  reviewRoutes,
+  reviewAdminRoutes,
+} from './review.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -20,10 +27,16 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/categories`, categoryRoutes)
   app.use(`${v}/brands`, brandRoutes)
   app.use(`${v}/products`, productRoutes)
+  app.use(`${v}/products/:slug/reviews`, reviewPublicRoutes)
   app.use(`${v}/tags`, tagRoutes)
   app.use(`${v}/cart`, cartRoutes)
   app.use(`${v}/orders`, orderRoutes)
   app.use(`${v}`, paymentRoutes)
+
+  // Review (user)
+  app.use(`${v}/users/me/reviews`,                reviewUserRoutes)
+  app.use(`${v}/order-items/:orderItemId/review`, reviewOrderItemRoutes)
+  app.use(`${v}/reviews`,                         reviewRoutes)
 
   // Admin
   app.use(`${v}/admin/users`, adminUserRoutes)
@@ -33,4 +46,5 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/admin/inventory`, inventoryAdminRoutes)
   app.use(`${v}/admin/tags`, tagAdminRoutes)
   app.use(`${v}/admin/orders`, orderAdminRoutes)
+  app.use(`${v}/admin/reviews`, reviewAdminRoutes)
 }
