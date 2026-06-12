@@ -9,6 +9,7 @@ import { tagRoutes, tagAdminRoutes } from './tag.route'
 import { adminUserRoutes } from './admin.route'
 import { cartRoutes } from './cart.route'
 import { orderRoutes, orderAdminRoutes } from './order.route'
+import { paymentRoutes } from './payment.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -22,6 +23,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/tags`, tagRoutes)
   app.use(`${v}/cart`, cartRoutes)
   app.use(`${v}/orders`, orderRoutes)
+  app.use(`${v}`, paymentRoutes)
 
   // Admin
   app.use(`${v}/admin/users`, adminUserRoutes)
