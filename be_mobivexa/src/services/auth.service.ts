@@ -141,7 +141,7 @@ export async function cleanupExpiredTokens() {
     where: {
       OR: [
         { expiresAt: { lt: new Date() } },
-        { isRevoked: true, updatedAt: { lt: threshold } },
+        { isRevoked: true, createdAt: { lt: threshold } },
       ],
     },
   })
