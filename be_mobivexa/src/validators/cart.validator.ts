@@ -1,13 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
-
-function checkQuantity(res: Response, qty: number): boolean {
-  if (!Number.isInteger(qty) || qty < 1 || qty > 100) {
-    sendError(res, 400, 'Số lượng phải là số nguyên từ 1 đến 100')
-    return false
-  }
-  return true
-}
+import { checkQuantity } from './common.validator'
 
 export function validateAddItem(req: Request, res: Response, next: NextFunction): void {
   const { variantId, quantity } = req.body
@@ -17,12 +10,12 @@ export function validateAddItem(req: Request, res: Response, next: NextFunction)
     return
   }
 
-  if (!checkQuantity(res, Number(quantity))) return
+  if (!checkQuantity(res, Number(quantity), 100)) return
 
   next()
 }
 
 export function validateUpdateItem(req: Request, res: Response, next: NextFunction): void {
-  if (!checkQuantity(res, Number(req.body.quantity))) return
+  if (!checkQuantity(res, Number(req.body.quantity), 100)) return
   next()
 }
