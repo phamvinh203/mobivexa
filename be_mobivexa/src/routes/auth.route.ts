@@ -17,6 +17,7 @@ const authLimiter = rateLimit({
   message: { message: 'Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
 })
 
 router.post('/register',        authLimiter, validateRegister,        controller.register)
