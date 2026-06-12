@@ -6,7 +6,7 @@ import type { SePayWebhookPayload } from '../types/payment.type'
 
 export function verifySePaySecret(req: Request, res: Response, next: NextFunction): void {
   const secret = process.env.SEPAY_WEBHOOK_SECRET
-  if (secret && req.headers['x-sepay-secret'] !== secret) {
+  if (!secret || req.headers['x-sepay-secret'] !== secret) {
     sendError(res, 401, 'Webhook secret không hợp lệ')
     return
   }

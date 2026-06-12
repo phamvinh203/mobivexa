@@ -86,7 +86,7 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
     const v = variantMap.get(variantId)
     if (!v)          throw new AppError(400, `Sản phẩm không tồn tại: ${variantId}`)
     if (!v.isActive) throw new AppError(400, `Sản phẩm đã ngừng bán: ${v.sku}`)
-    if (v.stock < quantity) throw new AppError(400, `Sản phẩm "${v.sku}" không đủ hàng (còn ${v.stock})`)
+    // Stock sẽ được kiểm tra atomic bên trong transaction — không check ở đây để tránh race condition
   }
 
   const orderItems = resolvedItems.map(({ variantId, quantity }) => {
@@ -132,14 +132,19 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
       include: ORDER_INCLUDE,
     })
 
-    // Deduct stock for each variant
+    // Atomic check-and-decrement: updateMany với WHERE stock >= quantity
+    // Nếu count === 0 → stock vừa bị lấy bởi request song song → rollback
     await Promise.all(
-      resolvedItems.map(({ variantId, quantity }) =>
-        tx.productVariant.update({
-          where: { id: variantId },
+      resolvedItems.map(async ({ variantId, quantity }) => {
+        const result = await tx.productVariant.updateMany({
+          where: { id: variantId, stock: { gte: quantity } },
           data:  { stock: { decrement: quantity } },
         })
-      )
+        if (result.count === 0) {
+          const v = variantMap.get(variantId)
+          throw new AppError(400, `Sản phẩm "${v?.sku ?? variantId}" không đủ hàng`)
+        }
+      })
     )
 
     if (!itemsInput || itemsInput.length === 0) {

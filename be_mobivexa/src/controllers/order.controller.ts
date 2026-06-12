@@ -47,11 +47,13 @@ export const get = asyncHandler(async (req: Request, res: Response) => {
 })
 
 export const updateStatus = asyncHandler(async (req: Request, res: Response) => {
-  const order = await updateOrderStatus(req.params.id as string, req.body)
+  const { status, cancelReason } = req.body
+  const order = await updateOrderStatus(req.params.id as string, { status, cancelReason })
   sendSuccess(res, { message: 'Cập nhật trạng thái thành công', order })
 })
 
 export const updatePayment = asyncHandler(async (req: Request, res: Response) => {
-  const order = await updatePaymentStatus(req.params.id as string, req.body)
+  const { paymentStatus } = req.body
+  const order = await updatePaymentStatus(req.params.id as string, { paymentStatus })
   sendSuccess(res, { message: 'Cập nhật thanh toán thành công', order })
 })

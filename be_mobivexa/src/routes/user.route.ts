@@ -1,10 +1,19 @@
 import { Router } from 'express'
+import rateLimit from 'express-rate-limit'
 import { authenticate } from '../middlewares/auth.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { validateUpdateProfile, validateChangePassword, validateAddress } from '../validators/user.validator'
 import * as controller from '../controllers/user.controller'
 
 const router: Router = Router()
+
+const avatarLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 giờ
+  max: 10,
+  message: { message: 'Quá nhiều lần upload ảnh, vui lòng thử lại sau 1 giờ' },
+  standardHeaders: true,
+  legacyHeaders: false,
+})
 
 // Tất cả user routes đều yêu cầu đăng nhập
 router.use(authenticate)
@@ -13,13 +22,13 @@ router.use(authenticate)
 router.get('/me',                  controller.getMe)
 router.put('/me',                  validateUpdateProfile,  controller.updateMe)
 router.put('/me/password',         validateChangePassword, controller.changeMyPassword)
-router.post('/me/avatar',          uploadImage.single('avatar'), controller.uploadMyAvatar)
+router.post('/me/avatar',          avatarLimiter, uploadImage.single('avatar'), controller.uploadMyAvatar)
 
 // Addresses
-router.get('/me/addresses',                              controller.getMyAddresses)
-router.post('/me/addresses',       validateAddress,      controller.createMyAddress)
-router.put('/me/addresses/:id',                          controller.updateMyAddress)
-router.delete('/me/addresses/:id',                       controller.deleteMyAddress)
-router.patch('/me/addresses/:id/default',                controller.setMyDefaultAddress)
+router.get('/me/addresses',                                           controller.getMyAddresses)
+router.post('/me/addresses',       validateAddress,                   controller.createMyAddress)
+router.put('/me/addresses/:id',    validateAddress,                   controller.updateMyAddress)
+router.delete('/me/addresses/:id',                                    controller.deleteMyAddress)
+router.patch('/me/addresses/:id/default',                             controller.setMyDefaultAddress)
 
 export const userRoutes: Router = router
