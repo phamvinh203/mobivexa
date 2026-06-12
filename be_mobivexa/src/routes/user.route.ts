@@ -13,6 +13,7 @@ const avatarLimiter = rateLimit({
   message: { message: 'Quá nhiều lần upload ảnh, vui lòng thử lại sau 1 giờ' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
 })
 
 // Tất cả user routes đều yêu cầu đăng nhập
