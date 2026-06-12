@@ -29,4 +29,18 @@ export async function connectDB(): Promise<void> {
   }
 }
 
+// Tạo GIN index cho full-text search nếu chưa có
+// Dùng 'simple' dictionary — không stem, phù hợp cho tiếng Việt + tên sản phẩm
+export async function ensureFtsIndexes(): Promise<void> {
+  try {
+    await prisma.$executeRaw`
+      CREATE INDEX IF NOT EXISTS idx_products_name_fts
+      ON products USING GIN (to_tsvector('simple', name))
+    `;
+    console.log("[DB] FTS index ready");
+  } catch (error) {
+    console.warn("[DB] Could not create FTS index:", error);
+  }
+}
+
 export default prisma;

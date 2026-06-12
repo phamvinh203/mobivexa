@@ -3,6 +3,8 @@ import { Prisma } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { generateUniqueSlug, slugTaken } from '../utils/slug'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
+import { cacheGet, cacheSet, cacheBust, TTL } from '../utils/cache'
+import { toTsQuery } from '../utils/search'
 import type {
   CreateProductBody,
   UpdateProductBody,
@@ -30,7 +32,7 @@ function parseLimit(raw: unknown, defaultVal: number, max: number) {
 const findBySlug = (slug: string) => prisma.product.findUnique({ where: { slug }, select: { id: true } })
 
 async function findProductOrThrow(id: string) {
-  const product = await prisma.product.findUnique({ where: { id } })
+  const product = await prisma.product.findUnique({ where: { id }, select: { id: true, isActive: true, isFeatured: true } })
   if (!product) throw new AppError(404, 'Sản phẩm không tồn tại')
   return product
 }
@@ -90,12 +92,31 @@ export async function listProducts(query: ProductListQuery) {
   const page = parsePage(query.page)
   const limit = parseLimit(query.limit, DEFAULT_LIMIT, MAX_LIMIT)
 
+  const cacheKey = `products:list:${JSON.stringify({ ...query, page, limit })}`
+  const cached = await cacheGet(cacheKey)
+  if (cached) return cached
+
   const where: Prisma.ProductWhereInput = { isActive: true }
 
   if (query.category) where.category = { slug: query.category }
   if (query.brand) where.brand = { slug: query.brand }
   if (query.tag) where.productTags = { some: { tag: { slug: query.tag } } }
-  if (query.search) where.name = { contains: query.search, mode: 'insensitive' }
+
+  if (query.search) {
+    const tsQuery = toTsQuery(query.search)
+    if (!tsQuery) {
+      return { products: [], pagination: { page, limit, total: 0, totalPages: 0 } }
+    }
+    // Dùng GIN index — nhanh hơn ILIKE '%keyword%' nhiều lần
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM products
+      WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
+    `
+    if (rows.length === 0) {
+      return { products: [], pagination: { page, limit, total: 0, totalPages: 0 } }
+    }
+    where.id = { in: rows.map((r) => r.id) }
+  }
 
   // Lọc theo khoảng giá: sản phẩm có ít nhất 1 variant nằm trong khoảng
   const priceFilter: Prisma.DecimalFilter = {}
@@ -123,10 +144,13 @@ export async function listProducts(query: ProductListQuery) {
     prisma.product.count({ where }),
   ])
 
-  return {
+  const result = {
     products,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   }
+
+  await cacheSet(cacheKey, result, TTL.PRODUCT_LIST)
+  return result
 }
 
 function resolveSort(sort?: string): Prisma.ProductOrderByWithRelationInput {
@@ -143,16 +167,26 @@ function resolveSort(sort?: string): Prisma.ProductOrderByWithRelationInput {
 }
 
 export async function getProductBySlug(slug: string) {
+  const cacheKey = `products:slug:${slug}`
+  const cached = await cacheGet(cacheKey)
+  if (cached) return cached
+
   const product = await prisma.product.findUnique({
     where: { slug },
     include: PRODUCT_DETAIL_INCLUDE,
   })
   if (!product || !product.isActive) throw new AppError(404, 'Sản phẩm không tồn tại')
+
+  await cacheSet(cacheKey, product, TTL.PRODUCT_DETAIL)
   return product
 }
 
-export function getFeaturedProducts(limit = 8) {
-  return prisma.product.findMany({
+export async function getFeaturedProducts(limit = 8) {
+  const cacheKey = `products:featured:${limit}`
+  const cached = await cacheGet(cacheKey)
+  if (cached) return cached
+
+  const products = await prisma.product.findMany({
     where: { isActive: true, isFeatured: true },
     orderBy: { createdAt: 'desc' },
     take: limit,
@@ -162,9 +196,20 @@ export function getFeaturedProducts(limit = 8) {
       images: { where: { isCover: true }, take: 1 },
     },
   })
+
+  await cacheSet(cacheKey, products, TTL.PRODUCT_FEATURED)
+  return products
 }
 
 // ─── Admin: Product ───────────────────────────────────────────────────────────
+
+async function bustProductCache(slug?: string) {
+  await Promise.all([
+    cacheBust('products:list:*'),
+    cacheBust('products:featured:*'),
+    slug ? cacheBust(`products:slug:${slug}`) : Promise.resolve(),
+  ])
+}
 
 export async function createProduct(body: CreateProductBody, files?: Express.Multer.File[]) {
   const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds = [], variants } = body
@@ -182,7 +227,7 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
     ? await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
     : []
 
-  return prisma.product.create({
+  const product = await prisma.product.create({
     data: {
       name: name.trim(),
       slug: finalSlug,
@@ -199,6 +244,9 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
     },
     include: PRODUCT_DETAIL_INCLUDE,
   })
+
+  void bustProductCache()
+  return product
 }
 
 export async function updateProduct(id: string, body: UpdateProductBody, files?: Express.Multer.File[]) {
@@ -229,23 +277,31 @@ export async function updateProduct(id: string, body: UpdateProductBody, files?:
     }
   }
 
+  let updated
   if (tagIds !== undefined) {
-    return prisma.$transaction(async (tx) => {
+    updated = await prisma.$transaction(async (tx) => {
       await tx.productTag.deleteMany({ where: { productId: id } })
       if (tagIds.length) {
         await tx.productTag.createMany({ data: tagIds.map((tagId) => ({ productId: id, tagId })) })
       }
       return tx.product.update({ where: { id }, data, include: PRODUCT_DETAIL_INCLUDE })
     })
+  } else {
+    updated = await prisma.product.update({ where: { id }, data, include: PRODUCT_DETAIL_INCLUDE })
   }
 
-  return prisma.product.update({ where: { id }, data, include: PRODUCT_DETAIL_INCLUDE })
+  void bustProductCache(updated.slug)
+  return updated
 }
 
 export async function deleteProduct(id: string) {
-  const images = await prisma.productImage.findMany({ where: { productId: id }, select: { publicId: true } })
+  const [images, product] = await Promise.all([
+    prisma.productImage.findMany({ where: { productId: id }, select: { publicId: true } }),
+    prisma.product.findUnique({ where: { id }, select: { slug: true } }),
+  ])
   await prisma.product.delete({ where: { id } })
   images.forEach((img) => void destroyImage(img.publicId))
+  void bustProductCache(product?.slug)
 }
 
 // ─── Admin: Product Images ────────────────────────────────────────────────────
@@ -256,15 +312,18 @@ export async function addProductImages(productId: string, files: Express.Multer.
   const existingCount = await prisma.productImage.count({ where: { productId } })
   const uploaded = await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
 
-  return prisma.productImage.createMany({
+  const result = await prisma.productImage.createMany({
     data: uploaded.map((img, i) => ({
       productId,
       url: img.url,
       publicId: img.publicId,
-      isCover: existingCount === 0 && i === 0, // ảnh đầu tiên của sản phẩm tự thành cover
+      isCover: existingCount === 0 && i === 0,
       sortOrder: existingCount + i,
     })),
   })
+
+  void bustProductCache()
+  return result
 }
 
 export async function deleteProductImage(productId: string, imageId: string) {
@@ -295,13 +354,17 @@ export async function setProductImageCover(productId: string, imageId: string) {
 }
 
 export async function toggleProductStatus(id: string) {
-  const product = await findProductOrThrow(id)
-  return prisma.product.update({ where: { id }, data: { isActive: !product.isActive } })
+  const { isActive } = await findProductOrThrow(id)
+  const updated = await prisma.product.update({ where: { id }, data: { isActive: !isActive }, select: { slug: true } })
+  void bustProductCache(updated.slug)
+  return updated
 }
 
 export async function toggleProductFeatured(id: string) {
-  const product = await findProductOrThrow(id)
-  return prisma.product.update({ where: { id }, data: { isFeatured: !product.isFeatured } })
+  const { isFeatured } = await findProductOrThrow(id)
+  const updated = await prisma.product.update({ where: { id }, data: { isFeatured: !isFeatured }, select: { slug: true } })
+  void bustProductCache(updated.slug)
+  return updated
 }
 
 // ─── Admin: Variant ─────────────────────────────────────────────────────────
@@ -322,7 +385,7 @@ export async function addVariant(productId: string, body: VariantInput) {
 }
 
 export async function updateVariant(productId: string, variantId: string, body: UpdateVariantBody) {
-  await findOwnedVariant(productId, variantId)
+  const variant = await findOwnedVariant(productId, variantId)
 
   const data: Prisma.ProductVariantUpdateInput = {}
   if (body.sku !== undefined) {
@@ -337,14 +400,26 @@ export async function updateVariant(productId: string, variantId: string, body: 
   if (body.stock !== undefined) data.stock = body.stock
   if (body.isActive !== undefined) data.isActive = body.isActive
 
-  return prisma.productVariant.update({ where: { id: variantId }, data })
+  const updated = await prisma.productVariant.update({ where: { id: variantId }, data })
+
+  // Giá hoặc stock thay đổi → list/detail cache lỗi thời
+  if (body.salePrice !== undefined || body.stock !== undefined || body.isActive !== undefined) {
+    const product = await prisma.product.findUnique({ where: { id: variant.productId }, select: { slug: true } })
+    void bustProductCache(product?.slug)
+  }
+
+  return updated
 }
 
 export async function deleteVariant(productId: string, variantId: string) {
-  await findOwnedVariant(productId, variantId)
+  // Lấy tổng số variant của product và kiểm tra ownership trong 1 round trip
+  const [target, totalCount] = await Promise.all([
+    prisma.productVariant.findUnique({ where: { id: variantId }, select: { id: true, productId: true } }),
+    prisma.productVariant.count({ where: { productId } }),
+  ])
 
-  const count = await prisma.productVariant.count({ where: { productId } })
-  if (count <= 1) throw new AppError(409, 'Sản phẩm phải có ít nhất một phiên bản')
+  if (!target || target.productId !== productId) throw new AppError(404, 'Phiên bản không tồn tại')
+  if (totalCount <= 1) throw new AppError(409, 'Sản phẩm phải có ít nhất một phiên bản')
 
   await prisma.productVariant.delete({ where: { id: variantId } })
 }
@@ -355,6 +430,40 @@ const DEFAULT_INV_LIMIT = 20
 const MAX_INV_LIMIT = 100
 const DEFAULT_LOW_THRESHOLD = 5
 
+// In-memory cache cho inventory summary — tính lại sau mỗi 60 giây
+let inventorySummaryCache: { data: InventorySummary; expiresAt: number } | null = null
+const SUMMARY_CACHE_TTL_MS = 60_000
+
+interface InventorySummary {
+  totalVariants: number
+  totalStock: number
+  outOfStock: number
+  lowStock: number
+}
+
+async function getInventorySummary(threshold: number): Promise<InventorySummary> {
+  const now = Date.now()
+  if (inventorySummaryCache && now < inventorySummaryCache.expiresAt) {
+    return inventorySummaryCache.data
+  }
+
+  const [summary, outOfStock, lowStock] = await Promise.all([
+    prisma.productVariant.aggregate({ _count: { id: true }, _sum: { stock: true } }),
+    prisma.productVariant.count({ where: { stock: { equals: 0 } } }),
+    prisma.productVariant.count({ where: { stock: { gt: 0, lte: threshold } } }),
+  ])
+
+  const data: InventorySummary = {
+    totalVariants: summary._count.id,
+    totalStock:    summary._sum.stock ?? 0,
+    outOfStock,
+    lowStock,
+  }
+
+  inventorySummaryCache = { data, expiresAt: now + SUMMARY_CACHE_TTL_MS }
+  return data
+}
+
 export async function getInventory(query: InventoryQuery) {
   const page      = parsePage(query.page)
   const limit     = parseLimit(query.limit, DEFAULT_INV_LIMIT, MAX_INV_LIMIT)
@@ -363,7 +472,18 @@ export async function getInventory(query: InventoryQuery) {
   const where: Prisma.ProductVariantWhereInput = {}
 
   if (query.search) {
-    where.product = { name: { contains: query.search, mode: 'insensitive' } }
+    const tsQuery = toTsQuery(query.search)
+    if (!tsQuery) {
+      return { variants: [], summary: await getInventorySummary(threshold), pagination: { page, limit, total: 0, totalPages: 0 } }
+    }
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM products
+      WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
+    `
+    if (rows.length === 0) {
+      return { variants: [], summary: await getInventorySummary(threshold), pagination: { page, limit, total: 0, totalPages: 0 } }
+    }
+    where.productId = { in: rows.map((r) => r.id) }
   }
 
   switch (query.stockStatus) {
@@ -372,7 +492,7 @@ export async function getInventory(query: InventoryQuery) {
     case 'in_stock':     where.stock = { gt: threshold };         break
   }
 
-  const [variants, total, summary, outOfStock, lowStock] = await Promise.all([
+  const [variants, total, summary] = await Promise.all([
     prisma.productVariant.findMany({
       where,
       orderBy: { stock: 'asc' },
@@ -385,22 +505,14 @@ export async function getInventory(query: InventoryQuery) {
       },
     }),
     prisma.productVariant.count({ where }),
-    prisma.productVariant.aggregate({
-      _count: { id: true },
-      _sum:   { stock: true },
-    }),
-    prisma.productVariant.count({ where: { stock: { equals: 0 } } }),
-    prisma.productVariant.count({ where: { stock: { gt: 0, lte: threshold } } }),
+    getInventorySummary(threshold),
   ])
 
   return {
     variants,
     summary: {
-      totalVariants: summary._count.id,
-      totalStock:    summary._sum.stock ?? 0,
-      outOfStock,
-      lowStock,
-      inStock:       summary._count.id - outOfStock - lowStock,
+      ...summary,
+      inStock: summary.totalVariants - summary.outOfStock - summary.lowStock,
     },
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   }

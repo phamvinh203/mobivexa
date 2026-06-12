@@ -189,7 +189,7 @@ model ProductImage {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@index([productId])
+  @@index([productId, isCover])
   @@map("product_images")
 }
 
@@ -212,6 +212,9 @@ model ProductVariant {
   orderItems OrderItem[]
 
   @@index([productId])
+  @@index([stock])
+  @@index([isActive])
+  @@index([isActive, salePrice])
   @@map("product_variants")
 }
 
@@ -297,6 +300,8 @@ model Order {
 
   @@index([userId])
   @@index([status])
+  @@index([paymentStatus])
+  @@index([paymentMethod])
   @@index([createdAt])
   @@map("orders")
 }

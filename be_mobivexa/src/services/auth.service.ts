@@ -133,3 +133,17 @@ export function logoutService(token: string) {
     data: { isRevoked: true },
   })
 }
+
+// Xóa token đã hết hạn hoặc bị thu hồi quá 7 ngày — chạy định kỳ để giữ bảng gọn
+export async function cleanupExpiredTokens() {
+  const threshold = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const { count } = await prisma.refreshToken.deleteMany({
+    where: {
+      OR: [
+        { expiresAt: { lt: new Date() } },
+        { isRevoked: true, updatedAt: { lt: threshold } },
+      ],
+    },
+  })
+  if (count > 0) console.log(`[Auth] Đã xóa ${count} refresh token hết hạn`)
+}
