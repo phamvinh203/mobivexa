@@ -3,12 +3,13 @@ import { assertImageFile } from '@/lib/utils/file'
 import type { ListQuery } from '@/types/api'
 import type { Category, CategoryPayload } from './types'
 
-// Khớp src/routes/category.route.ts
+// Khớp src/routes/category.route.ts. Backend bọc { categories } / { category } → unwrap tại đây.
 export const categoryApi = {
   // Public: /categories — cache 5 phút (danh mục rất ít đổi)
-  list: () => http.get<Category[]>('/categories', { auth: false, revalidate: 300 }),
+  list: () =>
+    http.get<{ categories: Category[] }>('/categories', { auth: false, revalidate: 300 }).then((r) => r.categories ?? []),
   getBySlug: (slug: string) =>
-    http.get<Category>(`/categories/${slug}`, { auth: false, revalidate: 300 }),
+    http.get<{ category: Category }>(`/categories/${slug}`, { auth: false, revalidate: 300 }).then((r) => r.category),
 }
 
 // Admin: /admin/categories (STAFF + ADMIN)

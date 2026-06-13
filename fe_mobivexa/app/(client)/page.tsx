@@ -1,58 +1,79 @@
-import Link from 'next/link'
 import { productApi } from '@/features/products/api'
-import { ProductCard } from '@/components/product/product-card'
-import type { Product } from '@/features/products/types'
+import { categoryApi } from '@/features/categories/api'
+import { brandApi } from '@/features/brands/api'
+import { HeroSection } from '@/components/home/hero-section'
+import { TrustBadges } from '@/components/home/trust-badges'
+import { BrandList } from '@/components/home/brand-list'
+import { CategoryList } from '@/components/home/category-list'
+import { FlashSaleSection } from '@/components/home/flash-sale-section'
+import { HotProductsSection } from '@/components/home/hot-products-section'
+import { FeaturedProductsSection } from '@/components/home/featured-products-section'
+import { CtaStrip } from '@/components/home/cta-strip'
+import { EmptyState } from '@/components/home/empty-state'
 
-// Server Component: fetch sản phẩm nổi bật ngay trên server (endpoint public)
+export const revalidate = 60
+
+
 export default async function HomePage() {
-  let featured: Product[] = []
-  try {
-    featured = await productApi.featured()
-  } catch {
-    // Backend chưa chạy → render trang rỗng thay vì crash
-    featured = []
-  }
+  // Flash sale kết thúc 23:59:59 hôm nay
+  const flashEndMs = new Date().setHours(23, 59, 59, 999)
+
+  // Fetch song song, an toàn khi backend lỗi (Promise.allSettled)
+  const [featuredR, hotR, saleR, catR, brandR] = await Promise.allSettled([
+    productApi.featured(),
+    productApi.list({ tag: 'hot', limit: 10 }),
+    productApi.list({ tag: 'giam-gia', limit: 10 }),
+    categoryApi.list(),
+    brandApi.list(),
+  ])
+
+  const featured = featuredR.status === 'fulfilled' ? featuredR.value : []
+  const hot = hotR.status === 'fulfilled' ? hotR.value : []
+  const sale = saleR.status === 'fulfilled' ? saleR.value : []
+  const allCats = catR.status === 'fulfilled' ? catR.value : []
+  const brands = brandR.status === 'fulfilled' ? brandR.value : []
+
+  const flash = (sale.length ? sale : hot).slice(0, 10)
+  // Lấy root categories (parentId === null), active, sắp xếp theo sortOrder, lấy 8 items
+  const categories = allCats
+    .filter((c) => c.parentId === null && c.isActive === true)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .slice(0, 8)
+  // Lấy active brands, limit 12 items
+  const activeBrands = brands.filter((b) => b.isActive === true).slice(0, 12)
+  const heroProducts = featured.slice(0, 3)
+  const empty = featured.length === 0 && hot.length === 0
 
   return (
-    <div>
-      {/* Hero */}
-      <section className="bg-[#080810] text-white">
-        <div className="max-w-[1280px] mx-auto px-6 py-20">
-          <p className="text-xs uppercase tracking-widest text-indigo-400">
-            Bộ sưu tập mới — 2024
-          </p>
-          <h1 className="mt-4 text-5xl font-bold leading-tight">
-            Điện thoại đỉnh nhất.
-            <br />
-            Giá tốt nhất.
-          </h1>
-          <p className="mt-4 text-white/60 max-w-md">
-            Tất cả thương hiệu lớn. Hàng chính hãng. Giao trong 2 giờ tại nội thành.
-          </p>
-        </div>
-      </section>
+    <div className="bg-[#f4f4f7]">
+      {/* ── HERO ──────────────────────────────────────────────────────────── */}
+      <HeroSection products={heroProducts} />
 
-      {/* Featured */}
-      <section className="max-w-[1280px] mx-auto px-6 py-12">
-        <div className="flex items-end justify-between mb-6">
-          <h2 className="text-2xl font-bold">Sản phẩm nổi bật</h2>
-          <Link href="/products" className="text-sm text-[var(--color-primary)]">
-            Xem tất cả →
-          </Link>
-        </div>
+      {/* ── TRUST BADGES ─────────────────────────────────────────────────── */}
+      <TrustBadges />
 
-        {featured.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {featured.map((p) => (
-              <ProductCard key={p.id} product={p} />
-            ))}
-          </div>
-        ) : (
-          <div className="py-16 text-center text-gray-400">
-            Chưa có sản phẩm nổi bật.
-          </div>
-        )}
-      </section>
+      <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-6">
+        {/* ── BRANDS ─────────────────────────────────────────────────────── */}
+        <BrandList brands={activeBrands} />
+
+        {/* ── FLASH SALE ─────────────────────────────────────────────────── */}
+        <FlashSaleSection products={flash} endTime={flashEndMs} />
+
+        {/* ── CATEGORIES ─────────────────────────────────────────────────── */}
+        <CategoryList categories={categories} />
+
+        {/* ── HOT PRODUCTS ───────────────────────────────────────────────── */}
+        <HotProductsSection products={hot} />
+
+        {/* ── FEATURED PRODUCTS ──────────────────────────────────────────── */}
+        <FeaturedProductsSection products={featured} />
+
+        {/* Empty state khi chưa seed */}
+        {empty && <EmptyState />}
+      </div>
+
+      {/* ── CTA STRIP ──────────────────────────────────────────────────── */}
+      <CtaStrip />
     </div>
   )
 }

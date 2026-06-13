@@ -16,11 +16,11 @@ export function ProductCard({ product }: { product: Product }) {
   return (
     <Link
       href={`/products/${product.slug}`}
-      className="group bg-white rounded-xl border border-[var(--color-border)] overflow-hidden hover:shadow-md transition-shadow"
+      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground transition-all hover:shadow-md"
     >
-      <div className="relative aspect-square bg-gray-50 grid place-items-center p-4">
+      <div className="relative aspect-square bg-muted flex items-center justify-center p-4">
         {discount > 0 && (
-          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[var(--color-danger)] text-white text-[11px] font-bold">
+          <span className="absolute left-2 top-2 rounded-full bg-destructive px-2 py-0.5 text-[11px] font-bold text-destructive-foreground">
             -{discount}%
           </span>
         )}
@@ -30,27 +30,29 @@ export function ProductCard({ product }: { product: Product }) {
             alt={product.name}
             fill
             sizes="(max-width: 768px) 50vw, 25vw"
-            className="object-contain p-4 group-hover:scale-105 transition-transform"
+            className="object-contain p-4 transition-transform group-hover:scale-105"
           />
         ) : (
-          <span className="text-gray-300 text-sm">Không có ảnh</span>
+          <span className="text-muted-foreground text-sm">Không có ảnh</span>
         )}
       </div>
 
-      <div className="p-3">
+      <div className="flex flex-1 flex-col gap-2 p-3">
         {product.brand && (
-          <div className="text-[11px] uppercase tracking-wide text-gray-400">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
             {product.brand.name}
           </div>
         )}
-        <h3 className="text-sm font-medium line-clamp-2 min-h-10">{product.name}</h3>
+        <h3 className="text-sm font-medium line-clamp-2 min-h-10 leading-snug">
+          {product.name}
+        </h3>
         {variant && (
-          <div className="mt-1.5 flex items-baseline gap-2">
-            <span className="text-[var(--color-danger)] font-bold">
+          <div className="mt-auto flex items-baseline gap-2">
+            <span className="text-destructive font-bold">
               {formatVND(variant.salePrice)}
             </span>
             {discount > 0 && (
-              <span className="text-xs text-gray-400 line-through">
+              <span className="text-xs text-muted-foreground line-through">
                 {formatVND(variant.originalPrice)}
               </span>
             )}
