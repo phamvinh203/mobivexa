@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { authApi } from '@/features/auth/api'
 import { ApiError } from '@/lib/api/http'
+import { useRateLimit } from '@/lib/hooks/use-rate-limit'
 
 export default function ResetPasswordPage() {
   const router = useRouter()
@@ -12,15 +13,18 @@ export default function ResetPasswordPage() {
   const [newPassword, setNewPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { cooldown, blocked, registerFailure } = useRateLimit()
 
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
+    if (blocked) return
     setError('')
     setLoading(true)
     try {
       await authApi.resetPassword({ otp, newPassword })
       router.push('/login')
     } catch (err) {
+      registerFailure()
       setError(err instanceof ApiError ? err.message : 'Đặt lại mật khẩu thất bại')
     } finally {
       setLoading(false)
@@ -62,10 +66,10 @@ export default function ResetPasswordPage() {
         </div>
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || blocked}
           className="w-full h-12 rounded-lg bg-[var(--color-primary)] text-white font-medium disabled:opacity-60"
         >
-          {loading ? 'Đang xử lý...' : 'Xác nhận'}
+          {blocked ? `Thử lại sau ${cooldown}s` : loading ? 'Đang xử lý...' : 'Xác nhận'}
         </button>
       </form>
 

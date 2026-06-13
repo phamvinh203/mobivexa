@@ -49,8 +49,8 @@ export interface CreateOrderPayload {
   addressId: string
   paymentMethod: PaymentMethod
   note?: string
-  shippingFee?: number
-  discount?: number
+  // KHÔNG nhận shippingFee/discount từ client — backend tự tính theo cart +
+  // chương trình khuyến mãi để tránh thao túng giá (mass-assignment).
 }
 
 export interface OrderListQuery extends ListQuery {

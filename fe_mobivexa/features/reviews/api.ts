@@ -1,4 +1,5 @@
 import { http } from '@/lib/api/http'
+import { assertImageFiles } from '@/lib/utils/file'
 import type {
   Review,
   ReviewSummary,
@@ -26,6 +27,7 @@ export const reviewApi = {
 
   // User: tạo review cho 1 order item (kèm tối đa 5 ảnh)
   create: (orderItemId: string, body: CreateReviewPayload, photos?: File[]) => {
+    if (photos?.length) assertImageFiles(photos)
     const form = new FormData()
     form.append('rating', String(body.rating))
     form.append('content', body.content)
@@ -35,6 +37,7 @@ export const reviewApi = {
 
   // User: /reviews/:id
   update: (id: string, body: UpdateReviewPayload, photos?: File[]) => {
+    if (photos?.length) assertImageFiles(photos)
     const form = new FormData()
     if (body.rating != null) form.append('rating', String(body.rating))
     if (body.content != null) form.append('content', body.content)
