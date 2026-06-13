@@ -8,6 +8,7 @@ import { BrandList } from '@/components/home/brand-list'
 import { CategoryList } from '@/components/home/category-list'
 import { FlashSaleSection } from '@/components/home/flash-sale-section'
 import { ProductSection } from '@/components/home/product-section'
+import { BrandShowcase } from '@/components/home/brand-showcase'
 import { CtaStrip } from '@/components/home/cta-strip'
 import { EmptyState } from '@/components/home/empty-state'
 
@@ -61,14 +62,19 @@ export default async function HomePage() {
         {/* ── CATEGORIES ─────────────────────────────────────────────────── */}
         <CategoryList categories={categories} />
 
-        {/* ── HOT PRODUCTS ───────────────────────────────────────────────── */}
-        <ProductSection
+        {/* ── HOT PRODUCTS (banner + chip thương hiệu + lưới) ────────────── */}
+        <BrandShowcase
           title="Điện thoại HOT"
           href="/products?tag=hot"
           products={hot}
+          brands={activeBrands}
+          brandsHref="/products"
+          banners={[
+            { src: '/banner_1.webp', href: '/products', alt: 'Khuyến mãi nổi bật' },
+            { src: '/banner_2.webp', href: '/products', alt: 'Ưu đãi đặc biệt' },
+          ]}
           barClassName="bg-primary"
           linkClassName="text-primary"
-          moreHref="/products?tag=hot"
           badge={
             <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-black leading-none text-white">
               <Flame className="h-3 w-3 fill-white" aria-hidden />
@@ -84,6 +90,8 @@ export default async function HomePage() {
           products={featured}
           barClassName="bg-[var(--color-sale)]"
           linkClassName="text-[var(--color-sale)]"
+          limit={5}
+          moreHref="/products?featured=true"
         />
 
         {/* Empty state khi chưa seed */}

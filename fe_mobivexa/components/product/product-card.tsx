@@ -20,7 +20,7 @@ export function ProductCard({ product }: { product: Product }) {
     >
       <div className="relative aspect-square bg-muted flex items-center justify-center overflow-hidden">
         {discount > 0 && (
-          <span className="absolute left-2 top-2 z-10 rounded-md bg-sale-strong px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
+          <span className="absolute left-2.5 top-2.5 z-10 rounded-md bg-sale-strong px-2.5 py-1 text-xs font-bold text-white shadow-sm">
             -{discount}%
           </span>
         )}
@@ -30,29 +30,29 @@ export function ProductCard({ product }: { product: Product }) {
             alt={product.name}
             fill
             sizes="(max-width: 768px) 50vw, 25vw"
-            className="object-contain p-4 transition-transform duration-300 group-hover:scale-105"
+            className="object-contain p-5 transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
           <span className="text-muted-foreground text-sm">Không có ảnh</span>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-3">
+      <div className="flex flex-1 flex-col gap-2.5 p-4">
         {product.brand && (
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
             {product.brand.name}
           </div>
         )}
-        <h3 className="text-sm font-medium line-clamp-2 min-h-10 leading-snug">
+        <h3 className="text-[15px] font-medium line-clamp-2 min-h-11 leading-snug">
           {product.name}
         </h3>
         {variant && (
-          <div className="mt-auto flex items-baseline gap-2">
-            <span className="text-sale-strong font-bold">
+          <div className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-lg font-bold text-sale-strong">
               {formatVND(variant.salePrice)}
             </span>
             {discount > 0 && (
-              <span className="text-xs text-muted-foreground line-through">
+              <span className="text-sm text-muted-foreground line-through">
                 {formatVND(variant.originalPrice)}
               </span>
             )}

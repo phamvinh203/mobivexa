@@ -17,9 +17,11 @@ interface ProductSectionProps {
   badge?: ReactNode
   /** Nếu có, hiển thị nút "Xem thêm" ở cuối section, trỏ tới link này */
   moreHref?: string
+  /** Số sản phẩm hiển thị tối đa (mặc định 10) */
+  limit?: number
 }
 
-/** Section lưới sản phẩm dùng chung cho homepage (nổi bật, HOT, ...). Hiển thị tối đa 10 sản phẩm. */
+/** Section lưới sản phẩm dùng chung cho homepage (nổi bật, HOT, ...). */
 export function ProductSection({
   title,
   href,
@@ -28,6 +30,7 @@ export function ProductSection({
   linkClassName,
   badge,
   moreHref,
+  limit = 10,
 }: ProductSectionProps) {
   if (products.length === 0) return null
 
@@ -49,7 +52,7 @@ export function ProductSection({
       </header>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
-        {products.slice(0, 10).map((p) => (
+        {products.slice(0, limit).map((p) => (
           <ProductCard key={p.id} product={p} />
         ))}
       </div>
