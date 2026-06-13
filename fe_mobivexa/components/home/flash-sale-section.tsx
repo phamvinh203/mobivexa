@@ -3,14 +3,11 @@ import Image from 'next/image'
 import { CountdownTimer } from './countdown-timer'
 import { formatVND, discountPercent } from '@/lib/utils/format'
 import type { Product } from '@/features/products/types'
+import { coverImageUrl } from '@/features/products/utils'
 
 interface FlashSaleSectionProps {
   products: Product[]
   endTime: number
-}
-
-function coverOf(p: Product): string | undefined {
-  return p.images?.find((i) => i.isCover)?.url ?? p.images?.[0]?.url
 }
 
 export function FlashSaleSection({ products, endTime }: FlashSaleSectionProps) {
@@ -43,7 +40,7 @@ export function FlashSaleSection({ products, endTime }: FlashSaleSectionProps) {
           {products.map((p) => {
             const v = p.variants?.[0]
             const disc = v ? discountPercent(v.originalPrice, v.salePrice) : 0
-            const cover = coverOf(p)
+            const cover = coverImageUrl(p)
 
             return (
               <Link

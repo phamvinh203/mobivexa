@@ -2,13 +2,10 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { formatVND } from '@/lib/utils/format'
 import type { Product } from '@/features/products/types'
+import { coverImageUrl } from '@/features/products/utils'
 
 interface HeroSectionProps {
   products: Product[]
-}
-
-function coverOf(p: Product): string | undefined {
-  return p.images?.find((i) => i.isCover)?.url ?? p.images?.[0]?.url
 }
 
 export function HeroSection({ products }: HeroSectionProps) {
@@ -80,7 +77,7 @@ export function HeroSection({ products }: HeroSectionProps) {
         {heroProducts.length > 0 && (
           <div className="relative hidden md:grid grid-cols-3 gap-3">
             {heroProducts.map((p, i) => {
-              const cover = coverOf(p)
+              const cover = coverImageUrl(p)
               return (
                 <Link
                   key={p.id}

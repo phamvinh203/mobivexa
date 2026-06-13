@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 
@@ -46,15 +47,17 @@ export function ClientFooter() {
       <div className="border-b border-white/10">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-6 px-6 py-8 md:flex-row md:items-center md:justify-between">
           <div className="max-w-sm">
-            <div className="flex items-center gap-2">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-[var(--color-primary)] to-fuchsia-500 font-black text-white shadow-md shadow-indigo-500/30">
-                M
-              </span>
-              <span className="text-xl font-extrabold tracking-tight text-white">
-                Mobi<span className="text-indigo-300">vexa</span>
-              </span>
-            </div>
-            <p className="mt-3 text-sm text-white/50">
+            <Link href="/" aria-label="Mobivexa — Trang chủ" className="mb-3 inline-block">
+              <Image
+                src="/mobivexa-logo-white.png"
+                alt="Mobivexa"
+                width={143}
+                height={40}
+                sizes="143px"
+                className="h-9 w-auto"
+              />
+            </Link>
+            <p className="text-sm text-white/50">
               Hệ thống bán lẻ điện thoại chính hãng. Mua sắm thông minh, sống đẹp hơn.
             </p>
           </div>

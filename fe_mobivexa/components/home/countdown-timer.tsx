@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 
 function getTimeLeft(end: number) {
   const diff = Math.max(0, end - Date.now())
@@ -23,7 +23,7 @@ export function CountdownTimer({ endTime }: { endTime: number }) {
   }, [endTime])
 
   const pad = (n: number) => String(n).padStart(2, '0')
-  const cells = useMemo(() => [t.h, t.m, t.s].map(pad), [t])
+  const cells = [t.h, t.m, t.s].map(pad)
 
   // Tránh hydration mismatch - chỉ render khi mounted client-side
   if (!mounted) {

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import Image from 'next/image'
 import { useAuth } from '@/lib/auth/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -58,13 +59,20 @@ export function ClientNavbar() {
       <div className="border-b border-[var(--color-border)] bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-[68px] max-w-[1280px] items-center gap-3 px-4 sm:gap-5 sm:px-6">
           {/* Logo */}
-          <Link href="/" className="flex shrink-0 items-center gap-2" aria-label="Mobivexa — Trang chủ">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-accent)] font-black text-white shadow-md shadow-indigo-500/30">
-              M
-            </span>
-            <span className="hidden text-xl font-extrabold tracking-tight text-ink sm:inline">
-              Mobi<span className="text-[var(--color-primary)]">vexa</span>
-            </span>
+          <Link
+            href="/"
+            className="flex shrink-0 items-center transition-opacity hover:opacity-90"
+            aria-label="Mobivexa — Trang chủ"
+          >
+            <Image
+              src="/mobivexa-logo.png"
+              alt="Mobivexa"
+              width={129}
+              height={36}
+              sizes="(max-width: 640px) 116px, 129px"
+              className="h-8 w-auto sm:h-9"
+              priority
+            />
           </Link>
 
           {/* Search */}

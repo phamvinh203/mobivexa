@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import type { Product } from '@/features/products/types'
+import { coverImageUrl } from '@/features/products/utils'
 import { formatVND, discountPercent } from '@/lib/utils/format'
 
 /** Card sản phẩm dùng lại ở homepage, listing, category, brand */
 export function ProductCard({ product }: { product: Product }) {
-  const cover =
-    product.images?.find((i) => i.isCover)?.url ?? product.images?.[0]?.url
+  const cover = coverImageUrl(product)
   // Lấy variant rẻ nhất để hiển thị giá "từ ..."
   const variant = product.variants?.[0]
   const discount = variant

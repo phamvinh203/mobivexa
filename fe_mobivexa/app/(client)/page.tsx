@@ -6,8 +6,7 @@ import { TrustBadges } from '@/components/home/trust-badges'
 import { BrandList } from '@/components/home/brand-list'
 import { CategoryList } from '@/components/home/category-list'
 import { FlashSaleSection } from '@/components/home/flash-sale-section'
-import { HotProductsSection } from '@/components/home/hot-products-section'
-import { FeaturedProductsSection } from '@/components/home/featured-products-section'
+import { ProductSection } from '@/components/home/product-section'
 import { CtaStrip } from '@/components/home/cta-strip'
 import { EmptyState } from '@/components/home/empty-state'
 
@@ -41,13 +40,12 @@ export default async function HomePage() {
     .slice(0, 8)
   // Lấy active brands, limit 12 items
   const activeBrands = brands.filter((b) => b.isActive === true).slice(0, 12)
-  const heroProducts = featured.slice(0, 3)
   const empty = featured.length === 0 && hot.length === 0
 
   return (
     <div className="bg-[#f4f4f7]">
       {/* ── HERO ──────────────────────────────────────────────────────────── */}
-      <HeroSection products={heroProducts} />
+      <HeroSection products={featured} />
 
       {/* ── TRUST BADGES ─────────────────────────────────────────────────── */}
       <TrustBadges />
@@ -63,10 +61,27 @@ export default async function HomePage() {
         <CategoryList categories={categories} />
 
         {/* ── HOT PRODUCTS ───────────────────────────────────────────────── */}
-        <HotProductsSection products={hot} />
+        <ProductSection
+          title="Điện thoại HOT"
+          href="/products?tag=hot"
+          products={hot}
+          barClassName="bg-primary"
+          linkClassName="text-primary"
+          badge={
+            <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-black leading-none text-white">
+              🔥 HOT
+            </span>
+          }
+        />
 
         {/* ── FEATURED PRODUCTS ──────────────────────────────────────────── */}
-        <FeaturedProductsSection products={featured} />
+        <ProductSection
+          title="Sản phẩm nổi bật"
+          href="/products?featured=true"
+          products={featured}
+          barClassName="bg-[var(--color-sale)]"
+          linkClassName="text-[var(--color-sale)]"
+        />
 
         {/* Empty state khi chưa seed */}
         {empty && <EmptyState />}

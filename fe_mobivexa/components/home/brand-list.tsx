@@ -52,9 +52,13 @@ export function BrandList({ brands }: BrandListProps) {
                       }
                     />
                   ) : (
-                    <div className="grid h-10 w-10 place-items-center rounded-full bg-primary-light text-base font-black text-primary mx-auto">
-                      {brand.name.charAt(0)}
-                    </div>
+                    <Image
+                      src="/mobivexa-logo.png"
+                      alt={brand.name}
+                      fill
+                      sizes="96px"
+                      className="object-contain opacity-70"
+                    />
                   )}
                 </div>
                 <span className="text-[11px] font-semibold text-gray-700 whitespace-nowrap">
