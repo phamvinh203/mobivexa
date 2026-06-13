@@ -1,10 +1,11 @@
+import { PackageOpen } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 
 export function EmptyState() {
   return (
     <Card className="py-20 text-center">
       <CardContent>
-        <div className="mb-3 text-5xl">📦</div>
+        <PackageOpen className="mx-auto mb-3 h-14 w-14 text-gray-300" aria-hidden />
         <div className="font-semibold text-gray-600">Chưa có sản phẩm nào</div>
         <div className="mt-1 text-sm text-gray-400">
           Chạy{' '}

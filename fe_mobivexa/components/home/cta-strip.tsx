@@ -1,10 +1,12 @@
 import Link from 'next/link'
+import { Smartphone, Sparkles, Trophy } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
-const CTA_LINKS = [
-  ['/products', '📱 Tất cả sản phẩm'],
-  ['/products?tag=moi-nhat', '✨ Hàng mới về'],
-  ['/products?tag=ban-chay', '🏆 Bán chạy'],
-] as const
+const CTA_LINKS: { href: string; label: string; Icon: LucideIcon }[] = [
+  { href: '/products', label: 'Tất cả sản phẩm', Icon: Smartphone },
+  { href: '/products?tag=moi-nhat', label: 'Hàng mới về', Icon: Sparkles },
+  { href: '/products?tag=ban-chay', label: 'Bán chạy', Icon: Trophy },
+]
 
 export function CtaStrip() {
   return (
@@ -18,12 +20,13 @@ export function CtaStrip() {
           <div className="mt-0.5 text-xs text-white/40">Miễn phí · 8:00 – 22:00 hằng ngày</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {CTA_LINKS.map(([href, label]) => (
+          {CTA_LINKS.map(({ href, label, Icon }) => (
             <Link
               key={href}
               href={href}
-              className="inline-flex items-center justify-center rounded-lg border border-white/20 px-3 py-2 text-xs text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/20 px-3 py-2 text-xs text-white/80 transition-colors hover:bg-white/10 hover:text-white"
             >
+              <Icon className="h-4 w-4" aria-hidden />
               {label}
             </Link>
           ))}

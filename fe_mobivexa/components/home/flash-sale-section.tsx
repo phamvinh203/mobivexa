@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { Zap, ChevronRight, Smartphone } from 'lucide-react'
 import { CountdownTimer } from './countdown-timer'
 import { formatVND, discountPercent } from '@/lib/utils/format'
 import type { Product } from '@/features/products/types'
@@ -18,8 +19,9 @@ export function FlashSaleSection({ products, endTime }: FlashSaleSectionProps) {
       {/* Header với gradient */}
       <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-[#ff7a18] via-[var(--color-sale)] to-[var(--color-sale-strong)] px-5 py-3.5">
         <div className="flex items-center gap-3">
-          <span className="text-lg font-extrabold uppercase tracking-tight text-white drop-shadow">
-            ⚡ Flash Sale
+          <span className="inline-flex items-center gap-1.5 text-lg font-extrabold uppercase tracking-tight text-white drop-shadow">
+            <Zap className="h-5 w-5 fill-white" aria-hidden />
+            Flash Sale
           </span>
           <div className="hidden items-center gap-2 text-xs font-medium text-white/90 sm:flex">
             Kết thúc sau
@@ -28,9 +30,10 @@ export function FlashSaleSection({ products, endTime }: FlashSaleSectionProps) {
         </div>
         <Link
           href="/products?tag=giam-gia"
-          className="text-xs font-semibold text-white/90 hover:text-white"
+          className="inline-flex items-center gap-0.5 text-xs font-semibold text-white/90 hover:text-white"
         >
-          Xem tất cả →
+          Xem tất cả
+          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         </Link>
       </div>
 
@@ -63,7 +66,7 @@ export function FlashSaleSection({ products, endTime }: FlashSaleSectionProps) {
                       className="object-contain p-3 transition-transform group-hover:scale-105"
                     />
                   ) : (
-                    <span className="text-3xl">📱</span>
+                    <Smartphone className="h-8 w-8 text-muted-foreground" aria-hidden />
                   )}
                 </div>
 

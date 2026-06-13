@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { Smartphone } from 'lucide-react'
 import { formatVND } from '@/lib/utils/format'
 import type { Product } from '@/features/products/types'
 import { coverImageUrl } from '@/features/products/utils'
@@ -96,7 +97,9 @@ export function HeroSection({ products }: HeroSectionProps) {
                         className="object-contain transition-transform group-hover:scale-110"
                       />
                     ) : (
-                      <div className="grid h-full place-items-center text-3xl">📱</div>
+                      <div className="grid h-full place-items-center">
+                        <Smartphone className="h-8 w-8 text-white/40" aria-hidden />
+                      </div>
                     )}
                   </div>
                   <div className="mt-2 line-clamp-1 text-[11px] font-semibold text-white/90">

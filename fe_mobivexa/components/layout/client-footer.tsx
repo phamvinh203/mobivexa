@@ -1,7 +1,14 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { Phone, Mail, MapPin, Truck, ShieldCheck, BadgeCheck } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import {
+  FacebookIcon,
+  InstagramIcon,
+  YoutubeIcon,
+  TiktokIcon,
+} from '@/components/icons/social-icons'
 
 const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   {
@@ -34,10 +41,10 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
 ]
 
 const SOCIAL = [
-  { label: 'Facebook', icon: 'f' },
-  { label: 'Instagram', icon: '◉' },
-  { label: 'YouTube', icon: '▶' },
-  { label: 'TikTok', icon: '♪' },
+  { label: 'Facebook', Icon: FacebookIcon, href: '#' },
+  { label: 'Instagram', Icon: InstagramIcon, href: '#' },
+  { label: 'YouTube', Icon: YoutubeIcon, href: '#' },
+  { label: 'TikTok', Icon: TiktokIcon, href: '#' },
 ]
 
 export function ClientFooter() {
@@ -106,24 +113,30 @@ export function ClientFooter() {
           <h4 className="mb-3 text-sm font-semibold text-white">Liên hệ</h4>
           <ul className="space-y-2.5 text-sm text-white/55">
             <li className="flex items-center gap-2">
-              📞{' '}
+              <Phone className="h-4 w-4 shrink-0" aria-hidden />
               <a href="tel:18001234" className="hover:text-indigo-300">
                 1800 1234
               </a>
             </li>
-            <li className="flex items-center gap-2">✉ support@mobivexa.com</li>
-            <li className="flex items-start gap-2">🏢 123 Lê Lợi, Q.1, TP.HCM</li>
+            <li className="flex items-center gap-2">
+              <Mail className="h-4 w-4 shrink-0" aria-hidden />
+              support@mobivexa.com
+            </li>
+            <li className="flex items-start gap-2">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              123 Lê Lợi, Q.1, TP.HCM
+            </li>
           </ul>
           <div className="mt-4 flex gap-2">
-            {SOCIAL.map((s) => (
+            {SOCIAL.map(({ label, Icon, href }) => (
               <a
-                key={s.label}
-                href="#"
-                aria-label={s.label}
-                title={s.label}
-                className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-sm text-white/70 transition-colors hover:bg-[var(--color-primary)] hover:text-white"
+                key={label}
+                href={href}
+                aria-label={label}
+                title={label}
+                className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white/70 transition-colors hover:bg-[var(--color-primary)] hover:text-white"
               >
-                {s.icon}
+                <Icon className="h-4 w-4" />
               </a>
             ))}
           </div>
@@ -135,13 +148,16 @@ export function ClientFooter() {
         <div className="mx-auto flex max-w-[1280px] flex-col items-center justify-between gap-3 px-6 py-4 sm:flex-row">
           <div className="flex flex-wrap items-center gap-4 text-xs text-white/50">
             <span className="flex items-center gap-1.5">
-              ✅ Chính hãng 100%
+              <BadgeCheck className="h-4 w-4" aria-hidden />
+              Chính hãng 100%
             </span>
             <span className="flex items-center gap-1.5">
-              🛡️ Bảo hành 12 tháng
+              <ShieldCheck className="h-4 w-4" aria-hidden />
+              Bảo hành 12 tháng
             </span>
             <span className="flex items-center gap-1.5">
-              🚚 Giao nhanh 2 giờ
+              <Truck className="h-4 w-4" aria-hidden />
+              Giao nhanh 2 giờ
             </span>
           </div>
           <div className="flex items-center gap-2">

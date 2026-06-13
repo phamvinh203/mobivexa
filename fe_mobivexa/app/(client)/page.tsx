@@ -1,3 +1,4 @@
+import { Flame } from 'lucide-react'
 import { productApi } from '@/features/products/api'
 import { categoryApi } from '@/features/categories/api'
 import { brandApi } from '@/features/brands/api'
@@ -67,9 +68,11 @@ export default async function HomePage() {
           products={hot}
           barClassName="bg-primary"
           linkClassName="text-primary"
+          moreHref="/products?tag=hot"
           badge={
-            <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-black leading-none text-white">
-              🔥 HOT
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-black leading-none text-white">
+              <Flame className="h-3 w-3 fill-white" aria-hidden />
+              HOT
             </span>
           }
         />

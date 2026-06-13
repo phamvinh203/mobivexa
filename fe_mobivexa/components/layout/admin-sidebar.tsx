@@ -2,13 +2,27 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import {
+  LayoutDashboard,
+  Users,
+  FolderTree,
+  Tag,
+  Bookmark,
+  Package,
+  BarChart3,
+  ShoppingCart,
+  CreditCard,
+  Star,
+  ExternalLink,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '@/lib/auth/auth-context'
 import { UserRole } from '@/types/api'
 
 interface NavItem {
   label: string
   href: string
-  icon: string
+  icon: LucideIcon
   adminOnly?: boolean
 }
 
@@ -20,30 +34,30 @@ interface NavGroup {
 const NAV: NavGroup[] = [
   {
     title: 'TỔNG QUAN',
-    items: [{ label: 'Dashboard', href: '/admin', icon: '🏠' }],
+    items: [{ label: 'Dashboard', href: '/admin', icon: LayoutDashboard }],
   },
   {
     title: 'DANH MỤC',
     items: [
-      { label: 'Người dùng', href: '/admin/users', icon: '👥', adminOnly: true },
-      { label: 'Danh mục', href: '/admin/categories', icon: '🗂' },
-      { label: 'Thương hiệu', href: '/admin/brands', icon: '🏷' },
-      { label: 'Tags', href: '/admin/tags', icon: '🔖' },
+      { label: 'Người dùng', href: '/admin/users', icon: Users, adminOnly: true },
+      { label: 'Danh mục', href: '/admin/categories', icon: FolderTree },
+      { label: 'Thương hiệu', href: '/admin/brands', icon: Tag },
+      { label: 'Tags', href: '/admin/tags', icon: Bookmark },
     ],
   },
   {
     title: 'SẢN PHẨM',
     items: [
-      { label: 'Sản phẩm', href: '/admin/products', icon: '📦' },
-      { label: 'Tồn kho', href: '/admin/inventory', icon: '📊' },
+      { label: 'Sản phẩm', href: '/admin/products', icon: Package },
+      { label: 'Tồn kho', href: '/admin/inventory', icon: BarChart3 },
     ],
   },
   {
     title: 'BÁN HÀNG',
     items: [
-      { label: 'Đơn hàng', href: '/admin/orders', icon: '🛒' },
-      { label: 'Thanh toán', href: '/admin/payment', icon: '💳' },
-      { label: 'Đánh giá', href: '/admin/reviews', icon: '⭐' },
+      { label: 'Đơn hàng', href: '/admin/orders', icon: ShoppingCart },
+      { label: 'Thanh toán', href: '/admin/payment', icon: CreditCard },
+      { label: 'Đánh giá', href: '/admin/reviews', icon: Star },
     ],
   },
 ]
@@ -84,6 +98,7 @@ export function AdminSidebar() {
                   item.href === '/admin'
                     ? pathname === '/admin'
                     : pathname.startsWith(item.href)
+                const Icon = item.icon
                 return (
                   <Link
                     key={item.href}
@@ -94,7 +109,7 @@ export function AdminSidebar() {
                         : 'text-gray-400 hover:bg-[var(--color-admin-sidebar-hover)] hover:text-white'
                     }`}
                   >
-                    <span>{item.icon}</span>
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden />
                     {item.label}
                   </Link>
                 )
@@ -105,8 +120,9 @@ export function AdminSidebar() {
 
       <div className="p-4 border-t border-white/10 text-xs text-gray-500">
         <div>v1.0.0</div>
-        <Link href="/" className="hover:text-white">
-          🌐 Xem trang khách hàng ↗
+        <Link href="/" className="inline-flex items-center gap-1.5 hover:text-white">
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          Xem trang khách hàng
         </Link>
       </div>
     </aside>

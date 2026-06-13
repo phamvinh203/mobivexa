@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import Image from 'next/image'
+import { Phone, Settings, ShoppingCart, User, Package } from 'lucide-react'
 import { useAuth } from '@/lib/auth/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,11 +35,15 @@ export function ClientNavbar() {
       <div className="bg-ink text-xs text-white/70">
         <div className="mx-auto flex h-9 max-w-[1280px] items-center justify-between px-4 sm:px-6">
           <span className="hidden sm:inline">
-            🔥 Hàng chính hãng · Bảo hành 12 tháng · Trả góp 0%
+            Hàng chính hãng · Bảo hành 12 tháng · Trả góp 0%
           </span>
           <div className="flex items-center gap-4">
-            <a href="tel:18001234" className="transition-colors hover:text-white">
-              📞 1800&nbsp;1234
+            <a
+              href="tel:18001234"
+              className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
+            >
+              <Phone className="h-3.5 w-3.5" aria-hidden />
+              1800&nbsp;1234
             </a>
             <Link href="/orders" className="hidden transition-colors hover:text-white sm:inline">
               Tra cứu đơn hàng
@@ -46,9 +51,10 @@ export function ClientNavbar() {
             {isStaff && (
               <Link
                 href="/admin"
-                className="font-semibold text-[var(--color-highlight)] transition-colors hover:brightness-110"
+                className="inline-flex items-center gap-1 font-semibold text-[var(--color-highlight)] transition-colors hover:brightness-110"
               >
-                ⚙ Quản trị
+                <Settings className="h-3.5 w-3.5" aria-hidden />
+                Quản trị
               </Link>
             )}
           </div>
@@ -104,17 +110,10 @@ export function ClientNavbar() {
             <Link
               href="/cart"
               aria-label="Giỏ hàng"
-              className="hidden sm:inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
+              className="inline-flex items-center justify-center rounded-lg p-2 text-gray-700 transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)] sm:px-3 sm:py-2"
             >
-              <span className="text-lg" aria-hidden>🛒</span>
-              <span className="ml-2">Giỏ hàng</span>
-            </Link>
-            <Link
-              href="/cart"
-              aria-label="Giỏ hàng"
-              className="sm:inline-flex items-center justify-center rounded-lg p-2 text-gray-700 transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
-            >
-              <span className="text-lg">🛒</span>
+              <ShoppingCart className="h-5 w-5" aria-hidden />
+              <span className="ml-2 hidden text-sm font-medium sm:inline">Giỏ hàng</span>
             </Link>
 
             {isAuthenticated ? (
@@ -139,17 +138,27 @@ export function ClientNavbar() {
                   </div>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem>
-                    <Link href="/account" className="w-full">👤 Tài khoản của tôi</Link>
+                    <Link href="/account" className="flex w-full items-center gap-2">
+                      <User className="h-4 w-4" aria-hidden />
+                      Tài khoản của tôi
+                    </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem>
-                    <Link href="/orders" className="w-full">📦 Đơn hàng</Link>
+                    <Link href="/orders" className="flex w-full items-center gap-2">
+                      <Package className="h-4 w-4" aria-hidden />
+                      Đơn hàng
+                    </Link>
                   </DropdownMenuItem>
                   {isStaff && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem>
-                        <Link href="/admin" className="w-full font-medium text-[var(--color-primary)]">
-                          ⚙ Trang quản trị
+                        <Link
+                          href="/admin"
+                          className="flex w-full items-center gap-2 font-medium text-[var(--color-primary)]"
+                        >
+                          <Settings className="h-4 w-4" aria-hidden />
+                          Trang quản trị
                         </Link>
                       </DropdownMenuItem>
                     </>
