@@ -10,8 +10,17 @@ const nextConfig: NextConfig = {
   // Cho phép next/image tải ảnh từ backend. CHỈNH hostname/port cho khớp
   // nơi backend serve ảnh sản phẩm trước khi lên production.
   images: {
+    // placehold.co (logo brand) trả SVG — cần bật dangerouslyAllowSVG.
+    // CSP sandbox ngăn script trong SVG chạy.
+    dangerouslyAllowSVG: true,
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
     remotePatterns: [
       { protocol: "http", hostname: "localhost", port: "5000", pathname: "/**" },
+      // Ảnh sản phẩm crawl từ cellphones.com.vn
+      { protocol: "https", hostname: "cdn.cellphones.com.vn", pathname: "/**" },
+      { protocol: "https", hostname: "cdn2.cellphones.com.vn", pathname: "/**" },
+      // Logo brand placeholder (seed)
+      { protocol: "https", hostname: "placehold.co", pathname: "/**" },
       // Ví dụ production (bỏ comment + sửa đúng domain CDN/storage):
       // { protocol: "https", hostname: "cdn.mobivexa.com", pathname: "/**" },
     ],
