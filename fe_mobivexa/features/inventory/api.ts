@@ -1,14 +1,9 @@
 import { http } from '@/lib/api/http'
-import type { ListQuery } from '@/types/api'
-import type { ProductVariant, Product } from '../products/types'
+import type { InventoryListResult, InventoryQuery } from './types'
 
-/** Mỗi dòng tồn kho = variant kèm thông tin product cha */
-export interface InventoryRow extends ProductVariant {
-  product?: Pick<Product, 'id' | 'name' | 'slug'>
-}
-
-// Khớp src/routes/inventory.route.ts — /admin/inventory (STAFF + ADMIN, read-only)
-export const inventoryApi = {
-  list: (query?: ListQuery) =>
-    http.get<InventoryRow[]>('/admin/inventory', { params: query }),
+// Khớp src/routes/inventory.route.ts — GET /api/admin/inventory (STAFF + ADMIN)
+// Response: { variants[], summary{ totalVariants, totalStock, outOfStock, lowStock, inStock }, pagination }
+export const adminInventoryApi = {
+  list: (query?: InventoryQuery) =>
+    http.get<InventoryListResult>('/admin/inventory', { params: query }),
 }
