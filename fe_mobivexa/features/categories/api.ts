@@ -1,0 +1,42 @@
+import { http } from '@/lib/api/http'
+import type { ListQuery } from '@/types/api'
+import type { Category, CategoryPayload } from './types'
+
+// Khớp src/routes/category.route.ts
+export const categoryApi = {
+  // Public: /categories
+  list: () => http.get<Category[]>('/categories', { auth: false }),
+  getBySlug: (slug: string) =>
+    http.get<Category>(`/categories/${slug}`, { auth: false }),
+}
+
+// Admin: /admin/categories (STAFF + ADMIN)
+export const adminCategoryApi = {
+  list: (query?: ListQuery) =>
+    http.get<Category[]>('/admin/categories', { params: query }),
+
+  create: (body: CategoryPayload, image?: File) => {
+    const form = new FormData()
+    form.append('name', body.name)
+    if (body.description) form.append('description', body.description)
+    if (body.parentId) form.append('parentId', body.parentId)
+    if (body.sortOrder != null) form.append('sortOrder', String(body.sortOrder))
+    if (image) form.append('image', image)
+    return http.post<Category>('/admin/categories', form)
+  },
+
+  update: (id: string, body: CategoryPayload, image?: File) => {
+    const form = new FormData()
+    if (body.name) form.append('name', body.name)
+    if (body.description != null) form.append('description', body.description)
+    if (body.parentId != null) form.append('parentId', body.parentId)
+    if (body.sortOrder != null) form.append('sortOrder', String(body.sortOrder))
+    if (image) form.append('image', image)
+    return http.put<Category>(`/admin/categories/${id}`, form)
+  },
+
+  remove: (id: string) =>
+    http.delete<{ message: string }>(`/admin/categories/${id}`),
+  toggleStatus: (id: string) =>
+    http.patch<Category>(`/admin/categories/${id}/status`),
+}
