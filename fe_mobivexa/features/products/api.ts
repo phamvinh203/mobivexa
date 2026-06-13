@@ -1,8 +1,10 @@
 import { http } from '@/lib/api/http'
+import { assertImageFiles } from '@/lib/utils/file'
 import type {
   Product,
   ProductVariant,
   ProductListQuery,
+  ProductPayload,
   VariantPayload,
   UpdateStockPayload,
 } from './types'
@@ -20,12 +22,12 @@ export const productApi = {
 
 // Admin: /admin/products (STAFF + ADMIN)
 export const adminProductApi = {
-  // body JSON + ảnh: backend nhận multipart 'images' (tối đa 10)
-  create: (body: Record<string, unknown>, images?: File[]) => {
+  // body có kiểu chặt ProductPayload → không cho phép inject field tuỳ ý
+  create: (body: ProductPayload, images?: File[]) => {
     const form = buildProductForm(body, images)
     return http.post<Product>('/admin/products', form)
   },
-  update: (id: string, body: Record<string, unknown>, images?: File[]) => {
+  update: (id: string, body: Partial<ProductPayload>, images?: File[]) => {
     const form = buildProductForm(body, images)
     return http.put<Product>(`/admin/products/${id}`, form)
   },
@@ -36,9 +38,12 @@ export const adminProductApi = {
   toggleFeatured: (id: string) =>
     http.patch<Product>(`/admin/products/${id}/featured`),
 
-  // Images
+  // Images (buildProductForm tự validate ảnh)
   uploadImages: (id: string, images: File[]) =>
-    http.post<Product>(`/admin/products/${id}/images`, buildProductForm({}, images)),
+    http.post<Product>(
+      `/admin/products/${id}/images`,
+      buildProductForm({}, images),
+    ),
   removeImage: (id: string, imageId: string) =>
     http.delete<{ message: string }>(`/admin/products/${id}/images/${imageId}`),
   setCover: (id: string, imageId: string) =>
@@ -60,10 +65,8 @@ export const adminProductApi = {
     ),
 }
 
-function buildProductForm(
-  body: Record<string, unknown>,
-  images?: File[],
-): FormData {
+function buildProductForm(body: object, images?: File[]): FormData {
+  if (images?.length) assertImageFiles(images)
   const form = new FormData()
   for (const [key, value] of Object.entries(body)) {
     if (value === undefined || value === null) continue

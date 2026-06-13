@@ -1,4 +1,5 @@
 import { http } from '@/lib/api/http'
+import { assertImageFile } from '@/lib/utils/file'
 import type { ListQuery } from '@/types/api'
 import type { Category, CategoryPayload } from './types'
 
@@ -16,6 +17,7 @@ export const adminCategoryApi = {
     http.get<Category[]>('/admin/categories', { params: query }),
 
   create: (body: CategoryPayload, image?: File) => {
+    if (image) assertImageFile(image)
     const form = new FormData()
     form.append('name', body.name)
     if (body.description) form.append('description', body.description)
@@ -26,6 +28,7 @@ export const adminCategoryApi = {
   },
 
   update: (id: string, body: CategoryPayload, image?: File) => {
+    if (image) assertImageFile(image)
     const form = new FormData()
     if (body.name) form.append('name', body.name)
     if (body.description != null) form.append('description', body.description)

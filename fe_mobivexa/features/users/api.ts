@@ -1,4 +1,5 @@
 import { http } from '@/lib/api/http'
+import { assertImageFile } from '@/lib/utils/file'
 import type { ListQuery } from '@/types/api'
 import type {
   AuthUser,
@@ -21,6 +22,7 @@ export const userApi = {
     http.put<{ message: string }>('/users/me/password', body),
 
   uploadAvatar: (file: File) => {
+    assertImageFile(file)
     const form = new FormData()
     form.append('avatar', file)
     return http.post<AuthUser>('/users/me/avatar', form)

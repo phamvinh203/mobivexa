@@ -4,21 +4,26 @@ import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { authApi } from '@/features/auth/api'
 import { ApiError } from '@/lib/api/http'
+import { useRateLimit } from '@/lib/hooks/use-rate-limit'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { cooldown, blocked, registerFailure } = useRateLimit(3, 60)
 
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
+    if (blocked) return
     setError('')
     setLoading(true)
     try {
       await authApi.forgotPassword({ email })
+      registerFailure() // tính cả lần gửi thành công để chặn spam email
       setSent(true)
     } catch (err) {
+      registerFailure()
       setError(err instanceof ApiError ? err.message : 'Có lỗi xảy ra')
     } finally {
       setLoading(false)
@@ -58,10 +63,10 @@ export default function ForgotPasswordPage() {
           />
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || blocked}
             className="w-full h-12 rounded-lg bg-[var(--color-primary)] text-white font-medium disabled:opacity-60"
           >
-            {loading ? 'Đang gửi...' : 'Gửi mã đặt lại'}
+            {blocked ? `Thử lại sau ${cooldown}s` : loading ? 'Đang gửi...' : 'Gửi mã đặt lại'}
           </button>
         </form>
       )}

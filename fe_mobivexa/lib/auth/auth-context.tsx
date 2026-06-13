@@ -11,12 +11,6 @@ import {
 import { authApi } from '@/features/auth/api'
 import { userApi } from '@/features/users/api'
 import type { AuthUser, LoginPayload } from '@/features/auth/types'
-import {
-  setTokens,
-  clearTokens,
-  getAccessToken,
-  getRefreshToken,
-} from './token-storage'
 
 interface AuthContextValue {
   user: AuthUser | null
@@ -33,41 +27,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Khôi phục phiên khi load app: nếu có token thì lấy lại profile
+  // Khôi phục phiên: thử lấy profile qua BFF (cookie HttpOnly tự gửi). Không cần
+  // đọc token — nếu cookie không hợp lệ, getMe trả 401 và user giữ null.
   useEffect(() => {
-    const token = getAccessToken()
-    if (!token) {
-      setLoading(false)
-      return
-    }
     userApi
       .getMe()
       .then(setUser)
-      .catch(() => clearTokens())
+      .catch(() => setUser(null))
       .finally(() => setLoading(false))
   }, [])
 
   const login = useCallback(async (payload: LoginPayload) => {
-    const result = await authApi.login(payload)
-    setTokens(result.accessToken, result.refreshToken)
-    setUser(result.user)
-    return result.user
+    const { user: loggedIn } = await authApi.login(payload)
+    setUser(loggedIn)
+    return loggedIn
   }, [])
 
   const logout = useCallback(async () => {
-    const refreshToken = getRefreshToken()
-    if (refreshToken) {
-      await authApi.logout(refreshToken).catch(() => {
-        /* kể cả lỗi vẫn xoá token local */
-      })
-    }
-    clearTokens()
+    await authApi.logout().catch(() => {
+      /* kể cả lỗi vẫn xoá state local */
+    })
     setUser(null)
   }, [])
 
   const refreshUser = useCallback(async () => {
-    const me = await userApi.getMe()
-    setUser(me)
+    setUser(await userApi.getMe())
   }, [])
 
   return (

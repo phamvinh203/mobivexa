@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/auth-context'
 import { ApiError } from '@/lib/api/http'
+import { useRateLimit } from '@/lib/hooks/use-rate-limit'
 import { UserRole } from '@/types/api'
 
 export default function LoginPage() {
@@ -14,17 +15,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { cooldown, blocked, registerFailure, reset } = useRateLimit()
 
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
+    if (blocked) return
     setError('')
     setLoading(true)
     try {
       const user = await login({ email, password })
+      reset()
       // STAFF/ADMIN vào trang quản trị, còn lại về trang chủ
       const isStaff = user.role === UserRole.ADMIN || user.role === UserRole.STAFF
       router.push(isStaff ? '/admin' : '/')
     } catch (err) {
+      registerFailure()
       setError(err instanceof ApiError ? err.message : 'Đăng nhập thất bại')
     } finally {
       setLoading(false)
@@ -71,10 +76,14 @@ export default function LoginPage() {
         </div>
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || blocked}
           className="w-full h-12 rounded-lg bg-[var(--color-primary)] text-white font-medium disabled:opacity-60"
         >
-          {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
+          {blocked
+            ? `Thử lại sau ${cooldown}s`
+            : loading
+              ? 'Đang đăng nhập...'
+              : 'Đăng nhập'}
         </button>
       </form>
 

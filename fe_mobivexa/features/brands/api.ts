@@ -1,4 +1,5 @@
 import { http } from '@/lib/api/http'
+import { assertImageFile } from '@/lib/utils/file'
 import type { ListQuery } from '@/types/api'
 import type { Brand, BrandPayload } from './types'
 
@@ -16,6 +17,7 @@ export const adminBrandApi = {
     http.get<Brand[]>('/admin/brands', { params: query }),
 
   create: (body: BrandPayload, logo?: File) => {
+    if (logo) assertImageFile(logo)
     const form = new FormData()
     form.append('name', body.name)
     if (body.description) form.append('description', body.description)
@@ -24,6 +26,7 @@ export const adminBrandApi = {
   },
 
   update: (id: string, body: BrandPayload, logo?: File) => {
+    if (logo) assertImageFile(logo)
     const form = new FormData()
     if (body.name) form.append('name', body.name)
     if (body.description != null) form.append('description', body.description)
