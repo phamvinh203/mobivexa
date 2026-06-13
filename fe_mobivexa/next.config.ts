@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Chỉ định rõ workspace root để tránh Next.js nhận nhầm khi có nhiều
+  // package-lock.json trên máy (ví dụ C:\Users\Admin\package-lock.json).
+  turbopack: {
+    root: __dirname,
+  },
+
   // Cho phép next/image tải ảnh từ backend. CHỈNH hostname/port cho khớp
   // nơi backend serve ảnh sản phẩm trước khi lên production.
   images: {
