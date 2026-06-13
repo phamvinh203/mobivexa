@@ -12,7 +12,11 @@
     "test:coverage": "vitest run --coverage",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "seed": "ts-node -T prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "ts-node -T prisma/seed.ts"
   },
   "keywords": [],
   "author": "",
