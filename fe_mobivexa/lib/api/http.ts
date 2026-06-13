@@ -29,6 +29,12 @@ export interface RequestOptions {
   auth?: boolean
   /** Query params dạng object — tự build querystring */
   params?: Record<string, string | number | boolean | undefined>
+  /**
+   * Số giây cache (ISR) khi gọi từ Server Component. Next.js 15+ mặc định
+   * fetch là `no-store`; truyền giá trị này để bật revalidate cho data công khai
+   * (catalog sản phẩm/danh mục). KHÔNG dùng cho data theo từng user (giỏ, đơn).
+   */
+  revalidate?: number
 }
 
 // Internal flag passed only inside this module to prevent refresh recursion
@@ -92,7 +98,7 @@ async function request<T>(
   body?: unknown,
   options: InternalOptions = {},
 ): Promise<T> {
-  const { auth = true, params, _skipRefresh } = options
+  const { auth = true, params, revalidate, _skipRefresh } = options
 
   const headers: Record<string, string> = {}
   const isFormData = body instanceof FormData
@@ -109,6 +115,8 @@ async function request<T>(
     method,
     headers,
     body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
+    // Server Component: bật ISR khi có revalidate; ngược lại giữ no-store mặc định
+    ...(revalidate !== undefined ? { next: { revalidate } } : {}),
   })
 
   // Token hết hạn → thử refresh 1 lần rồi retry

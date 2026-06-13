@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import type { Product } from '@/features/products/types'
 import { formatVND, discountPercent } from '@/lib/utils/format'
 
@@ -24,11 +25,12 @@ export function ProductCard({ product }: { product: Product }) {
           </span>
         )}
         {cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <Image
             src={cover}
             alt={product.name}
-            className="max-h-full object-contain group-hover:scale-105 transition-transform"
+            fill
+            sizes="(max-width: 768px) 50vw, 25vw"
+            className="object-contain p-4 group-hover:scale-105 transition-transform"
           />
         ) : (
           <span className="text-gray-300 text-sm">Không có ảnh</span>

@@ -4,10 +4,10 @@ import type { Brand, BrandPayload } from './types'
 
 // Khớp src/routes/brand.route.ts
 export const brandApi = {
-  // Public: /brands
-  list: () => http.get<Brand[]>('/brands', { auth: false }),
+  // Public: /brands — cache 5 phút (thương hiệu rất ít đổi)
+  list: () => http.get<Brand[]>('/brands', { auth: false, revalidate: 300 }),
   getBySlug: (slug: string) =>
-    http.get<Brand>(`/brands/${slug}`, { auth: false }),
+    http.get<Brand>(`/brands/${slug}`, { auth: false, revalidate: 300 }),
 }
 
 // Admin: /admin/brands (STAFF + ADMIN)

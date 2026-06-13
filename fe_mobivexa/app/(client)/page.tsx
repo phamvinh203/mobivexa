@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { productApi } from '@/features/products/api'
 import { ProductCard } from '@/components/product/product-card'
 import type { Product } from '@/features/products/types'
@@ -35,9 +36,9 @@ export default async function HomePage() {
       <section className="max-w-[1280px] mx-auto px-6 py-12">
         <div className="flex items-end justify-between mb-6">
           <h2 className="text-2xl font-bold">Sản phẩm nổi bật</h2>
-          <a href="/products" className="text-sm text-[var(--color-primary)]">
+          <Link href="/products" className="text-sm text-[var(--color-primary)]">
             Xem tất cả →
-          </a>
+          </Link>
         </div>
 
         {featured.length > 0 ? (
@@ -48,7 +49,7 @@ export default async function HomePage() {
           </div>
         ) : (
           <div className="py-16 text-center text-gray-400">
-            Chưa có sản phẩm nổi bật. (Kiểm tra backend ở {process.env.NEXT_PUBLIC_API_URL})
+            Chưa có sản phẩm nổi bật.
           </div>
         )}
       </section>

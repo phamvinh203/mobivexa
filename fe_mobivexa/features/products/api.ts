@@ -9,12 +9,13 @@ import type {
 
 // Khớp src/routes/product.route.ts
 export const productApi = {
-  // Public: /products
+  // Public: /products — cache 60s (catalog ít thay đổi theo giây)
   list: (query?: ProductListQuery) =>
-    http.get<Product[]>('/products', { auth: false, params: query }),
-  featured: () => http.get<Product[]>('/products/featured', { auth: false }),
+    http.get<Product[]>('/products', { auth: false, params: query, revalidate: 60 }),
+  featured: () =>
+    http.get<Product[]>('/products/featured', { auth: false, revalidate: 300 }),
   getBySlug: (slug: string) =>
-    http.get<Product>(`/products/${slug}`, { auth: false }),
+    http.get<Product>(`/products/${slug}`, { auth: false, revalidate: 60 }),
 }
 
 // Admin: /admin/products (STAFF + ADMIN)

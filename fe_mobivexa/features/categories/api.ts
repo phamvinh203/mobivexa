@@ -4,10 +4,10 @@ import type { Category, CategoryPayload } from './types'
 
 // Khớp src/routes/category.route.ts
 export const categoryApi = {
-  // Public: /categories
-  list: () => http.get<Category[]>('/categories', { auth: false }),
+  // Public: /categories — cache 5 phút (danh mục rất ít đổi)
+  list: () => http.get<Category[]>('/categories', { auth: false, revalidate: 300 }),
   getBySlug: (slug: string) =>
-    http.get<Category>(`/categories/${slug}`, { auth: false }),
+    http.get<Category>(`/categories/${slug}`, { auth: false, revalidate: 300 }),
 }
 
 // Admin: /admin/categories (STAFF + ADMIN)
