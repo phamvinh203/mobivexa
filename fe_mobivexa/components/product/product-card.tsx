@@ -18,9 +18,9 @@ export function ProductCard({ product }: { product: Product }) {
       href={`/products/${product.slug}`}
       className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground transition-all hover:shadow-md"
     >
-      <div className="relative aspect-square bg-muted flex items-center justify-center p-4">
+      <div className="relative aspect-square bg-muted flex items-center justify-center overflow-hidden">
         {discount > 0 && (
-          <span className="absolute left-2 top-2 rounded-full bg-destructive px-2 py-0.5 text-[11px] font-bold text-destructive-foreground">
+          <span className="absolute left-2 top-2 z-10 rounded-md bg-sale-strong px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
             -{discount}%
           </span>
         )}
@@ -30,7 +30,7 @@ export function ProductCard({ product }: { product: Product }) {
             alt={product.name}
             fill
             sizes="(max-width: 768px) 50vw, 25vw"
-            className="object-contain p-4 transition-transform group-hover:scale-105"
+            className="object-contain p-4 transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
           <span className="text-muted-foreground text-sm">Không có ảnh</span>
@@ -48,7 +48,7 @@ export function ProductCard({ product }: { product: Product }) {
         </h3>
         {variant && (
           <div className="mt-auto flex items-baseline gap-2">
-            <span className="text-destructive font-bold">
+            <span className="text-sale-strong font-bold">
               {formatVND(variant.salePrice)}
             </span>
             {discount > 0 && (
