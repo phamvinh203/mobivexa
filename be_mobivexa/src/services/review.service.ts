@@ -13,6 +13,14 @@ import type {
 const EDIT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_PHOTOS     = 5
 
+// Include dùng chung cho mọi admin query review (list + reply) — tránh divergence.
+const REVIEW_ADMIN_INCLUDE = {
+  user:    { select: { id: true, fullName: true, email: true } },
+  product: { select: { id: true, name: true, slug: true } },
+  photos:  { orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } },
+  _count:  { select: { helpful: true } },
+} as const satisfies Prisma.ReviewInclude
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function findProductBySlug(slug: string) {
@@ -305,12 +313,7 @@ export async function listReviewsAdmin(query: AdminReviewListQuery) {
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
-      include: {
-        user:    { select: { id: true, fullName: true, email: true } },
-        product: { select: { id: true, name: true, slug: true } },
-        photos:  { orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } },
-        _count:  { select: { helpful: true } },
-      },
+      include: REVIEW_ADMIN_INCLUDE,
     }),
     prisma.review.count({ where }),
   ])
@@ -320,10 +323,12 @@ export async function listReviewsAdmin(query: AdminReviewListQuery) {
 
 export async function replyReview(reviewId: string, content: string) {
   try {
+    // Trả về full review (cùng include như list) để FE replace cả dòng —
+    // nhất quán với các mutation khác (toggleStatus/toggleFeatured trả full entity).
     return await prisma.review.update({
       where:  { id: reviewId },
       data:   { replyContent: content.trim(), repliedAt: new Date() },
-      select: { id: true, replyContent: true, repliedAt: true },
+      include: REVIEW_ADMIN_INCLUDE,
     })
   } catch (e: any) {
     if (e?.code === 'P2025') throw new AppError(404, 'Đánh giá không tồn tại')
