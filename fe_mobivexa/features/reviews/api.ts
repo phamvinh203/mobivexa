@@ -7,7 +7,9 @@ import type {
   CreateReviewPayload,
   UpdateReviewPayload,
   ReplyReviewPayload,
+  AdminReview,
   AdminReviewListQuery,
+  AdminReviewListResult,
 } from './types'
 import type { ListQuery } from '@/types/api'
 
@@ -49,12 +51,15 @@ export const reviewApi = {
     http.post<{ helpful: number }>(`/reviews/${id}/helpful`),
 }
 
-// Admin: /admin/reviews (STAFF + ADMIN)
+// Admin: /admin/reviews (STAFF + ADMIN). Backend bọc { reviews, pagination }
+// cho list; reply trả partial; delete trả 204 null → unwrap tại đây.
 export const adminReviewApi = {
   list: (query?: AdminReviewListQuery) =>
-    http.get<Review[]>('/admin/reviews', { params: query }),
+    http.get<AdminReviewListResult>('/admin/reviews', { params: query }),
+
   reply: (id: string, body: ReplyReviewPayload) =>
-    http.post<Review>(`/admin/reviews/${id}/reply`, body),
+    http.post<AdminReview>(`/admin/reviews/${id}/reply`, body),
+
   remove: (id: string) =>
-    http.delete<{ message: string }>(`/admin/reviews/${id}`),
+    http.delete(`/admin/reviews/${id}`),
 }
