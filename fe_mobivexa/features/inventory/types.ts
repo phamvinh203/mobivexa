@@ -30,7 +30,9 @@ export interface InventoryListResult {
   pagination: PaginationMeta
 }
 
-export type StockStatus = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock'
+// Tình trạng tồn kho — khớp switch(query.stockStatus) trong product.service.ts.
+// ('all' là sentinel FE-only cho "không filter", khai báo local ở trang admin.)
+export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock'
 
 // Extend ListQuery để có index signature [key: string] — cần cho http.get params
 export interface InventoryQuery extends ListQuery {

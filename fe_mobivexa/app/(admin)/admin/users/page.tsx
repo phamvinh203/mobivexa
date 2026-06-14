@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Trash2, Eye, EyeOff, UserCog, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FilterChip } from '@/components/ui/filter-chip'
 import { Input } from '@/components/ui/input'
 import { ApiError } from '@/lib/api/http'
 import { useAuth } from '@/lib/auth/auth-context'
@@ -16,23 +17,6 @@ type StatusFilter = 'ALL' | 'ACTIVE' | 'INACTIVE'
 type RoleFilter = 'ALL' | UserRole
 
 const PAGE_SIZE = 20
-
-/** Chip toggle dùng chung cho filter (role / status) — tránh lặp className. */
-function FilterChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
-        active
-          ? 'bg-[var(--color-primary)] text-white'
-          : 'bg-white text-gray-600 ring-1 ring-border hover:bg-gray-50'
-      }`}
-    >
-      {label}
-    </button>
-  )
-}
 
 export default function AdminUsersPage() {
   const { user: me } = useAuth()
