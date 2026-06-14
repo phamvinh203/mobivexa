@@ -5,7 +5,10 @@ import { generateUniqueSlug, slugTaken } from '../utils/slug'
 const findBySlug = (slug: string) => prisma.tag.findUnique({ where: { slug }, select: { id: true } })
 
 export function getTags() {
-  return prisma.tag.findMany({ orderBy: { name: 'asc' } })
+  return prisma.tag.findMany({
+    orderBy: { name: 'asc' },
+    include: { _count: { select: { productTags: true } } },
+  })
 }
 
 export async function createTag(name: string, slug?: string) {

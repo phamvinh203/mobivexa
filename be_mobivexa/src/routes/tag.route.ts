@@ -11,6 +11,7 @@ publicRouter.get('/', controller.listTags)
 // ─── Admin routes: /api/admin/tags ────────────────────────────────────────────
 const adminRouter: Router = Router()
 adminRouter.use(authenticate, authorize(...STAFF_ROLES))
+adminRouter.get('/', controller.listTags)
 adminRouter.post('/', validateCreateTag, controller.createTagAdmin)
 adminRouter.delete('/:id', controller.deleteTagAdmin)
 

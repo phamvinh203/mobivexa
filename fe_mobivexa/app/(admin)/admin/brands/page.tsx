@@ -44,9 +44,24 @@ export default function AdminBrandsPage() {
     setModalOpen(true)
   }
 
-  function handleSaved() {
+  function handleSaved(savedBrand?: Brand) {
     setModalOpen(false)
-    void load()
+    // Optimistic update: nếu có returned data từ API, dùng nó để update state local
+    if (savedBrand) {
+      setBrands((prev) => {
+        const exists = prev.find((b) => b.id === savedBrand.id)
+        if (exists) {
+          // Update existing
+          return prev.map((b) => (b.id === savedBrand.id ? savedBrand : b))
+        } else {
+          // Add new
+          return [...prev, savedBrand]
+        }
+      })
+    } else {
+      // Fallback to reload nếu không có data
+      void load()
+    }
   }
 
   // Bọc thao tác trên 1 dòng: set busy + bắt lỗi; cập nhật state cục bộ trong op.

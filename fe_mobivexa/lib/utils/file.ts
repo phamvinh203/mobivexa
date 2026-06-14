@@ -33,7 +33,7 @@ export function objectToFormData(
   if (file?.value) assertImageFile(file.value)
   const form = new FormData()
   for (const [key, value] of Object.entries(body)) {
-    if (value !== undefined) form.append(key, String(value))
+    if (value != null) form.append(key, String(value)) // Check cả null và undefined
   }
   if (file?.value) form.append(file.field, file.value)
   return form

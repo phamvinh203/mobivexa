@@ -7,4 +7,5 @@ export interface Tag {
 
 export interface TagPayload {
   name: string
+  slug?: string
 }

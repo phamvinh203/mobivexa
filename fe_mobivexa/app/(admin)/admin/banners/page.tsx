@@ -56,9 +56,24 @@ export default function AdminBannersPage() {
     setModalOpen(true)
   }
 
-  function handleSaved() {
+  function handleSaved(savedBanner?: Banner) {
     setModalOpen(false)
-    void load()
+    // Optimistic update: nếu có returned data từ API, dùng nó để update state local
+    if (savedBanner) {
+      setBanners((prev) => {
+        const exists = prev.find((b) => b.id === savedBanner.id)
+        if (exists) {
+          // Update existing
+          return prev.map((b) => (b.id === savedBanner.id ? savedBanner : b))
+        } else {
+          // Add new
+          return [...prev, savedBanner]
+        }
+      })
+    } else {
+      // Fallback to reload nếu không có data
+      void load()
+    }
   }
 
   // Bọc thao tác trên 1 dòng: set busy + bắt lỗi. Cập nhật state cục bộ trong

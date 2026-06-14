@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError } from '@/lib/api/http'
-import { assertImageFile } from '@/lib/utils/file'
+import { useImageUpload } from '@/lib/hooks/use-image-upload'
 import { adminBannerApi } from '@/features/banners/api'
 import {
   BANNER_POSITIONS,
@@ -21,7 +21,7 @@ interface BannerFormModalProps {
   /** Banner đang sửa, hoặc null khi tạo mới */
   editing: Banner | null
   onClose: () => void
-  onSaved: () => void
+  onSaved: (saved?: Banner) => void
 }
 
 export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalProps) {
@@ -34,39 +34,17 @@ export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalPr
   const [sortOrder, setSortOrder] = useState(String(editing?.sortOrder ?? 0))
   const [isActive, setIsActive] = useState(editing?.isActive ?? true)
 
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<string | null>(editing?.imageUrl ?? null)
-  const objectUrlRef = useRef<string | null>(null)
+  const { file: imageFile, preview, error: imageError, clearError, handlePickFile } = useImageUpload({
+    initialUrl: editing?.imageUrl,
+  })
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  // Thu hồi object URL khi đổi ảnh / unmount để tránh rò rỉ bộ nhớ
-  useEffect(() => {
-    return () => {
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    }
-  }, [])
-
-  function handlePickImage(file: File | undefined) {
-    if (!file) return
-    try {
-      assertImageFile(file)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ảnh không hợp lệ')
-      return
-    }
-    setError('')
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    const url = URL.createObjectURL(file)
-    objectUrlRef.current = url
-    setImageFile(file)
-    setPreview(url)
-  }
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
+    clearError()
 
     if (alt.trim().length < 2) {
       setError('Alt text phải có ít nhất 2 ký tự')
@@ -88,12 +66,13 @@ export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalPr
 
     setSubmitting(true)
     try {
+      let savedBanner: Banner
       if (isEdit) {
-        await adminBannerApi.update(editing.id, payload, imageFile ?? undefined)
+        savedBanner = await adminBannerApi.update(editing.id, payload, imageFile ?? undefined)
       } else {
-        await adminBannerApi.create(payload, imageFile!)
+        savedBanner = await adminBannerApi.create(payload, imageFile!)
       }
-      onSaved()
+      onSaved(savedBanner)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Lưu banner thất bại')
     } finally {
@@ -104,9 +83,9 @@ export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalPr
   return (
     <Dialog title={isEdit ? 'Sửa banner' : 'Thêm banner'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
-          {error && (
+          {(error || imageError) && (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">
-              {error}
+              {error || imageError}
             </div>
           )}
 
@@ -127,7 +106,7 @@ export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalPr
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => handlePickImage(e.target.files?.[0])}
+                onChange={(e) => handlePickFile(e.target.files?.[0])}
               />
             </label>
             {preview && (
