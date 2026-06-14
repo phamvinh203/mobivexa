@@ -38,7 +38,8 @@ export interface InventoryQuery {
   lowThreshold?: string // ngưỡng cảnh báo tồn kho thấp, mặc định 5
 }
 
-// Query params cho listing công khai
+// Query params cho listing (dùng chung public + admin).
+// isActive/isFeatured chỉ được dùng khi opts.admin=true ở listProducts.
 export interface ProductListQuery {
   page?: string
   limit?: string
@@ -48,5 +49,7 @@ export interface ProductListQuery {
   search?: string // tìm theo tên
   minPrice?: string
   maxPrice?: string
+  isActive?: string // 'true' | 'false' (admin only)
+  isFeatured?: string // 'true' | 'false' (admin only)
   sort?: string // 'newest' | 'oldest' | 'name_asc' | 'name_desc'
 }

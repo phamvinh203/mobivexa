@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
-import { checkName } from './common.validator'
+import { checkName, parseJsonField } from './common.validator'
 
 // Kiểm tra 1 variant hợp lệ — trả về message lỗi hoặc null nếu OK
 function checkVariant(v: unknown): string | null {
@@ -15,15 +15,9 @@ function checkVariant(v: unknown): string | null {
 }
 
 export function validateCreateProduct(req: Request, res: Response, next: NextFunction): void {
-  // multipart/form-data gửi variants dưới dạng JSON string
-  if (typeof req.body.variants === 'string') {
-    try {
-      req.body.variants = JSON.parse(req.body.variants)
-    } catch {
-      sendError(res, 400, 'variants phải là JSON hợp lệ')
-      return
-    }
-  }
+  // multipart/form-data gửi variants / tagIds dưới dạng JSON string
+  if (!parseJsonField(res, req.body, 'variants')) return
+  if (!parseJsonField(res, req.body, 'tagIds')) return
 
   const { categoryId, brandId, variants } = req.body
 
@@ -52,6 +46,7 @@ export function validateCreateProduct(req: Request, res: Response, next: NextFun
 }
 
 export function validateUpdateProduct(req: Request, res: Response, next: NextFunction): void {
+  if (!parseJsonField(res, req.body, 'tagIds')) return
   if (!checkName(res, req.body.name, 'Tên sản phẩm', { optional: true })) return
   next()
 }
