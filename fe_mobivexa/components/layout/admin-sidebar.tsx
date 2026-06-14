@@ -13,6 +13,7 @@ import {
   ShoppingCart,
   CreditCard,
   Star,
+  GalleryHorizontalEnd,
   ExternalLink,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -51,6 +52,10 @@ const NAV: NavGroup[] = [
       { label: 'Sản phẩm', href: '/admin/products', icon: Package },
       { label: 'Tồn kho', href: '/admin/inventory', icon: BarChart3 },
     ],
+  },
+  {
+    title: 'GIAO DIỆN',
+    items: [{ label: 'Banner', href: '/admin/banners', icon: GalleryHorizontalEnd }],
   },
   {
     title: 'BÁN HÀNG',
