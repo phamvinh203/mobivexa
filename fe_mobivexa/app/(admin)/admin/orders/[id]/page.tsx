@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { Check, Truck, PackageCheck, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api/http'
-import { formatVND } from '@/lib/utils/format'
+import { formatVND, formatDateTime } from '@/lib/utils/format'
 import { adminOrderApi } from '@/features/orders/api'
 import type { Order } from '@/features/orders/types'
 import {
@@ -113,7 +113,7 @@ export default function AdminOrderDetailPage() {
               {ORDER_STATUS_META[order.status].label}
             </span>
           </div>
-          <p className="text-xs text-gray-400">Đặt ngày {new Date(order.createdAt).toLocaleString('vi-VN')}</p>
+          <p className="text-xs text-gray-400">Đặt ngày {formatDateTime(order.createdAt)}</p>
         </div>
       </div>
 
