@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError } from '@/lib/api/http'
-import { assertImageFile } from '@/lib/utils/file'
+import { useImageUpload } from '@/lib/hooks/use-image-upload'
 import { adminBrandApi } from '@/features/brands/api'
 import type { Brand, BrandPayload } from '@/features/brands/types'
 
@@ -16,7 +16,7 @@ interface BrandFormModalProps {
   /** Thương hiệu đang sửa, hoặc null khi tạo mới */
   editing: Brand | null
   onClose: () => void
-  onSaved: () => void
+  onSaved: (saved?: Brand) => void
 }
 
 export function BrandFormModal({ editing, onClose, onSaved }: BrandFormModalProps) {
@@ -27,39 +27,17 @@ export function BrandFormModal({ editing, onClose, onSaved }: BrandFormModalProp
   const [description, setDescription] = useState(editing?.description ?? '')
   const [isActive, setIsActive] = useState(editing?.isActive ?? true)
 
-  const [logoFile, setLogoFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<string | null>(editing?.logoUrl ?? null)
-  const objectUrlRef = useRef<string | null>(null)
+  const { file: logoFile, preview, error: imageError, clearError, handlePickFile } = useImageUpload({
+    initialUrl: editing?.logoUrl,
+  })
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  // Thu hồi object URL khi unmount để tránh rò rỉ bộ nhớ
-  useEffect(() => {
-    return () => {
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    }
-  }, [])
-
-  function handlePickLogo(file: File | undefined) {
-    if (!file) return
-    try {
-      assertImageFile(file)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ảnh không hợp lệ')
-      return
-    }
-    setError('')
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    const url = URL.createObjectURL(file)
-    objectUrlRef.current = url
-    setLogoFile(file)
-    setPreview(url)
-  }
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
+    clearError()
 
     if (name.trim().length < 2) {
       setError('Tên thương hiệu phải có ít nhất 2 ký tự')
@@ -75,12 +53,13 @@ export function BrandFormModal({ editing, onClose, onSaved }: BrandFormModalProp
 
     setSubmitting(true)
     try {
+      let savedBrand: Brand
       if (isEdit) {
-        await adminBrandApi.update(editing.id, payload, logoFile ?? undefined)
+        savedBrand = await adminBrandApi.update(editing.id, payload, logoFile ?? undefined)
       } else {
-        await adminBrandApi.create(payload, logoFile ?? undefined)
+        savedBrand = await adminBrandApi.create(payload, logoFile ?? undefined)
       }
-      onSaved()
+      onSaved(savedBrand)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Lưu thương hiệu thất bại')
     } finally {
@@ -91,9 +70,9 @@ export function BrandFormModal({ editing, onClose, onSaved }: BrandFormModalProp
   return (
     <Dialog title={isEdit ? 'Sửa thương hiệu' : 'Thêm thương hiệu'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
-          {error && (
+          {(error || imageError) && (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">
-              {error}
+              {error || imageError}
             </div>
           )}
 
@@ -114,7 +93,7 @@ export function BrandFormModal({ editing, onClose, onSaved }: BrandFormModalProp
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => handlePickLogo(e.target.files?.[0])}
+                onChange={(e) => handlePickFile(e.target.files?.[0])}
               />
             </label>
             {preview && (

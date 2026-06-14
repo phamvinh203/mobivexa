@@ -1,5 +1,5 @@
 import { http } from '@/lib/api/http'
-import { assertImageFile } from '@/lib/utils/file'
+import { objectToFormData } from '@/lib/utils/file'
 import type { ListQuery } from '@/types/api'
 import type { Category, CategoryPayload } from './types'
 
@@ -12,35 +12,23 @@ export const categoryApi = {
     http.get<{ category: Category }>(`/categories/${slug}`, { auth: false, revalidate: 300 }).then((r) => r.category),
 }
 
+const toForm = (body: Partial<CategoryPayload>, image?: File) =>
+  objectToFormData(body, { field: 'image', value: image })
+
 // Admin: /admin/categories (STAFF + ADMIN)
 export const adminCategoryApi = {
   list: (query?: ListQuery) =>
-    http.get<Category[]>('/admin/categories', { params: query }),
+    http.get<{ categories: Category[] }>('/admin/categories', { params: query }).then((r) => r.categories ?? []),
 
-  create: (body: CategoryPayload, image?: File) => {
-    if (image) assertImageFile(image)
-    const form = new FormData()
-    form.append('name', body.name)
-    if (body.description) form.append('description', body.description)
-    if (body.parentId) form.append('parentId', body.parentId)
-    if (body.sortOrder != null) form.append('sortOrder', String(body.sortOrder))
-    if (image) form.append('image', image)
-    return http.post<Category>('/admin/categories', form)
-  },
+  create: (body: CategoryPayload, image?: File) =>
+    http.post<{ category: Category }>('/admin/categories', toForm(body, image)).then((r) => r.category),
 
-  update: (id: string, body: CategoryPayload, image?: File) => {
-    if (image) assertImageFile(image)
-    const form = new FormData()
-    if (body.name) form.append('name', body.name)
-    if (body.description != null) form.append('description', body.description)
-    if (body.parentId != null) form.append('parentId', body.parentId)
-    if (body.sortOrder != null) form.append('sortOrder', String(body.sortOrder))
-    if (image) form.append('image', image)
-    return http.put<Category>(`/admin/categories/${id}`, form)
-  },
+  update: (id: string, body: Partial<CategoryPayload>, image?: File) =>
+    http.put<{ category: Category }>(`/admin/categories/${id}`, toForm(body, image)).then((r) => r.category),
 
   remove: (id: string) =>
     http.delete<{ message: string }>(`/admin/categories/${id}`),
+
   toggleStatus: (id: string) =>
-    http.patch<Category>(`/admin/categories/${id}/status`),
+    http.patch<{ category: Category }>(`/admin/categories/${id}/status`).then((r) => r.category),
 }
