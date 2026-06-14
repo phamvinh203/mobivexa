@@ -2,6 +2,7 @@ import { Flame } from "lucide-react";
 import { productApi } from "@/features/products/api";
 import { categoryApi } from "@/features/categories/api";
 import { brandApi } from "@/features/brands/api";
+import { bannerApi } from "@/features/banners/api";
 import { HeroSection } from "@/components/home/hero-section";
 import { TrustBadges } from "@/components/home/trust-badges";
 import { BrandList } from "@/components/home/brand-list";
@@ -9,6 +10,7 @@ import { CategoryList } from "@/components/home/category-list";
 import { FlashSaleSection } from "@/components/home/flash-sale-section";
 import { ProductSection } from "@/components/home/product-section";
 import { BrandShowcase } from "@/components/home/brand-showcase";
+import { WideBanner } from "@/components/home/wide-banner";
 import { CtaStrip } from "@/components/home/cta-strip";
 import { EmptyState } from "@/components/home/empty-state";
 
@@ -19,12 +21,13 @@ export default async function HomePage() {
   const flashEndMs = new Date().setHours(23, 59, 59, 999);
 
   // Fetch song song, an toàn khi backend lỗi (Promise.allSettled)
-  const [featuredR, hotR, saleR, catR, brandR] = await Promise.allSettled([
+  const [featuredR, hotR, saleR, catR, brandR, bannerR] = await Promise.allSettled([
     productApi.featured(),
     productApi.list({ tag: "hot", limit: 10 }),
     productApi.list({ tag: "giam-gia", limit: 10 }),
     categoryApi.list(),
     brandApi.list(),
+    bannerApi.listGrouped(),
   ]);
 
   const featured = featuredR.status === "fulfilled" ? featuredR.value : [];
@@ -32,6 +35,9 @@ export default async function HomePage() {
   const sale = saleR.status === "fulfilled" ? saleR.value : [];
   const allCats = catR.status === "fulfilled" ? catR.value : [];
   const brands = brandR.status === "fulfilled" ? brandR.value : [];
+  const banners = bannerR.status === "fulfilled"
+    ? bannerR.value
+    : { HERO: [], LEFT: [], RIGHT: [], HORIZONTAL: [] };
 
   const flash = (sale.length ? sale : hot).slice(0, 10);
   // Lấy root categories (parentId === null), active, sắp xếp theo sortOrder, lấy 8 items
@@ -51,6 +57,13 @@ export default async function HomePage() {
       {/* ── TRUST BADGES ─────────────────────────────────────────────────── */}
       <TrustBadges />
 
+      {/* ── HERO BANNERS (full-width, ngay dưới trust badges) ─────────────── */}
+      {banners.HERO.length > 0 && (
+        <div className="max-w-[1280px] mx-auto px-6 pt-6">
+          <WideBanner banners={banners.HERO} />
+        </div>
+      )}
+
       <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-6">
         {/* ── BRANDS ─────────────────────────────────────────────────────── */}
         <BrandList brands={activeBrands} />
@@ -61,25 +74,21 @@ export default async function HomePage() {
         {/* ── CATEGORIES ─────────────────────────────────────────────────── */}
         <CategoryList categories={categories} />
 
-        {/* ── HOT PRODUCTS (banner + chip thương hiệu + lưới) ────────────── */}
+        {/* ── HORIZONTAL BANNERS (dải ngang giữa trang) ─────────────────── */}
+        <WideBanner banners={banners.HORIZONTAL} />
+
+        {/* ── HOT PRODUCTS (banner dọc trái + chip thương hiệu + lưới) ───── */}
         <BrandShowcase
           title="Điện thoại HOT"
           href="/products?tag=hot"
           products={hot}
           brands={activeBrands}
           brandsHref="/products"
-          banners={[
-            {
-              src: "/banner_1.webp",
-              href: "/products",
-              alt: "Khuyến mãi nổi bật",
-            },
-            {
-              src: "/banner_2.webp",
-              href: "/products",
-              alt: "Ưu đãi đặc biệt",
-            },
-          ]}
+          banners={banners.LEFT.map((b) => ({
+            src: b.imageUrl,
+            href: b.href ?? '/products',
+            alt: b.alt,
+          }))}
           barClassName="bg-primary"
           linkClassName="text-primary"
           badge={

@@ -7,7 +7,7 @@ interface PromoBannerProps {
   alt: string
 }
 
-/** Banner dọc khuyến mãi (ảnh tĩnh trong /public). Dùng ở cột trái của BrandShowcase. */
+/** Banner dọc khuyến mãi. Dùng ở cột trái của BrandShowcase. */
 export function PromoBanner({ imageSrc, href, alt }: PromoBannerProps) {
   return (
     <Link
@@ -19,6 +19,7 @@ export function PromoBanner({ imageSrc, href, alt }: PromoBannerProps) {
         alt={alt}
         width={321}
         height={795}
+        sizes="260px"
         className="h-auto w-full object-cover transition-transform duration-500 group-hover:scale-105"
       />
     </Link>

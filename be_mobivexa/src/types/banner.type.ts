@@ -13,6 +13,7 @@ export const BANNER_POSITION_LABEL: Record<BannerPosition, string> = {
 
 export interface CreateBannerBody {
   alt: string
+  href?: string
   description?: string
   position?: BannerPosition
   isActive?: boolean | string
@@ -21,6 +22,7 @@ export interface CreateBannerBody {
 
 export interface UpdateBannerBody {
   alt?: string
+  href?: string
   description?: string
   position?: BannerPosition
   isActive?: boolean | string

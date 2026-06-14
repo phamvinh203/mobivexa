@@ -23,6 +23,8 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "placehold.co", pathname: "/**" },
       // Wikipedia logo (dev seed data)
       { protocol: "https", hostname: "upload.wikimedia.org", pathname: "/**" },
+      // Cloudinary (banner & entity images)
+      { protocol: "https", hostname: "res.cloudinary.com", pathname: "/**" },
       // Ví dụ production (bỏ comment + sửa đúng domain CDN/storage):
       // { protocol: "https", hostname: "cdn.mobivexa.com", pathname: "/**" },
     ],

@@ -118,18 +118,13 @@ export function ClientNavbar() {
 
             {isAuthenticated ? (
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
-                  >
-                    <span className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-accent)] text-xs font-bold text-white">
-                      {user?.fullName?.[0]?.toUpperCase() ?? 'U'}
-                    </span>
-                    <span className="hidden max-w-28 truncate text-sm font-medium md:inline">
-                      {user?.fullName}
-                    </span>
-                  </button>
+                <DropdownMenuTrigger className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
+                  <span className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-accent)] text-xs font-bold text-white">
+                    {user?.fullName?.[0]?.toUpperCase() ?? 'U'}
+                  </span>
+                  <span className="hidden max-w-28 truncate text-sm font-medium md:inline">
+                    {user?.fullName}
+                  </span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   <div className="px-2 py-1.5 text-sm">

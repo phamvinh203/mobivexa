@@ -31,7 +31,7 @@ export function getBannersAdmin(position?: BannerPosition) {
 }
 
 export async function createBanner(body: CreateBannerBody, file: Express.Multer.File) {
-  const { alt, description, position, isActive, sortOrder } = body
+  const { alt, href, description, position, isActive, sortOrder } = body
   const image = await uploadEntityImage(file.buffer, 'banners')
 
   return prisma.banner.create({
@@ -39,6 +39,7 @@ export async function createBanner(body: CreateBannerBody, file: Express.Multer.
       imageUrl: image.url,
       imagePublicId: image.publicId,
       alt: alt.trim(),
+      href: href?.trim() ?? '/products',
       description,
       position: position ?? 'HERO',
       isActive: isActive != null ? String(isActive) !== 'false' : true,
@@ -49,10 +50,11 @@ export async function createBanner(body: CreateBannerBody, file: Express.Multer.
 
 export async function updateBanner(id: string, body: UpdateBannerBody, file?: Express.Multer.File) {
   const banner = await findBannerOrThrow(id)
-  const { alt, description, position, isActive, sortOrder } = body
+  const { alt, href, description, position, isActive, sortOrder } = body
 
   const data: Record<string, unknown> = {}
   if (alt !== undefined) data.alt = alt.trim()
+  if (href !== undefined) data.href = href.trim() || '/products'
   if (description !== undefined) data.description = description
   if (position !== undefined) data.position = position
   if (isActive !== undefined) data.isActive = String(isActive) !== 'false'

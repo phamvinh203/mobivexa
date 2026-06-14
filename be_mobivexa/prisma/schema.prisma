@@ -399,6 +399,7 @@ model Banner {
   imageUrl      String
   imagePublicId String
   alt           String
+  href          String
   description   String?
   position      BannerPosition @default(HERO)
   isActive      Boolean        @default(true)
