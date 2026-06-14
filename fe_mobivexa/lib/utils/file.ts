@@ -23,3 +23,18 @@ export function assertImageFile(file: File): void {
 export function assertImageFiles(files: File[]): void {
   files.forEach(assertImageFile)
 }
+
+// Dựng FormData từ object body (bỏ field undefined) + 1 file ảnh tuỳ chọn.
+// Dùng chung cho các admin API upload (brand logo, banner image...).
+export function objectToFormData(
+  body: Record<string, unknown>,
+  file?: { field: string; value?: File },
+): FormData {
+  if (file?.value) assertImageFile(file.value)
+  const form = new FormData()
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== undefined) form.append(key, String(value))
+  }
+  if (file?.value) form.append(file.field, file.value)
+  return form
+}

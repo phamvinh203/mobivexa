@@ -12,5 +12,7 @@ export interface Brand {
 
 export interface BrandPayload {
   name: string
+  slug?: string
   description?: string
+  isActive?: boolean
 }
