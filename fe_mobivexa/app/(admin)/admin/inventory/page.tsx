@@ -75,7 +75,10 @@ export default function AdminInventoryPage() {
     }
   }, [page, search, stockFilter])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   const resetPage = () => setPage(1)
 

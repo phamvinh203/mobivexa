@@ -52,7 +52,6 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
   // Ảnh mới chọn (chưa upload) — 1 array gộp file + preview URL.
   const [newImages, setNewImages] = useState<PickedImage[]>([])
   const newImagesRef = useRef(newImages)
-  newImagesRef.current = newImages
 
   // Ảnh hiện có (edit mode) — đồng bộ qua removeImage/setCover.
   const [images, setImages] = useState<ProductImage[]>(product?.images ?? [])
@@ -73,6 +72,10 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
   }, [])
 
   // Cleanup object URL khi unmount.
+  useEffect(() => {
+    newImagesRef.current = newImages
+  }, [newImages])
+
   useEffect(() => {
     return () => newImagesRef.current.forEach((i) => URL.revokeObjectURL(i.url))
   }, [])
@@ -154,7 +157,15 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
         // create: variants bắt buộc — lọc draft hợp lệ (có sku)
         const variants = draftVariants
           .filter((d) => d.sku.trim())
-          .map(({ key: _key, ...rest }) => ({ ...rest, sku: rest.sku.trim() }))
+          .map((d) => ({
+            sku: d.sku.trim(),
+            color: d.color,
+            storage: d.storage,
+            ram: d.ram,
+            originalPrice: d.originalPrice,
+            salePrice: d.salePrice,
+            stock: d.stock,
+          }))
         if (variants.length === 0) {
           setError('Sản phẩm phải có ít nhất một biến thể (cần nhập SKU)')
           setSubmitting(false)
