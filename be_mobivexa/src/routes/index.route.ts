@@ -17,6 +17,7 @@ import {
   reviewRoutes,
   reviewAdminRoutes,
 } from './review.route'
+import { bannerRoutes, bannerAdminRoutes } from './banner.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -26,6 +27,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/users`, userRoutes)
   app.use(`${v}/categories`, categoryRoutes)
   app.use(`${v}/brands`, brandRoutes)
+  app.use(`${v}/banners`, bannerRoutes)
   app.use(`${v}/products`, productRoutes)
   app.use(`${v}/products/:slug/reviews`, reviewPublicRoutes)
   app.use(`${v}/tags`, tagRoutes)
@@ -47,4 +49,5 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/admin/tags`, tagAdminRoutes)
   app.use(`${v}/admin/orders`, orderAdminRoutes)
   app.use(`${v}/admin/reviews`, reviewAdminRoutes)
+  app.use(`${v}/admin/banners`, bannerAdminRoutes)
 }
