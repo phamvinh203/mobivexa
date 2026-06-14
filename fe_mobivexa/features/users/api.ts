@@ -1,6 +1,5 @@
 import { http } from '@/lib/api/http'
 import { assertImageFile } from '@/lib/utils/file'
-import type { ListQuery } from '@/types/api'
 import type {
   AuthUser,
   Address,
@@ -8,6 +7,8 @@ import type {
   ChangePasswordPayload,
   AddressPayload,
   AdminUser,
+  AdminUserListQuery,
+  AdminUserListResult,
   UpdateUserRolePayload,
 } from './types'
 
@@ -40,15 +41,21 @@ export const userApi = {
     http.patch<Address>(`/users/me/addresses/${id}/default`),
 }
 
-// Khớp src/routes/admin.route.ts — prefix /admin/users (chỉ ADMIN)
+// Khớp src/routes/admin.route.ts — prefix /admin/users (chỉ ADMIN).
+// Backend bọc { users, pagination } / { user } → unwrap tại đây.
 export const adminUserApi = {
-  list: (query?: ListQuery) =>
-    http.get<AdminUser[]>('/admin/users', { params: query }),
-  get: (id: string) => http.get<AdminUser>(`/admin/users/${id}`),
+  list: (query?: AdminUserListQuery) =>
+    http.get<AdminUserListResult>('/admin/users', { params: query }),
+
+  get: (id: string) =>
+    http.get<{ user: AdminUser }>(`/admin/users/${id}`).then((r) => r.user),
+
   changeRole: (id: string, body: UpdateUserRolePayload) =>
-    http.patch<AdminUser>(`/admin/users/${id}/role`, body),
+    http.patch<{ user: AdminUser }>(`/admin/users/${id}/role`, body).then((r) => r.user),
+
   toggleStatus: (id: string) =>
-    http.patch<AdminUser>(`/admin/users/${id}/status`),
+    http.patch<{ user: AdminUser }>(`/admin/users/${id}/status`).then((r) => r.user),
+
   remove: (id: string) =>
     http.delete<{ message: string }>(`/admin/users/${id}`),
 }

@@ -1,4 +1,4 @@
-import type { UserRole } from '@/types/api'
+import { UserRole, type ListQuery, type PaginationMeta } from '@/types/api'
 import type { AuthUser } from '../auth/types'
 
 export type { AuthUser }
@@ -38,8 +38,32 @@ export interface AddressPayload {
 }
 
 // ── Admin: quản lý người dùng ────────────────────────────────────────────────
+
+/** Metadata hiển thị cho từng role — nhãn tiếng Việt + class màu badge.
+ *  Gom cùng chỗ để thêm role mới chỉ sửa một nơi (khớp pattern BANNER_POSITION_META). */
+export const USER_ROLES = Object.values(UserRole)
+
+export const USER_ROLE_META: Record<UserRole, { label: string; badgeClass: string }> = {
+  CUSTOMER: { label: 'Khách hàng', badgeClass: 'bg-gray-100 text-gray-700' },
+  STAFF: { label: 'Nhân viên', badgeClass: 'bg-sky-100 text-sky-700' },
+  ADMIN: { label: 'Quản trị viên', badgeClass: 'bg-purple-100 text-purple-700' },
+}
+
+/** Kết quả GET /admin/users — paginated */
+export interface AdminUserListResult {
+  users: AdminUser[]
+  pagination: PaginationMeta
+}
+
+// Extend ListQuery để có index signature [key: string] — cần cho http.get params
+export interface AdminUserListQuery extends ListQuery {
+  role?: UserRole
+  isActive?: boolean
+}
+
+/** User detail có thêm _count (addresses, refreshTokens) */
 export interface AdminUser extends AuthUser {
-  _count?: { orders: number; reviews: number }
+  _count?: { addresses?: number; refreshTokens?: number; orders?: number; reviews?: number }
 }
 
 export interface UpdateUserRolePayload {
