@@ -212,10 +212,15 @@ export async function listOrders(query: AdminOrderListQuery) {
     }
   }
 
-  const adminInclude = { ...ORDER_INCLUDE, user: { select: { id: true, fullName: true, email: true } } }
+  // List chỉ cần SỐ LƯỢNG items (không cần chi tiết) → dùng _count thay vì items:true
+  // để tránh hydrate toàn bộ OrderItem[] (productName, sku, giá...) cho mỗi đơn.
+  const adminListInclude = {
+    _count: { select: { items: true } },
+    user: { select: { id: true, fullName: true, email: true } },
+  }
 
   const [orders, total] = await Promise.all([
-    prisma.order.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit, include: adminInclude }),
+    prisma.order.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit, include: adminListInclude }),
     prisma.order.count({ where }),
   ])
 
