@@ -81,3 +81,31 @@ export async function processSePayWebhook(payload: SePayWebhookPayload) {
 
   return { handled: true, orderCode }
 }
+
+// ─── Admin: thống kê thanh toán ──────────────────────────────────────────────
+
+// Tổng hợp số liệu thanh toán cho dashboard admin:
+// - revenue: tổng tiền đã thu (PAID)
+// - pending: chưa thanh toán (count + amount)
+// - refunded: đã hoàn tiền (count + amount)
+// - awaitingBankTransfer: chờ đối soát CK (BANK_TRANSFER + UNPAID — chờ webhook SePay)
+export async function getPaymentStats() {
+  const [paidAgg, unpaidAgg, refundedAgg, awaitingAgg] = await Promise.all([
+    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.PAID }, _sum: { total: true }, _count: true }),
+    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.UNPAID }, _sum: { total: true }, _count: true }),
+    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.REFUNDED }, _sum: { total: true }, _count: true }),
+    prisma.order.aggregate(
+      { where: { paymentStatus: PaymentStatus.UNPAID, paymentMethod: PaymentMethod.BANK_TRANSFER }, _sum: { total: true }, _count: true },
+    ),
+  ])
+
+  // _sum.total là Prisma.Decimal (Money) → convert sang number.
+  const toAmount = (agg: { _sum: { total: unknown } }) => Number(agg._sum.total ?? 0)
+
+  return {
+    revenue: toAmount(paidAgg),
+    pending: { count: unpaidAgg._count, amount: toAmount(unpaidAgg) },
+    refunded: { count: refundedAgg._count, amount: toAmount(refundedAgg) },
+    awaitingBankTransfer: { count: awaitingAgg._count, amount: toAmount(awaitingAgg) },
+  }
+}

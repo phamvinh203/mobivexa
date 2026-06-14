@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { asyncHandler } from '../helpers/async_handler'
 import { sendSuccess, sendError } from '../helpers/response'
-import { getOrderPaymentInfo, processSePayWebhook } from '../services/payment.service'
+import { getOrderPaymentInfo, processSePayWebhook, getPaymentStats } from '../services/payment.service'
 import type { SePayWebhookPayload } from '../types/payment.type'
 
 export function verifySePaySecret(req: Request, res: Response, next: NextFunction): void {
@@ -21,4 +21,10 @@ export const paymentInfo = asyncHandler(async (req: Request, res: Response) => {
 export const sepayWebhook = asyncHandler(async (req: Request, res: Response) => {
   const result = await processSePayWebhook(req.body as SePayWebhookPayload)
   res.json({ success: true, ...result })
+})
+
+// Admin: thống kê thanh toán cho dashboard đối soát
+export const stats = asyncHandler(async (_req: Request, res: Response) => {
+  const data = await getPaymentStats()
+  sendSuccess(res, data)
 })

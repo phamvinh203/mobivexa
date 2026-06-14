@@ -9,7 +9,7 @@ import { tagRoutes, tagAdminRoutes } from './tag.route'
 import { adminUserRoutes } from './admin.route'
 import { cartRoutes } from './cart.route'
 import { orderRoutes, orderAdminRoutes } from './order.route'
-import { paymentRoutes } from './payment.route'
+import { paymentRoutes, paymentAdminRoutes } from './payment.route'
 import {
   reviewPublicRoutes,
   reviewUserRoutes,
@@ -48,6 +48,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/admin/inventory`, inventoryAdminRoutes)
   app.use(`${v}/admin/tags`, tagAdminRoutes)
   app.use(`${v}/admin/orders`, orderAdminRoutes)
+  app.use(`${v}/admin/payment`, paymentAdminRoutes)
   app.use(`${v}/admin/reviews`, reviewAdminRoutes)
   app.use(`${v}/admin/banners`, bannerAdminRoutes)
 }
