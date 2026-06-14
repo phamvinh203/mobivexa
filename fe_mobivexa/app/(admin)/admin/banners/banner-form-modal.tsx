@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { X, Upload } from 'lucide-react'
+import { Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -101,27 +102,8 @@ export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalPr
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 py-10"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h2 className="text-lg font-bold">{isEdit ? 'Sửa banner' : 'Thêm banner'}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"
-            aria-label="Đóng"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
+    <Dialog title={isEdit ? 'Sửa banner' : 'Thêm banner'} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
           {error && (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">
               {error}
@@ -237,8 +219,7 @@ export function BannerFormModal({ editing, onClose, onSaved }: BannerFormModalPr
               {submitting ? 'Đang lưu...' : isEdit ? 'Cập nhật' : 'Tạo banner'}
             </Button>
           </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Dialog>
   )
 }

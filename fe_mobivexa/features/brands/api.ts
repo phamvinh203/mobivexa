@@ -1,6 +1,5 @@
 import { http } from '@/lib/api/http'
-import { assertImageFile } from '@/lib/utils/file'
-import type { ListQuery } from '@/types/api'
+import { objectToFormData } from '@/lib/utils/file'
 import type { Brand, BrandPayload } from './types'
 
 // Khớp src/routes/brand.route.ts. Backend bọc { brands } / { brand } → unwrap tại đây.
@@ -12,31 +11,22 @@ export const brandApi = {
     http.get<{ brand: Brand }>(`/brands/${slug}`, { auth: false, revalidate: 300 }).then((r) => r.brand),
 }
 
+const toForm = (body: Partial<BrandPayload>, logo?: File) =>
+  objectToFormData(body, { field: 'logo', value: logo })
+
 // Admin: /admin/brands (STAFF + ADMIN)
 export const adminBrandApi = {
-  list: (query?: ListQuery) =>
-    http.get<Brand[]>('/admin/brands', { params: query }),
+  list: () =>
+    http.get<{ brands: Brand[] }>('/admin/brands').then((r) => r.brands ?? []),
 
-  create: (body: BrandPayload, logo?: File) => {
-    if (logo) assertImageFile(logo)
-    const form = new FormData()
-    form.append('name', body.name)
-    if (body.description) form.append('description', body.description)
-    if (logo) form.append('logo', logo)
-    return http.post<Brand>('/admin/brands', form)
-  },
+  create: (body: BrandPayload, logo?: File) =>
+    http.post<{ brand: Brand }>('/admin/brands', toForm(body, logo)).then((r) => r.brand),
 
-  update: (id: string, body: BrandPayload, logo?: File) => {
-    if (logo) assertImageFile(logo)
-    const form = new FormData()
-    if (body.name) form.append('name', body.name)
-    if (body.description != null) form.append('description', body.description)
-    if (logo) form.append('logo', logo)
-    return http.put<Brand>(`/admin/brands/${id}`, form)
-  },
+  update: (id: string, body: Partial<BrandPayload>, logo?: File) =>
+    http.put<{ brand: Brand }>(`/admin/brands/${id}`, toForm(body, logo)).then((r) => r.brand),
 
-  remove: (id: string) =>
-    http.delete<{ message: string }>(`/admin/brands/${id}`),
+  remove: (id: string) => http.delete<{ message: string }>(`/admin/brands/${id}`),
+
   toggleStatus: (id: string) =>
-    http.patch<Brand>(`/admin/brands/${id}/status`),
+    http.patch<{ brand: Brand }>(`/admin/brands/${id}/status`).then((r) => r.brand),
 }

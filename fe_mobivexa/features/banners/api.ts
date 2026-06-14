@@ -1,5 +1,5 @@
 import { http } from '@/lib/api/http'
-import { assertImageFile } from '@/lib/utils/file'
+import { objectToFormData } from '@/lib/utils/file'
 import {
   emptyBannersByPosition,
   type Banner,
@@ -31,16 +31,8 @@ export const bannerApi = {
   },
 }
 
-// Build FormData chung cho create/update. Ảnh là tuỳ chọn khi update.
-function buildForm(body: Partial<BannerPayload>, image?: File): FormData {
-  if (image) assertImageFile(image)
-  const form = new FormData()
-  for (const [key, value] of Object.entries(body)) {
-    if (value !== undefined) form.append(key, String(value))
-  }
-  if (image) form.append('image', image)
-  return form
-}
+const toForm = (body: Partial<BannerPayload>, image?: File) =>
+  objectToFormData(body, { field: 'image', value: image })
 
 // Admin: /admin/banners (STAFF + ADMIN)
 export const adminBannerApi = {
@@ -52,10 +44,10 @@ export const adminBannerApi = {
       .then((r) => r.banners ?? []),
 
   create: (body: BannerPayload, image: File) =>
-    http.post<{ banner: Banner }>('/admin/banners', buildForm(body, image)).then((r) => r.banner),
+    http.post<{ banner: Banner }>('/admin/banners', toForm(body, image)).then((r) => r.banner),
 
   update: (id: string, body: Partial<BannerPayload>, image?: File) =>
-    http.put<{ banner: Banner }>(`/admin/banners/${id}`, buildForm(body, image)).then((r) => r.banner),
+    http.put<{ banner: Banner }>(`/admin/banners/${id}`, toForm(body, image)).then((r) => r.banner),
 
   remove: (id: string) => http.delete<{ message: string }>(`/admin/banners/${id}`),
 
