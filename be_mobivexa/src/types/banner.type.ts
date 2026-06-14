@@ -2,7 +2,8 @@ import { BannerPosition } from '../generated/prisma/enums'
 
 export { BannerPosition }
 
-export const BANNER_POSITIONS = ['HERO', 'LEFT', 'RIGHT', 'HORIZONTAL'] as const
+// Derive từ Prisma enum — tự đồng bộ nếu enum thay đổi
+export const BANNER_POSITIONS = Object.values(BannerPosition) as BannerPosition[]
 
 export const BANNER_POSITION_LABEL: Record<BannerPosition, string> = {
   HERO:       'Banner chính (full-width đầu trang)',

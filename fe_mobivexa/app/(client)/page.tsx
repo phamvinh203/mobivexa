@@ -3,6 +3,7 @@ import { productApi } from "@/features/products/api";
 import { categoryApi } from "@/features/categories/api";
 import { brandApi } from "@/features/brands/api";
 import { bannerApi } from "@/features/banners/api";
+import { emptyBannersByPosition } from "@/features/banners/types";
 import { HeroSection } from "@/components/home/hero-section";
 import { TrustBadges } from "@/components/home/trust-badges";
 import { BrandList } from "@/components/home/brand-list";
@@ -35,9 +36,7 @@ export default async function HomePage() {
   const sale = saleR.status === "fulfilled" ? saleR.value : [];
   const allCats = catR.status === "fulfilled" ? catR.value : [];
   const brands = brandR.status === "fulfilled" ? brandR.value : [];
-  const banners = bannerR.status === "fulfilled"
-    ? bannerR.value
-    : { HERO: [], LEFT: [], RIGHT: [], HORIZONTAL: [] };
+  const banners = bannerR.status === "fulfilled" ? bannerR.value : emptyBannersByPosition();
 
   const flash = (sale.length ? sale : hot).slice(0, 10);
   // Lấy root categories (parentId === null), active, sắp xếp theo sortOrder, lấy 8 items

@@ -9,43 +9,39 @@ async function findBannerOrThrow(id: string) {
   return banner
 }
 
-// ─── Public ──────────────────────────────────────────────────────────────────
+// ─── Public & Admin ───────────────────────────────────────────────────────────
 
-export function getBanners(position?: BannerPosition) {
+export function getBanners(position?: BannerPosition, includeInactive = false) {
   return prisma.banner.findMany({
     where: {
-      isActive: true,
+      ...(includeInactive ? {} : { isActive: true }),
       ...(position ? { position } : {}),
     },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
   })
 }
 
-// ─── Admin ────────────────────────────────────────────────────────────────────
-
-export function getBannersAdmin(position?: BannerPosition) {
-  return prisma.banner.findMany({
-    where: position ? { position } : {},
-    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
-  })
-}
-
 export async function createBanner(body: CreateBannerBody, file: Express.Multer.File) {
   const { alt, href, description, position, isActive, sortOrder } = body
-  const image = await uploadEntityImage(file.buffer, 'banners')
 
-  return prisma.banner.create({
-    data: {
-      imageUrl: image.url,
-      imagePublicId: image.publicId,
-      alt: alt.trim(),
-      href: href?.trim() ?? '/products',
-      description,
-      position: position ?? 'HERO',
-      isActive: isActive != null ? String(isActive) !== 'false' : true,
-      sortOrder: sortOrder != null ? Number(sortOrder) : 0,
-    },
-  })
+  const image = await uploadEntityImage(file.buffer, 'banners')
+  try {
+    return await prisma.banner.create({
+      data: {
+        imageUrl: image.url,
+        imagePublicId: image.publicId,
+        alt: alt.trim(),
+        href: href?.trim() ?? '/products',
+        description,
+        position: position ?? 'HERO',
+        isActive: isActive != null ? String(isActive) !== 'false' : true,
+        sortOrder: sortOrder != null ? Number(sortOrder) : 0,
+      },
+    })
+  } catch (err) {
+    void destroyImage(image.publicId)
+    throw err
+  }
 }
 
 export async function updateBanner(id: string, body: UpdateBannerBody, file?: Express.Multer.File) {

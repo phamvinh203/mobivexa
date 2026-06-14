@@ -4,7 +4,6 @@ import { sendSuccess } from '../helpers/response'
 import { BANNER_POSITIONS, BANNER_POSITION_LABEL, type BannerPosition } from '../types/banner.type'
 import {
   getBanners,
-  getBannersAdmin,
   createBanner,
   updateBanner,
   deleteBanner,
@@ -28,7 +27,7 @@ export const listBannerPositions = asyncHandler(async (_req: Request, res: Respo
 
 export const listBannersAdmin = asyncHandler(async (req: Request, res: Response) => {
   const position = req.query.position as BannerPosition | undefined
-  const banners = await getBannersAdmin(position)
+  const banners = await getBanners(position, true)
   sendSuccess(res, { banners })
 })
 
