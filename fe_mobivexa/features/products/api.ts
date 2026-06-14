@@ -4,6 +4,8 @@ import type {
   Product,
   ProductVariant,
   ProductListQuery,
+  AdminProductListQuery,
+  AdminProductListResult,
   ProductPayload,
   VariantPayload,
   UpdateStockPayload,
@@ -28,8 +30,15 @@ export const productApi = {
       .then((r) => r.product),
 }
 
-// Admin: /admin/products (STAFF + ADMIN)
+// Admin: /admin/products (STAFF + ADMIN). Backend bọc { products, pagination } /
+// { product } → unwrap tại đây (khớp pattern brand/category).
 export const adminProductApi = {
+  list: (query?: AdminProductListQuery) =>
+    http.get<AdminProductListResult>('/admin/products', { params: query }),
+
+  get: (id: string) =>
+    http.get<{ product: Product }>(`/admin/products/${id}`).then((r) => r.product),
+
   // body có kiểu chặt ProductPayload → không cho phép inject field tuỳ ý
   create: (body: ProductPayload, images?: File[]) => {
     const form = buildProductForm(body, images)
@@ -42,9 +51,9 @@ export const adminProductApi = {
   remove: (id: string) =>
     http.delete<{ message: string }>(`/admin/products/${id}`),
   toggleStatus: (id: string) =>
-    http.patch<Product>(`/admin/products/${id}/status`),
+    http.patch<{ product: Product }>(`/admin/products/${id}/status`).then((r) => r.product),
   toggleFeatured: (id: string) =>
-    http.patch<Product>(`/admin/products/${id}/featured`),
+    http.patch<{ product: Product }>(`/admin/products/${id}/featured`).then((r) => r.product),
 
   // Images (buildProductForm tự validate ảnh)
   uploadImages: (id: string, images: File[]) =>

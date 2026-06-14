@@ -4,6 +4,7 @@ import { sendSuccess } from '../helpers/response'
 import {
   listProducts,
   getProductBySlug,
+  getProductById,
   getFeaturedProducts,
   createProduct,
   updateProduct,
@@ -24,6 +25,16 @@ import {
 export const list = asyncHandler(async (req: Request, res: Response) => {
   const result = await listProducts(req.query)
   sendSuccess(res, result)
+})
+
+export const listAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const result = await listProducts(req.query, { admin: true })
+  sendSuccess(res, result)
+})
+
+export const getAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const product = await getProductById(req.params.id as string)
+  sendSuccess(res, { product })
 })
 
 export const featured = asyncHandler(async (_req: Request, res: Response) => {

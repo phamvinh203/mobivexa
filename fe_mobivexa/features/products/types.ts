@@ -1,5 +1,5 @@
 import type { Money } from '@/lib/utils/format'
-import type { ListQuery } from '@/types/api'
+import type { ListQuery, PaginationMeta } from '@/types/api'
 import type { Category } from '../categories/types'
 import type { Brand } from '../brands/types'
 import type { Tag } from '../tags/types'
@@ -53,6 +53,20 @@ export interface ProductListQuery extends ListQuery {
   featured?: boolean
 }
 
+/** Query lọc danh sách sản phẩm admin — thấy cả sản phẩm ẩn, filter trạng thái/featured */
+export interface AdminProductListQuery extends ListQuery {
+  category?: string // slug
+  brand?: string // slug
+  isActive?: boolean
+  isFeatured?: boolean
+}
+
+/** Kết quả GET /admin/products — paginated */
+export interface AdminProductListResult {
+  products: Product[]
+  pagination: PaginationMeta
+}
+
 export interface VariantPayload {
   sku: string
   color?: string
@@ -65,6 +79,7 @@ export interface VariantPayload {
 
 export interface ProductPayload {
   name: string
+  slug?: string
   description?: string
   categoryId: string
   brandId: string

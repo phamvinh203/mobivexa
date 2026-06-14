@@ -9,6 +9,20 @@ export function checkQuantity(res: Response, qty: number, max?: number): boolean
   return true
 }
 
+// Parse 1 field từ JSON string (multipart/form-data gửi array/object dạng chuỗi).
+// Trả về true nếu OK (hoặc field không phải string), false (và đã gửi lỗi) nếu parse fail.
+export function parseJsonField(res: Response, body: Record<string, unknown>, key: string): boolean {
+  if (typeof body[key] === 'string') {
+    try {
+      body[key] = JSON.parse(body[key] as string)
+    } catch {
+      sendError(res, 400, `${key} phải là JSON hợp lệ`)
+      return false
+    }
+  }
+  return true
+}
+
 // Kiểm tra field "tên": trả về true nếu hợp lệ, false (và đã gửi lỗi) nếu không.
 // optional=true dùng cho update — chỉ validate khi field được gửi lên.
 export function checkName(

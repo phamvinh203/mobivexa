@@ -76,18 +76,27 @@ const PRODUCT_DETAIL_INCLUDE = {
 
 // ─── Public ─────────────────────────────────────────────────────────────────
 
-export async function listProducts(query: ProductListQuery) {
-  const { page, limit } = parsePagination(query, LIMITS.PRODUCT)
+// Listing sản phẩm dùng chung cho public + admin (admin: thấy cả sản phẩm ẩn,
+// không cache, filter thêm isActive/isFeatured, giới hạn MAX cao hơn).
+// Khớp pattern getBrands(true) / getCategories(true) — 1 hàm, admin=true bật quyền.
+export async function listProducts(
+  query: ProductListQuery,
+  opts: { admin?: boolean } = {},
+) {
+  const admin = opts.admin === true
+  const { page, limit } = parsePagination(query, LIMITS.PRODUCT, admin ? LIMITS.MAX : undefined)
 
-  const cacheKey = `products:list:${JSON.stringify({ ...query, page, limit })}`
-  const cached = await cacheGet(cacheKey)
-  if (cached) return cached
+  // Cache chỉ áp dụng cho public (admin cần data tươi)
+  const cacheKey = `products:list:${JSON.stringify({ ...query, page, limit, admin })}`
+  if (!admin) {
+    const cached = await cacheGet(cacheKey)
+    if (cached) return cached
+  }
 
-  const where: Prisma.ProductWhereInput = { isActive: true }
+  const where: Prisma.ProductWhereInput = admin ? {} : { isActive: true }
 
   if (query.category) where.category = { slug: query.category }
   if (query.brand) where.brand = { slug: query.brand }
-  if (query.tag) where.productTags = { some: { tag: { slug: query.tag } } }
 
   if (query.search) {
     const tsQuery = toTsQuery(query.search)
@@ -105,26 +114,36 @@ export async function listProducts(query: ProductListQuery) {
     where.id = { in: rows.map((r) => r.id) }
   }
 
-  // Lọc theo khoảng giá: sản phẩm có ít nhất 1 variant nằm trong khoảng
-  const priceFilter: Prisma.DecimalFilter = {}
-  if (query.minPrice) priceFilter.gte = Number(query.minPrice)
-  if (query.maxPrice) priceFilter.lte = Number(query.maxPrice)
-  if (priceFilter.gte !== undefined || priceFilter.lte !== undefined) {
-    where.variants = { some: { salePrice: priceFilter } }
+  // Filter riêng từng mode
+  if (admin) {
+    if (query.isActive === 'true') where.isActive = true
+    else if (query.isActive === 'false') where.isActive = false
+    if (query.isFeatured === 'true') where.isFeatured = true
+    else if (query.isFeatured === 'false') where.isFeatured = false
+  } else {
+    if (query.tag) where.productTags = { some: { tag: { slug: query.tag } } }
+    // Lọc theo khoảng giá: sản phẩm có ít nhất 1 variant nằm trong khoảng
+    const priceFilter: Prisma.DecimalFilter = {}
+    if (query.minPrice) priceFilter.gte = Number(query.minPrice)
+    if (query.maxPrice) priceFilter.lte = Number(query.maxPrice)
+    if (priceFilter.gte !== undefined || priceFilter.lte !== undefined) {
+      where.variants = { some: { salePrice: priceFilter } }
+    }
   }
-
-  const orderBy = resolveSort(query.sort)
 
   const [products, total] = await Promise.all([
     prisma.product.findMany({
       where,
-      orderBy,
+      orderBy: resolveSort(query.sort),
       skip: (page - 1) * limit,
       take: limit,
       include: {
         category: { select: { id: true, name: true, slug: true } },
         brand: { select: { id: true, name: true, slug: true } },
-        variants: { where: { isActive: true }, orderBy: { salePrice: 'asc' } },
+        // admin thấy tất cả variant (kể cả ẩn); public chỉ variant đang bán
+        variants: admin
+          ? { orderBy: { salePrice: 'asc' } }
+          : { where: { isActive: true }, orderBy: { salePrice: 'asc' } },
         images: { where: { isCover: true }, take: 1 },
       },
     }),
@@ -136,7 +155,7 @@ export async function listProducts(query: ProductListQuery) {
     pagination: paginationMeta(page, limit, total),
   }
 
-  await cacheSet(cacheKey, result, TTL.PRODUCT_LIST)
+  if (!admin) await cacheSet(cacheKey, result, TTL.PRODUCT_LIST)
   return result
 }
 
@@ -165,6 +184,16 @@ export async function getProductBySlug(slug: string) {
   if (!product || !product.isActive) throw new AppError(404, 'Sản phẩm không tồn tại')
 
   await cacheSet(cacheKey, product, TTL.PRODUCT_DETAIL)
+  return product
+}
+
+// Lấy chi tiết đầy đủ theo id cho admin (thấy cả sản phẩm ẩn, không cache).
+export async function getProductById(id: string) {
+  const product = await prisma.product.findUnique({
+    where: { id },
+    include: PRODUCT_DETAIL_INCLUDE,
+  })
+  if (!product) throw new AppError(404, 'Sản phẩm không tồn tại')
   return product
 }
 

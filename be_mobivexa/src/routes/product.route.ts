@@ -15,6 +15,8 @@ publicRouter.get('/:slug', controller.detail)
 const adminRouter: Router = Router()
 adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 
+adminRouter.get('/', controller.listAdmin)
+adminRouter.get('/:id', controller.getAdmin)
 adminRouter.post('/', uploadImage.array('images', 10), validateCreateProduct, controller.create)
 adminRouter.put('/:id', uploadImage.array('images', 10), validateUpdateProduct, controller.update)
 adminRouter.delete('/:id', controller.remove)
