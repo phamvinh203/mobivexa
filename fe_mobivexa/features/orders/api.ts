@@ -3,6 +3,8 @@ import type {
   Order,
   CreateOrderPayload,
   OrderListQuery,
+  AdminOrderListQuery,
+  AdminOrderListResult,
   UpdateStatusPayload,
   UpdatePaymentPayload,
 } from './types'
@@ -17,13 +19,18 @@ export const orderApi = {
   cancel: (id: string) => http.patch<Order>(`/orders/${id}/cancel`),
 }
 
-// Admin: /admin/orders (STAFF + ADMIN)
+// Admin: /admin/orders (STAFF + ADMIN). Backend bọc { orders, pagination } /
+// { order } → unwrap tại đây.
 export const adminOrderApi = {
-  list: (query?: OrderListQuery) =>
-    http.get<Order[]>('/admin/orders', { params: query }),
-  get: (id: string) => http.get<Order>(`/admin/orders/${id}`),
+  list: (query?: AdminOrderListQuery) =>
+    http.get<AdminOrderListResult>('/admin/orders', { params: query }),
+
+  get: (id: string) =>
+    http.get<{ order: Order }>(`/admin/orders/${id}`).then((r) => r.order),
+
   updateStatus: (id: string, body: UpdateStatusPayload) =>
-    http.patch<Order>(`/admin/orders/${id}/status`, body),
+    http.patch<{ order: Order }>(`/admin/orders/${id}/status`, body).then((r) => r.order),
+
   updatePayment: (id: string, body: UpdatePaymentPayload) =>
-    http.patch<Order>(`/admin/orders/${id}/payment`, body),
+    http.patch<{ order: Order }>(`/admin/orders/${id}/payment`, body).then((r) => r.order),
 }
