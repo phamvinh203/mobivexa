@@ -1,4 +1,4 @@
-import type { ListQuery } from '@/types/api'
+import type { ListQuery, PaginationMeta } from '@/types/api'
 
 export interface InventoryVariant {
   id: string
@@ -22,14 +22,6 @@ export interface InventorySummary {
   outOfStock: number
   lowStock: number
   inStock: number
-}
-
-// Khớp paginationMeta() trong be_mobivexa/src/utils/pagination.ts
-export interface PaginationMeta {
-  page: number
-  limit: number
-  total: number
-  totalPages: number
 }
 
 export interface InventoryListResult {

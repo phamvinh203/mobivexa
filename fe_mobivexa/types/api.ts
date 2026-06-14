@@ -52,6 +52,15 @@ export interface Paginated<T> {
   limit: number
 }
 
+/** Meta phân trang do backend trả về — khớp paginationMeta() trong be_mobivexa/src/utils/pagination.ts.
+ *  Dùng chung cho mọi admin list có phân trang (inventory, users, orders...). */
+export interface PaginationMeta {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+}
+
 /** Query phân trang/lọc/sắp xếp chung */
 export interface ListQuery {
   page?: number
