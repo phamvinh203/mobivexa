@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
+import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { authApi } from '@/features/auth/api'
 import { ApiError } from '@/lib/api/http'
 import { useRateLimit } from '@/lib/hooks/use-rate-limit'
@@ -41,8 +42,12 @@ export default function ForgotPasswordPage() {
         <div className="mt-6 rounded-lg bg-green-50 text-[var(--color-success)] text-sm px-4 py-3">
           Nếu email tồn tại, mã OTP đã được gửi. Kiểm tra hộp thư của bạn.
           <div className="mt-3">
-            <Link href="/reset-password" className="text-[var(--color-primary)] font-medium">
-              Nhập mã OTP để đặt lại →
+            <Link
+              href="/reset-password"
+              className="inline-flex items-center gap-1 text-[var(--color-primary)] font-medium"
+            >
+              Nhập mã OTP để đặt lại
+              <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
           </div>
         </div>
@@ -72,8 +77,12 @@ export default function ForgotPasswordPage() {
       )}
 
       <p className="mt-6 text-center text-sm">
-        <Link href="/login" className="text-[var(--color-primary)]">
-          ← Quay lại đăng nhập
+        <Link
+          href="/login"
+          className="inline-flex items-center gap-1 text-[var(--color-primary)]"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Quay lại đăng nhập
         </Link>
       </p>
     </div>

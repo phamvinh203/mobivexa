@@ -3,12 +3,13 @@ import { assertImageFile } from '@/lib/utils/file'
 import type { ListQuery } from '@/types/api'
 import type { Brand, BrandPayload } from './types'
 
-// Khớp src/routes/brand.route.ts
+// Khớp src/routes/brand.route.ts. Backend bọc { brands } / { brand } → unwrap tại đây.
 export const brandApi = {
   // Public: /brands — cache 5 phút (thương hiệu rất ít đổi)
-  list: () => http.get<Brand[]>('/brands', { auth: false, revalidate: 300 }),
+  list: () =>
+    http.get<{ brands: Brand[] }>('/brands', { auth: false, revalidate: 300 }).then((r) => r.brands ?? []),
   getBySlug: (slug: string) =>
-    http.get<Brand>(`/brands/${slug}`, { auth: false, revalidate: 300 }),
+    http.get<{ brand: Brand }>(`/brands/${slug}`, { auth: false, revalidate: 300 }).then((r) => r.brand),
 }
 
 // Admin: /admin/brands (STAFF + ADMIN)

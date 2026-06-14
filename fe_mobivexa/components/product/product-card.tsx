@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import type { Product } from '@/features/products/types'
+import { coverImageUrl } from '@/features/products/utils'
 import { formatVND, discountPercent } from '@/lib/utils/format'
 
 /** Card sản phẩm dùng lại ở homepage, listing, category, brand */
 export function ProductCard({ product }: { product: Product }) {
-  const cover =
-    product.images?.find((i) => i.isCover)?.url ?? product.images?.[0]?.url
+  const cover = coverImageUrl(product)
   // Lấy variant rẻ nhất để hiển thị giá "từ ..."
   const variant = product.variants?.[0]
   const discount = variant
@@ -16,11 +16,11 @@ export function ProductCard({ product }: { product: Product }) {
   return (
     <Link
       href={`/products/${product.slug}`}
-      className="group bg-white rounded-xl border border-[var(--color-border)] overflow-hidden hover:shadow-md transition-shadow"
+      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground transition-all hover:shadow-md"
     >
-      <div className="relative aspect-square bg-gray-50 grid place-items-center p-4">
+      <div className="relative aspect-square bg-muted flex items-center justify-center overflow-hidden">
         {discount > 0 && (
-          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[var(--color-danger)] text-white text-[11px] font-bold">
+          <span className="absolute left-2.5 top-2.5 z-10 rounded-md bg-sale-strong px-2.5 py-1 text-xs font-bold text-white shadow-sm">
             -{discount}%
           </span>
         )}
@@ -30,27 +30,29 @@ export function ProductCard({ product }: { product: Product }) {
             alt={product.name}
             fill
             sizes="(max-width: 768px) 50vw, 25vw"
-            className="object-contain p-4 group-hover:scale-105 transition-transform"
+            className="object-contain p-5 transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
-          <span className="text-gray-300 text-sm">Không có ảnh</span>
+          <span className="text-muted-foreground text-sm">Không có ảnh</span>
         )}
       </div>
 
-      <div className="p-3">
+      <div className="flex flex-1 flex-col gap-2.5 p-4">
         {product.brand && (
-          <div className="text-[11px] uppercase tracking-wide text-gray-400">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
             {product.brand.name}
           </div>
         )}
-        <h3 className="text-sm font-medium line-clamp-2 min-h-10">{product.name}</h3>
+        <h3 className="text-[15px] font-medium line-clamp-2 min-h-11 leading-snug">
+          {product.name}
+        </h3>
         {variant && (
-          <div className="mt-1.5 flex items-baseline gap-2">
-            <span className="text-[var(--color-danger)] font-bold">
+          <div className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-lg font-bold text-sale-strong">
               {formatVND(variant.salePrice)}
             </span>
             {discount > 0 && (
-              <span className="text-xs text-gray-400 line-through">
+              <span className="text-sm text-muted-foreground line-through">
                 {formatVND(variant.originalPrice)}
               </span>
             )}

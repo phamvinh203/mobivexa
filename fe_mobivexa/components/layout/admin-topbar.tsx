@@ -1,5 +1,6 @@
 'use client'
 
+import { Bell } from 'lucide-react'
 import { useAuth } from '@/lib/auth/auth-context'
 
 export function AdminTopbar() {
@@ -21,7 +22,7 @@ export function AdminTopbar() {
 
       <div className="ml-auto flex items-center gap-4">
         <button className="relative text-gray-600" aria-label="Thông báo">
-          🔔
+          <Bell className="h-5 w-5" aria-hidden />
         </button>
         <div className="flex items-center gap-2">
           <span className="w-9 h-9 rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] grid place-items-center text-sm font-semibold">

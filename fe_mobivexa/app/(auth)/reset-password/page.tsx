@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
+import { ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { authApi } from '@/features/auth/api'
 import { ApiError } from '@/lib/api/http'
@@ -74,8 +75,12 @@ export default function ResetPasswordPage() {
       </form>
 
       <p className="mt-6 text-center text-sm">
-        <Link href="/login" className="text-[var(--color-primary)]">
-          ← Quay lại đăng nhập
+        <Link
+          href="/login"
+          className="inline-flex items-center gap-1 text-[var(--color-primary)]"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Quay lại đăng nhập
         </Link>
       </p>
     </div>

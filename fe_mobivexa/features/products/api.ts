@@ -9,15 +9,23 @@ import type {
   UpdateStockPayload,
 } from './types'
 
-// Khớp src/routes/product.route.ts
+// Khớp src/routes/product.route.ts. Backend bọc response: { products } / { product }
+// (sendSuccess(res, { products }) — xem be_mobivexa/src/controllers). Unwrap tại đây
+// để mọi consumer nhận thẳng Product[] / Product.
 export const productApi = {
   // Public: /products — cache 60s (catalog ít thay đổi theo giây)
   list: (query?: ProductListQuery) =>
-    http.get<Product[]>('/products', { auth: false, params: query, revalidate: 60 }),
+    http
+      .get<{ products: Product[] }>('/products', { auth: false, params: query, revalidate: 60 })
+      .then((r) => r.products ?? []),
   featured: () =>
-    http.get<Product[]>('/products/featured', { auth: false, revalidate: 300 }),
+    http
+      .get<{ products: Product[] }>('/products/featured', { auth: false, revalidate: 300 })
+      .then((r) => r.products ?? []),
   getBySlug: (slug: string) =>
-    http.get<Product>(`/products/${slug}`, { auth: false, revalidate: 60 }),
+    http
+      .get<{ product: Product }>(`/products/${slug}`, { auth: false, revalidate: 60 })
+      .then((r) => r.product),
 }
 
 // Admin: /admin/products (STAFF + ADMIN)
