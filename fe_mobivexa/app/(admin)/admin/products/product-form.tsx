@@ -285,7 +285,7 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
                 id="pf-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="iPhone 15 Pro Max Titanium"
+                placeholder="tên sản phẩm"
               />
             </div>
 
@@ -297,7 +297,7 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
                   id="pf-slug"
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
-                  placeholder="iphone-15-pro-max-titanium"
+                  placeholder="đường dẫn tĩnh (nên để trống để tự tạo từ tên)"
                   className="flex-1"
                 />
                 <Button
@@ -429,7 +429,7 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
                   contentEditable
                   suppressContentEditableWarning
                   onInput={(e) => setDescription(e.currentTarget.innerHTML)}
-                  data-placeholder="iPhone 15 Pro Max. Được chế tác bằng titan. Trang bị chip A17 Pro đột phá. Nút Tác vụ có thể tùy chỉnh..."
+                  data-placeholder="Nhập mô tả chi tiết về sản phẩm..."
                   className="prose prose-sm min-h-36 max-w-none p-3 text-sm text-gray-700 outline-none empty:before:text-gray-400 empty:before:content-[attr(data-placeholder)]"
                 />
               </div>

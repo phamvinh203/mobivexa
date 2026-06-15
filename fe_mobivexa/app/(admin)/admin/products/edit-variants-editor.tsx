@@ -230,7 +230,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
                       <Input
                         value={row.color}
                         disabled={busy}
-                        placeholder="Titan Đen"
+                        placeholder="màu sắc"
                         onChange={(e) => updateRow(v.id, 'color', e.target.value)}
                         onBlur={() => handleBlur(v, 'color')}
                         className="h-8 min-w-[90px] text-sm"
@@ -242,7 +242,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
                       <Input
                         value={row.ram}
                         disabled={busy}
-                        placeholder="8GB"
+                        placeholder="ram"
                         onChange={(e) => updateRow(v.id, 'ram', e.target.value)}
                         onBlur={() => handleBlur(v, 'ram')}
                         className="h-8 min-w-[70px] text-sm"
@@ -254,7 +254,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
                       <Input
                         value={row.storage}
                         disabled={busy}
-                        placeholder="256GB"
+                        placeholder="dung lượng"
                         onChange={(e) => updateRow(v.id, 'storage', e.target.value)}
                         onBlur={() => handleBlur(v, 'storage')}
                         className="h-8 min-w-[80px] text-sm"
@@ -267,7 +267,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
                         <Input
                           value={row.sku}
                           disabled={busy}
-                          placeholder="IPH15PRO-BLK-256"
+                          placeholder="SKU"
                           onChange={(e) => updateRow(v.id, 'sku', e.target.value)}
                           onBlur={() => handleBlur(v, 'sku')}
                           className="h-8 min-w-[130px] font-mono text-xs text-[var(--color-primary)]"

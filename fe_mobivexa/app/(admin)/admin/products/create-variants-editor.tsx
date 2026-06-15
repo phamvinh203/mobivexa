@@ -121,23 +121,23 @@ export function CreateVariantsEditor({ onChange, availableImages = [], productNa
 
                   {/* Color */}
                   <td className="px-3 py-2.5">
-                    <Input placeholder="Titan Đen" value={d.color ?? ''} onChange={(e) => updateDraft(d.key, 'color', e.target.value)} className="h-8 min-w-[90px] text-sm" />
+                    <Input placeholder="màu sắc" value={d.color ?? ''} onChange={(e) => updateDraft(d.key, 'color', e.target.value)} className="h-8 min-w-[90px] text-sm" />
                   </td>
 
                   {/* Ram */}
                   <td className="px-3 py-2.5">
-                    <Input placeholder="8GB" value={d.ram ?? ''} onChange={(e) => updateDraft(d.key, 'ram', e.target.value)} className="h-8 min-w-[70px] text-sm" />
+                    <Input placeholder="ram" value={d.ram ?? ''} onChange={(e) => updateDraft(d.key, 'ram', e.target.value)} className="h-8 min-w-[70px] text-sm" />
                   </td>
 
                   {/* Storage */}
                   <td className="px-3 py-2.5">
-                    <Input placeholder="256GB" value={d.storage ?? ''} onChange={(e) => updateDraft(d.key, 'storage', e.target.value)} className="h-8 min-w-[80px] text-sm" />
+                    <Input placeholder="dung lượng" value={d.storage ?? ''} onChange={(e) => updateDraft(d.key, 'storage', e.target.value)} className="h-8 min-w-[80px] text-sm" />
                   </td>
 
                   {/* SKU */}
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">
-                      <Input placeholder="IPH15PRO-BLK-256" value={d.sku} onChange={(e) => updateDraft(d.key, 'sku', e.target.value)} className="h-8 min-w-[130px] font-mono text-xs" />
+                      <Input placeholder="SKU" value={d.sku} onChange={(e) => updateDraft(d.key, 'sku', e.target.value)} className="h-8 min-w-[130px] font-mono text-xs" />
                       <button type="button" onClick={() => regenerateSku(d.key)} title="Tự động tạo SKU" className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[var(--color-primary)]">
                         <RefreshCw className="h-3.5 w-3.5" />
                       </button>
