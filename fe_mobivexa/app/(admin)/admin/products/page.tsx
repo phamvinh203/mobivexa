@@ -227,14 +227,7 @@ function ProductRow({
   const cover = product.images?.[0]?.url
   const variants = product.variants ?? []
 
-  const minPrice = variants[0]?.salePrice
-  const maxPrice = variants[variants.length - 1]?.salePrice
-  const priceLabel =
-    variants.length === 0
-      ? '—'
-      : minPrice === maxPrice
-        ? formatVND(minPrice!)
-        : `${formatVND(minPrice!)} – ${formatVND(maxPrice!)}`
+  const priceLabel = variants[0] ? formatVND(variants[0].salePrice) : '—'
 
   const totalStock = variants.reduce((sum, v) => sum + v.stock, 0)
 
