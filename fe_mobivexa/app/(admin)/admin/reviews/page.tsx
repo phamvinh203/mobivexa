@@ -114,9 +114,7 @@ export default function AdminReviewsPage() {
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       {isLoading ? (
         <Loading.FullPage message="Đang tải đánh giá..." />

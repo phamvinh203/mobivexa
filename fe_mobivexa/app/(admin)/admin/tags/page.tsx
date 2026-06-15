@@ -5,6 +5,7 @@ import { Plus, X, Tag as TagIcon } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { consolidateApiError } from '@/lib/utils/error'
+import { Loading } from '@/components/ui/loading'
 import { ApiError } from '@/lib/api/http'
 import { adminTagApi } from '@/features/tags/api'
 import type { Tag } from '@/features/tags/types'
@@ -59,9 +60,7 @@ export default function AdminTagsPage() {
         </Button>
       </div>
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       {/* Lưới chip tags */}
       {isLoading ? (

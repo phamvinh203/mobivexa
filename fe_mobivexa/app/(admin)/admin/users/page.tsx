@@ -12,6 +12,7 @@ import { Pagination } from '@/components/ui/pagination'
 import { StatusDot } from '@/components/ui/status-dot'
 import { formatDate } from '@/lib/utils/format'
 import { consolidateApiError } from '@/lib/utils/error'
+import { Loading } from '@/components/ui/loading'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { useAuth } from '@/lib/auth/auth-context'
@@ -31,8 +32,6 @@ const COLUMNS = [
   { label: 'Thao tác', className: 'text-right' },
 ] as const
 
-type UsersData = AdminUserListResult
-
 export default function AdminUsersPage() {
   const { user: me } = useAuth()
   const queryClient = useQueryClient()
@@ -51,7 +50,7 @@ export default function AdminUsersPage() {
 
   const usersKey = ['admin-users', page, search, roleFilter, statusFilter]
 
-  const { data, isLoading, error: fetchError } = useQuery<UsersData>({
+  const { data, isLoading, error: fetchError } = useQuery<AdminUserListResult>({
     queryKey: usersKey,
     queryFn: () => adminUserApi.list({
       page,
@@ -70,7 +69,7 @@ export default function AdminUsersPage() {
 
   function handleRoleSaved(updated: AdminUser) {
     setEditing(null)
-    queryClient.setQueryData<UsersData>(usersKey, (prev) =>
+    queryClient.setQueryData<AdminUserListResult>(usersKey, (prev) =>
       prev ? { ...prev, users: prev.users.map((u) => u.id === updated.id ? updated : u) } : prev,
     )
   }
@@ -78,7 +77,7 @@ export default function AdminUsersPage() {
   function handleToggle(user: AdminUser) {
     return runBusy(user.id, async () => {
       const updated = await adminUserApi.toggleStatus(user.id)
-      queryClient.setQueryData<UsersData>(usersKey, (prev) =>
+      queryClient.setQueryData<AdminUserListResult>(usersKey, (prev) =>
         prev ? { ...prev, users: prev.users.map((u) => u.id === updated.id ? updated : u) } : prev,
       )
     }, 'Cập nhật trạng thái thất bại')
@@ -88,7 +87,7 @@ export default function AdminUsersPage() {
     if (!confirm(`Xoá người dùng "${user.fullName}"? Hành động này không thể hoàn tác.`)) return
     return runBusy(user.id, async () => {
       await adminUserApi.remove(user.id)
-      queryClient.setQueryData<UsersData>(usersKey, (prev) => {
+      queryClient.setQueryData<AdminUserListResult>(usersKey, (prev) => {
         if (!prev) return prev
         const total = Math.max(0, prev.pagination.total - 1)
         return {
@@ -142,9 +141,7 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       <AdminTable
         columns={COLUMNS}

@@ -13,7 +13,6 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Pagination } from '@/components/ui/pagination'
 import { Loading } from '@/components/ui/loading'
 import { consolidateApiError } from '@/lib/utils/error'
-import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
 import { adminInventoryApi } from '@/features/inventory/api'
 import { adminBrandApi } from '@/features/brands/api'
@@ -84,7 +83,7 @@ export default function AdminInventoryPage() {
   const summary = data?.summary
   const variants = data?.variants ?? []
   const pagination = data?.pagination ?? EMPTY_PAGINATION
-  const errorMsg = consolidateApiError('', fetchError, 'dữ liệu tồn kho')
+  const errorMsg = consolidateApiError(null, fetchError, 'dữ liệu tồn kho')
   const groups = useMemo(() => groupByProduct(variants), [variants])
 
   return (
@@ -137,9 +136,7 @@ export default function AdminInventoryPage() {
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       {/* ── Table ── */}
       <div className="overflow-hidden rounded-xl border border-border bg-white shadow-sm">
@@ -195,7 +192,7 @@ export default function AdminInventoryPage() {
           <div className="border-t border-border px-4 py-3">
             <Pagination
               meta={pagination}
-              isLoading={isLoading}
+              loading={isLoading}
               emptyLabel="Không có biến thể"
               onChange={setPage}
             />

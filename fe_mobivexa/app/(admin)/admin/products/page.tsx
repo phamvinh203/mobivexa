@@ -13,6 +13,7 @@ import { Pagination } from '@/components/ui/pagination'
 import { NativeSelect } from '@/components/ui/native-select'
 import { StatusDot } from '@/components/ui/status-dot'
 import { consolidateApiError } from '@/lib/utils/error'
+import { Loading } from '@/components/ui/loading'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
@@ -171,9 +172,7 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       <AdminTable
         columns={COLUMNS}

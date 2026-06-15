@@ -10,7 +10,7 @@ import { ApiError } from '@/lib/api/http'
  * @returns Consolidated error message, or empty string if no errors
  */
 export function consolidateApiError(
-  actionError: string,
+  actionError: string | undefined | null,
   fetchError: unknown,
   entityName: string,
 ): string {

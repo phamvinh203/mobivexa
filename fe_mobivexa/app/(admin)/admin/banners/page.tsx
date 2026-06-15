@@ -9,6 +9,7 @@ import { AdminTable } from '@/components/ui/admin-table'
 import { StatusDot } from '@/components/ui/status-dot'
 import { upsertById } from '@/lib/utils/list'
 import { consolidateApiError } from '@/lib/utils/error'
+import { Loading } from '@/components/ui/loading'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { adminBannerApi } from '@/features/banners/api'
@@ -110,9 +111,7 @@ export default function AdminBannersPage() {
         ))}
       </div>
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       <AdminTable
         columns={COLUMNS}
