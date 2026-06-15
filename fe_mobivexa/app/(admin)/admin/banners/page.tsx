@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useState, useMemo } from 'react'
 import Image from 'next/image'
 import { Plus, Pencil, Trash2, Eye, EyeOff, ImageOff } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { AdminTable } from '@/components/ui/admin-table'
 import { StatusDot } from '@/components/ui/status-dot'
 import { upsertById } from '@/lib/utils/list'
+import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { adminBannerApi } from '@/features/banners/api'
@@ -24,32 +26,20 @@ const COLUMNS = [
 ] as const
 
 export default function AdminBannersPage() {
-  const [banners, setBanners] = useState<Banner[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+
+  const [actionError, setActionError] = useState('')
   const [filter, setFilter] = useState<BannerPosition | 'ALL'>('ALL')
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Banner | null>(null)
 
-  const { busyId, runBusy } = useRowAction(setError)
+  const { busyId, runBusy } = useRowAction(setActionError)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      setBanners(await adminBannerApi.list())
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách banner')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data: banners = [], isLoading, error: fetchError } = useQuery<Banner[]>({
+    queryKey: ['admin-banners'],
+    queryFn: () => adminBannerApi.list(),
+  })
 
   // Tải toàn bộ banner một lần; lọc theo vị trí ở client (danh sách nhỏ).
   const visible = useMemo(
@@ -62,14 +52,19 @@ export default function AdminBannersPage() {
 
   function handleSaved(savedBanner?: Banner) {
     setModalOpen(false)
-    if (savedBanner) setBanners((prev) => upsertById(prev, savedBanner))
-    else void load()
+    if (savedBanner) {
+      queryClient.setQueryData<Banner[]>(['admin-banners'], (prev) => upsertById(prev ?? [], savedBanner))
+    } else {
+      queryClient.invalidateQueries({ queryKey: ['admin-banners'] })
+    }
   }
 
   function handleToggle(banner: Banner) {
     return runBusy(banner.id, async () => {
       const updated = await adminBannerApi.toggleStatus(banner.id)
-      setBanners((prev) => prev.map((b) => (b.id === updated.id ? updated : b)))
+      queryClient.setQueryData<Banner[]>(['admin-banners'], (prev) =>
+        (prev ?? []).map((b) => (b.id === updated.id ? updated : b))
+      )
     }, 'Cập nhật trạng thái thất bại')
   }
 
@@ -77,9 +72,13 @@ export default function AdminBannersPage() {
     if (!confirm(`Xoá banner "${banner.alt}"?`)) return
     return runBusy(banner.id, async () => {
       await adminBannerApi.remove(banner.id)
-      setBanners((prev) => prev.filter((b) => b.id !== banner.id))
+      queryClient.setQueryData<Banner[]>(['admin-banners'], (prev) =>
+        (prev ?? []).filter((b) => b.id !== banner.id)
+      )
     }, 'Xoá banner thất bại')
   }
+
+  const errorMsg = consolidateApiError(actionError, fetchError, 'banner')
 
   return (
     <div className="space-y-5">
@@ -111,14 +110,14 @@ export default function AdminBannersPage() {
         ))}
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       <AdminTable
         columns={COLUMNS}
         colSpan={6}
-        loading={loading}
+        loading={isLoading}
         empty={visible.length === 0}
         emptyMessage='Chưa có banner nào. Bấm "Thêm banner" để tạo mới.'
       >

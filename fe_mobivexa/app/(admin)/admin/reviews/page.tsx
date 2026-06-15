@@ -1,11 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { MessageSquareReply, Trash2 } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { FilterChip } from '@/components/ui/filter-chip'
 import { StarRating } from '@/components/ui/star-rating'
 import { Pagination } from '@/components/ui/pagination'
+import { Loading } from '@/components/ui/loading'
+import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { formatDate } from '@/lib/utils/format'
@@ -23,47 +26,37 @@ type StatusFilter = 'ALL' | ReviewStatus
 
 const RATING_OPTIONS = [5, 4, 3, 2, 1] as const
 
-export default function AdminReviewsPage() {
-  const [result, setResult] = useState<{ reviews: AdminReview[]; pagination: PaginationMeta } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+type ReviewsData = { reviews: AdminReview[]; pagination: PaginationMeta }
 
+export default function AdminReviewsPage() {
+  const queryClient = useQueryClient()
+
+  const [actionError, setActionError] = useState('')
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>(0)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
   const [page, setPage] = useState(1)
 
   const [replying, setReplying] = useState<AdminReview | null>(null)
 
-  const { busyId, runBusy } = useRowAction(setError)
+  const { busyId, runBusy } = useRowAction(setActionError)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await adminReviewApi.list({
-        page,
-        limit: PAGE_SIZE,
-        rating: ratingFilter || undefined,
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
-      })
-      setResult(data)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách đánh giá')
-    } finally {
-      setLoading(false)
-    }
-  }, [page, ratingFilter, statusFilter])
+  const reviewsKey = ['admin-reviews', page, ratingFilter, statusFilter]
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data, isLoading, error: fetchError } = useQuery<ReviewsData>({
+    queryKey: reviewsKey,
+    queryFn: () => adminReviewApi.list({
+      page,
+      limit: PAGE_SIZE,
+      rating: ratingFilter || undefined,
+      status: statusFilter === 'ALL' ? undefined : statusFilter,
+    }),
+  })
 
   const resetPage = () => setPage(1)
 
   function handleReplySaved(updated: AdminReview) {
     setReplying(null)
-    setResult((prev) =>
+    queryClient.setQueryData<ReviewsData>(reviewsKey, (prev) =>
       prev ? { ...prev, reviews: prev.reviews.map((r) => (r.id === updated.id ? updated : r)) } : prev,
     )
   }
@@ -72,7 +65,7 @@ export default function AdminReviewsPage() {
     if (!confirm('Xoá đánh giá này? Hành động không thể hoàn tác.')) return
     return runBusy(review.id, async () => {
       await adminReviewApi.remove(review.id)
-      setResult((prev) => {
+      queryClient.setQueryData<ReviewsData>(reviewsKey, (prev) => {
         if (!prev) return prev
         const total = Math.max(0, prev.pagination.total - 1)
         return {
@@ -83,8 +76,9 @@ export default function AdminReviewsPage() {
     }, 'Xoá đánh giá thất bại')
   }
 
-  const reviews = result?.reviews ?? []
-  const pagination = result?.pagination ?? EMPTY_PAGINATION
+  const reviews = data?.reviews ?? []
+  const pagination = data?.pagination ?? EMPTY_PAGINATION
+  const errorMsg = consolidateApiError(actionError, fetchError, 'đánh giá')
 
   return (
     <div className="space-y-5">
@@ -120,14 +114,12 @@ export default function AdminReviewsPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
-      {loading ? (
-        <div className="rounded-xl bg-white px-4 py-10 text-center text-sm text-gray-400 ring-1 ring-border">
-          Đang tải...
-        </div>
+      {isLoading ? (
+        <Loading.FullPage message="Đang tải đánh giá..." />
       ) : reviews.length === 0 ? (
         <div className="rounded-xl bg-white px-4 py-10 text-center text-sm text-gray-400 ring-1 ring-border">
           Không có đánh giá phù hợp.
@@ -148,7 +140,7 @@ export default function AdminReviewsPage() {
 
       <Pagination
         meta={pagination}
-        loading={loading}
+        loading={isLoading}
         emptyLabel="Không có đánh giá"
         onChange={setPage}
         className="rounded-xl bg-white ring-1 ring-border"

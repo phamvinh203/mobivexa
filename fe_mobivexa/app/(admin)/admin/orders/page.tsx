@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { buttonVariants } from '@/components/ui/button'
 import { FilterChip } from '@/components/ui/filter-chip'
 import { AdminTable } from '@/components/ui/admin-table'
 import { Pagination } from '@/components/ui/pagination'
+import { consolidateApiError } from '@/lib/utils/error'
 import { ApiError } from '@/lib/api/http'
 import { formatVND, formatDate } from '@/lib/utils/format'
 import { adminOrderApi } from '@/features/orders/api'
@@ -27,42 +29,30 @@ const COLUMNS = [
   { label: '', className: 'text-right' },
 ] as const
 
-export default function AdminOrdersPage() {
-  const [result, setResult] = useState<{ orders: AdminOrder[]; pagination: PaginationMeta } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+type OrdersData = { orders: AdminOrder[]; pagination: PaginationMeta }
 
+export default function AdminOrdersPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('ALL')
   const [page, setPage] = useState(1)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await adminOrderApi.list({
-        page,
-        limit: PAGE_SIZE,
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
-        paymentStatus: paymentFilter === 'ALL' ? undefined : paymentFilter,
-      })
-      setResult(data)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách đơn hàng')
-    } finally {
-      setLoading(false)
-    }
-  }, [page, statusFilter, paymentFilter])
+  const ordersKey = ['admin-orders', page, statusFilter, paymentFilter]
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data, isLoading, error: fetchError } = useQuery<OrdersData>({
+    queryKey: ordersKey,
+    queryFn: () => adminOrderApi.list({
+      page,
+      limit: PAGE_SIZE,
+      status: statusFilter === 'ALL' ? undefined : statusFilter,
+      paymentStatus: paymentFilter === 'ALL' ? undefined : paymentFilter,
+    }),
+  })
 
   const resetPage = () => setPage(1)
 
-  const orders = result?.orders ?? []
-  const pagination = result?.pagination ?? EMPTY_PAGINATION
+  const orders = data?.orders ?? []
+  const pagination = data?.pagination ?? EMPTY_PAGINATION
+  const errorMsg = consolidateApiError('', fetchError, 'đơn hàng')
 
   return (
     <div className="space-y-5">
@@ -86,20 +76,20 @@ export default function AdminOrdersPage() {
         onChange={(p) => { setPaymentFilter(p); resetPage() }}
       />
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       <AdminTable
         columns={COLUMNS}
         colSpan={7}
-        loading={loading}
+        loading={isLoading}
         empty={orders.length === 0}
         emptyMessage="Không có đơn hàng phù hợp."
         scrollable
         footer={
           pagination.totalPages > 1
-            ? <Pagination meta={pagination} loading={loading} emptyLabel="Không có đơn hàng" onChange={setPage} />
+            ? <Pagination meta={pagination} loading={isLoading} emptyLabel="Không có đơn hàng" onChange={setPage} />
             : undefined
         }
       >

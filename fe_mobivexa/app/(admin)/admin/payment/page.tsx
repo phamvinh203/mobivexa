@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ComponentType } from 'react'
 import Link from 'next/link'
 import {
@@ -12,7 +12,10 @@ import {
   RefreshCw,
   type LucideProps,
 } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Loading } from '@/components/ui/loading'
+import { consolidateApiError } from '@/lib/utils/error'
 import { ApiError } from '@/lib/api/http'
 import { formatVND, formatDateTime } from '@/lib/utils/format'
 import { paymentApi } from '@/features/payment/api'
@@ -24,38 +27,39 @@ import { PaymentMethod, PaymentStatus } from '@/types/api'
 const AWAITING_LIMIT = 10
 
 export default function AdminPaymentPage() {
-  const [stats, setStats] = useState<PaymentStats | null>(null)
-  const [awaiting, setAwaiting] = useState<AdminOrder[]>([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      // Stats tổng hợp + danh sách đơn CK đang chờ đối soát (UNPAID + BANK_TRANSFER).
-      const [statsData, awaitingData] = await Promise.all([
-        paymentApi.getStats(),
-        adminOrderApi.list({
-          page: 1,
-          limit: AWAITING_LIMIT,
-          paymentStatus: PaymentStatus.UNPAID,
-          paymentMethod: PaymentMethod.BANK_TRANSFER,
-        }),
-      ])
-      setStats(statsData)
-      setAwaiting(awaitingData.orders)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được thống kê thanh toán')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  // Stats tổng hợp
+  const { data: stats, isLoading: statsLoading, error: statsError } = useQuery<PaymentStats>({
+    queryKey: ['admin-payment-stats'],
+    queryFn: () => paymentApi.getStats(),
+  })
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  // Danh sách đơn CK đang chờ đối soát (UNPAID + BANK_TRANSFER)
+  const { data: awaitingData, isLoading: awaitingLoading, error: awaitingError } = useQuery<{ orders: AdminOrder[] }>({
+    queryKey: ['admin-payment-awaiting'],
+    queryFn: () => adminOrderApi.list({
+      page: 1,
+      limit: AWAITING_LIMIT,
+      paymentStatus: PaymentStatus.UNPAID,
+      paymentMethod: PaymentMethod.BANK_TRANSFER,
+    }),
+  })
+
+  const awaiting = awaitingData?.orders ?? []
+  const loading = statsLoading || awaitingLoading
+  const errorMsg = consolidateApiError(
+    error,
+    statsError || awaitingError,
+    'thống kê thanh toán'
+  )
+
+  function handleRefresh() {
+    queryClient.invalidateQueries({ queryKey: ['admin-payment-stats'] })
+    queryClient.invalidateQueries({ queryKey: ['admin-payment-awaiting'] })
+  }
 
   return (
     <div className="space-y-5">
@@ -67,7 +71,7 @@ export default function AdminPaymentPage() {
             Theo dõi doanh thu, công nợ & đối soát đơn chuyển khoản.
           </p>
         </div>
-        <Button variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
+        <Button variant="outline" size="sm" disabled={loading} onClick={handleRefresh}>
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Làm mới
         </Button>
@@ -152,9 +156,7 @@ export default function AdminPaymentPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-gray-400">Đang tải...</td>
-                </tr>
+                <Loading.TableRow colSpan={5} message="Đang tải..." />
               ) : awaiting.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-10 text-center text-gray-400">

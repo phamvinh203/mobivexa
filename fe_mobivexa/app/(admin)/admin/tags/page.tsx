@@ -1,42 +1,32 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Plus, X, Tag as TagIcon } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
+import { consolidateApiError } from '@/lib/utils/error'
 import { ApiError } from '@/lib/api/http'
 import { adminTagApi } from '@/features/tags/api'
 import type { Tag } from '@/features/tags/types'
 import { TagFormModal } from './tag-form-modal'
 
 export default function AdminTagsPage() {
-  const [tags, setTags] = useState<Tag[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+
+  const [actionError, setActionError] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      setTags(await adminTagApi.list())
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách tag')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data: tags = [], isLoading, error: fetchError } = useQuery<Tag[]>({
+    queryKey: ['admin-tags'],
+    queryFn: () => adminTagApi.list(),
+  })
 
   function handleSaved(savedTag: Tag) {
     setModalOpen(false)
     // Optimistic update: thêm tag mới vào đầu danh sách
-    setTags((prev) => [savedTag, ...prev])
+    queryClient.setQueryData<Tag[]>(['admin-tags'], (prev) => [savedTag, ...(prev ?? [])])
   }
 
   async function handleDelete(tag: Tag) {
@@ -45,13 +35,15 @@ export default function AdminTagsPage() {
     setBusyId(tag.id)
     try {
       await adminTagApi.remove(tag.id)
-      setTags((prev) => prev.filter((t) => t.id !== tag.id))
+      queryClient.setQueryData<Tag[]>(['admin-tags'], (prev) => (prev ?? []).filter((t) => t.id !== tag.id))
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Xoá tag thất bại')
+      setActionError(err instanceof ApiError ? err.message : 'Xoá tag thất bại')
     } finally {
       setBusyId(null)
     }
   }
+
+  const errorMsg = consolidateApiError(actionError, fetchError, 'tag')
 
   return (
     <div className="space-y-5">
@@ -67,12 +59,12 @@ export default function AdminTagsPage() {
         </Button>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       {/* Lưới chip tags */}
-      {loading ? (
+      {isLoading ? (
         <div className="rounded-xl bg-white px-4 py-10 text-center text-sm text-gray-400 ring-1 ring-border">
           Đang tải...
         </div>

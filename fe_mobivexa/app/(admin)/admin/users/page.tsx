@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import { Trash2, Eye, EyeOff, UserCog, Search } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { FilterChip } from '@/components/ui/filter-chip'
 import { Input } from '@/components/ui/input'
@@ -10,6 +11,7 @@ import { AdminTable } from '@/components/ui/admin-table'
 import { Pagination } from '@/components/ui/pagination'
 import { StatusDot } from '@/components/ui/status-dot'
 import { formatDate } from '@/lib/utils/format'
+import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { useAuth } from '@/lib/auth/auth-context'
@@ -29,12 +31,13 @@ const COLUMNS = [
   { label: 'Thao tác', className: 'text-right' },
 ] as const
 
+type UsersData = AdminUserListResult
+
 export default function AdminUsersPage() {
   const { user: me } = useAuth()
+  const queryClient = useQueryClient()
 
-  const [result, setResult] = useState<AdminUserListResult | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [page, setPage] = useState(1)
 
   const [search, setSearch] = useState('')
@@ -44,31 +47,20 @@ export default function AdminUsersPage() {
 
   const [editing, setEditing] = useState<AdminUser | null>(null)
 
-  const { busyId, runBusy } = useRowAction(setError)
+  const { busyId, runBusy } = useRowAction(setActionError)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await adminUserApi.list({
-        page,
-        limit: PAGE_SIZE,
-        search: search || undefined,
-        role: roleFilter === 'ALL' ? undefined : roleFilter,
-        isActive: statusFilter === 'ALL' ? undefined : statusFilter === 'ACTIVE',
-      })
-      setResult(data)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách người dùng')
-    } finally {
-      setLoading(false)
-    }
-  }, [page, search, roleFilter, statusFilter])
+  const usersKey = ['admin-users', page, search, roleFilter, statusFilter]
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data, isLoading, error: fetchError } = useQuery<UsersData>({
+    queryKey: usersKey,
+    queryFn: () => adminUserApi.list({
+      page,
+      limit: PAGE_SIZE,
+      search: search || undefined,
+      role: roleFilter === 'ALL' ? undefined : roleFilter,
+      isActive: statusFilter === 'ALL' ? undefined : statusFilter === 'ACTIVE',
+    }),
+  })
 
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -78,13 +70,17 @@ export default function AdminUsersPage() {
 
   function handleRoleSaved(updated: AdminUser) {
     setEditing(null)
-    setResult((prev) => prev ? { ...prev, users: prev.users.map((u) => u.id === updated.id ? updated : u) } : prev)
+    queryClient.setQueryData<UsersData>(usersKey, (prev) =>
+      prev ? { ...prev, users: prev.users.map((u) => u.id === updated.id ? updated : u) } : prev,
+    )
   }
 
   function handleToggle(user: AdminUser) {
     return runBusy(user.id, async () => {
       const updated = await adminUserApi.toggleStatus(user.id)
-      setResult((prev) => prev ? { ...prev, users: prev.users.map((u) => u.id === updated.id ? updated : u) } : prev)
+      queryClient.setQueryData<UsersData>(usersKey, (prev) =>
+        prev ? { ...prev, users: prev.users.map((u) => u.id === updated.id ? updated : u) } : prev,
+      )
     }, 'Cập nhật trạng thái thất bại')
   }
 
@@ -92,7 +88,7 @@ export default function AdminUsersPage() {
     if (!confirm(`Xoá người dùng "${user.fullName}"? Hành động này không thể hoàn tác.`)) return
     return runBusy(user.id, async () => {
       await adminUserApi.remove(user.id)
-      setResult((prev) => {
+      queryClient.setQueryData<UsersData>(usersKey, (prev) => {
         if (!prev) return prev
         const total = Math.max(0, prev.pagination.total - 1)
         return {
@@ -103,8 +99,9 @@ export default function AdminUsersPage() {
     }, 'Xoá người dùng thất bại')
   }
 
-  const users = result?.users ?? []
-  const pagination = result?.pagination ?? EMPTY_PAGINATION
+  const users = data?.users ?? []
+  const pagination = data?.pagination ?? EMPTY_PAGINATION
+  const errorMsg = consolidateApiError(actionError, fetchError, 'người dùng')
 
   return (
     <div className="space-y-5">
@@ -145,20 +142,20 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       <AdminTable
         columns={COLUMNS}
         colSpan={5}
-        loading={loading}
+        loading={isLoading}
         empty={users.length === 0}
         emptyMessage="Không có người dùng phù hợp."
         scrollable
         footer={
           pagination.totalPages > 1
-            ? <Pagination meta={pagination} loading={loading} emptyLabel="Không có người dùng" onChange={setPage} />
+            ? <Pagination meta={pagination} loading={isLoading} emptyLabel="Không có người dùng" onChange={setPage} />
             : undefined
         }
       >

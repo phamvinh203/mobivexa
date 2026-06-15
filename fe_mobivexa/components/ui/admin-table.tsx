@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { Loading } from './loading'
 
 /** Định nghĩa 1 cột: chuỗi đơn giản hoặc object với className tuỳ chỉnh.
  *  Dùng className="text-right" / "text-center" cho cột số/thao tác. */
@@ -55,11 +56,7 @@ export function AdminTable({
       </thead>
       <tbody className="divide-y divide-border">
         {loading ? (
-          <tr>
-            <td colSpan={colSpan} className="px-4 py-10 text-center text-gray-400">
-              Đang tải...
-            </td>
-          </tr>
+          <Loading.TableRow colSpan={colSpan} message="Đang tải..." />
         ) : empty ? (
           <tr>
             <td colSpan={colSpan} className="px-4 py-10 text-center text-gray-400">
