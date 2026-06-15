@@ -13,6 +13,7 @@ import { ImagePickerOverlay, type PickableImage } from './create-variants-editor
 
 type RowEdit = {
   color: string
+  ram: string
   storage: string
   sku: string
   originalPrice: string
@@ -23,6 +24,7 @@ type RowEdit = {
 function toRowEdit(v: ProductVariant): RowEdit {
   return {
     color: v.color ?? '',
+    ram: v.ram ?? '',
     storage: v.storage ?? '',
     sku: v.sku,
     originalPrice: String(v.originalPrice),
@@ -79,8 +81,8 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
     const body: Partial<VariantPayload> = {
       sku: row.sku.trim() || variant.sku,
       color: row.color.trim() || undefined,
+      ram: row.ram.trim() || undefined,
       storage: row.storage.trim() || undefined,
-      ram: variant.ram ?? undefined,
       imageUrl: variantImages[variant.id] ?? variant.imageUrl ?? undefined,
       originalPrice: Number(row.originalPrice) || Number(variant.originalPrice),
       salePrice: Number(row.salePrice) || Number(variant.salePrice),
@@ -151,7 +153,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
           <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="border-b border-border bg-gray-50">
-                {['ẢNH', 'MÀU SẮC', 'DUNG LƯỢNG', 'SKU', 'GIÁ', 'GIẢM GIÁ', 'TỒN KHO'].map((h) => (
+                {['ẢNH', 'MÀU SẮC', 'Ram', 'DUNG LƯỢNG', 'SKU', 'GIÁ', 'GIẢM GIÁ', 'TỒN KHO'].map((h) => (
                   <th
                     key={h}
                     className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 first:w-12 last:w-24"
@@ -209,6 +211,18 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
                         onChange={(e) => updateRow(v.id, 'color', e.target.value)}
                         onBlur={() => handleBlur(v, 'color')}
                         className="h-8 min-w-[90px] text-sm"
+                      />
+                    </td>
+
+                    {/* Ram — editable */}
+                    <td className="px-3 py-2.5">
+                      <Input
+                        value={row.ram}
+                        disabled={busy}
+                        placeholder="8GB"
+                        onChange={(e) => updateRow(v.id, 'ram', e.target.value)}
+                        onBlur={() => handleBlur(v, 'ram')}
+                        className="h-8 min-w-[70px] text-sm"
                       />
                     </td>
 

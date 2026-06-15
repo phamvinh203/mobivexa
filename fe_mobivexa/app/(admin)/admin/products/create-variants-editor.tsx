@@ -62,7 +62,7 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
           <table className="w-full min-w-[580px] text-sm">
             <thead>
               <tr className="border-b border-border bg-gray-50">
-                {['ẢNH', 'MÀU SẮC', 'DUNG LƯỢNG', 'SKU', 'GIÁ', 'GIẢM GIÁ'].map((h) => (
+                {['ẢNH', 'MÀU SẮC', 'Ram', 'DUNG LƯỢNG', 'SKU', 'GIÁ', 'GIẢM GIÁ', 'TỒN KHO'].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 first:w-12">
                     {h}
                   </th>
@@ -103,6 +103,11 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
                     <Input placeholder="Titan Đen" value={d.color ?? ''} onChange={(e) => updateDraft(d.key, 'color', e.target.value)} className="h-8 min-w-[90px] text-sm" />
                   </td>
 
+                  {/* Ram */}
+                  <td className="px-3 py-2.5">
+                    <Input placeholder="8GB" value={d.ram ?? ''} onChange={(e) => updateDraft(d.key, 'ram', e.target.value)} className="h-8 min-w-[70px] text-sm" />
+                  </td>
+
                   {/* Storage */}
                   <td className="px-3 py-2.5">
                     <Input placeholder="256GB" value={d.storage ?? ''} onChange={(e) => updateDraft(d.key, 'storage', e.target.value)} className="h-8 min-w-[80px] text-sm" />
@@ -121,6 +126,11 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
                   {/* Sale price */}
                   <td className="px-3 py-2.5">
                     <Input type="number" placeholder="—" value={d.salePrice || ''} onChange={(e) => updateDraft(d.key, 'salePrice', e.target.value)} className="h-8 min-w-[110px] text-right text-sm text-[var(--color-danger)] placeholder:text-gray-400" />
+                  </td>
+
+                  {/* Stock */}
+                  <td className="px-3 py-2.5">
+                    <Input type="number" placeholder="0" value={d.stock || ''} onChange={(e) => updateDraft(d.key, 'stock', e.target.value)} className="h-8 w-20 text-right text-sm" />
                   </td>
 
                   {/* Delete */}
