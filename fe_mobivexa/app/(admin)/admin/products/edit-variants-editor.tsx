@@ -180,7 +180,7 @@ export function EditVariantsEditor({
           Chưa có biến thể nào. Thêm biến thể để bắt đầu bán.
         </p>
       ) : (
-        <VariantTableShell minWidth="min-w-[620px]">
+        <VariantTableShell minWidth={620}>
           {variants.map((v) => (
             <EditVariantRow
               key={v.id}

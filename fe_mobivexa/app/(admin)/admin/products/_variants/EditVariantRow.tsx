@@ -1,8 +1,9 @@
-import { Trash2, ImageIcon, RefreshCw } from "lucide-react";
+import { Trash2, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { ProductVariant } from "@/features/products/types";
 import type { RowEdit } from "./types";
 import { ColorPickerInput } from "../_shared";
+import { VariantImageCell } from "./VariantImageCell";
 
 interface EditVariantRowProps {
   variant: ProductVariant;
@@ -38,30 +39,7 @@ export function EditVariantRow({
     >
       {/* Image */}
       <td className="px-3 py-2.5">
-        <button
-          type="button"
-          title="Chọn ảnh cho biến thể"
-          onClick={onOpenImagePicker}
-          className="group/img relative h-9 w-9 overflow-hidden rounded-md border border-dashed border-gray-300 bg-gray-100 transition-colors hover:border-[var(--color-primary)]/60 hover:bg-gray-50"
-        >
-          {selectedImage ? (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={selectedImage}
-                alt=""
-                className="h-full w-full object-cover"
-              />
-              <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover/img:opacity-100">
-                <ImageIcon className="h-3.5 w-3.5 text-white" />
-              </span>
-            </>
-          ) : (
-            <span className="flex h-full items-center justify-center">
-              <ImageIcon className="h-3.5 w-3.5 text-gray-300 transition-colors group-hover/img:text-[var(--color-primary)]/60" />
-            </span>
-          )}
-        </button>
+        <VariantImageCell imageUrl={selectedImage} onClick={onOpenImagePicker} />
       </td>
 
       {/* Color */}

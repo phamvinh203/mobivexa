@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { resolveColor, COLOR_PRESETS } from "@/lib/utils/color";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 export function ColorPickerInput({
   value,
@@ -19,18 +20,7 @@ export function ColorPickerInput({
   const containerRef = useRef<HTMLDivElement>(null);
   const dotColor = resolveColor(value || null);
 
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      )
-        setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  useClickOutside(containerRef, () => setOpen(false), open);
 
   return (
     <div ref={containerRef} className="relative min-w-[100px]">

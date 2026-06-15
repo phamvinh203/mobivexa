@@ -22,14 +22,13 @@ export function RichTextEditor({
   placeholder = "Nhập mô tả chi tiết về sản phẩm...",
 }: RichTextEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const initialized = useRef(false);
+  const initialValueRef = useRef(initialValue);
 
   useEffect(() => {
-    if (ref.current && !initialized.current && initialValue) {
-      ref.current.innerHTML = initialValue;
-      initialized.current = true;
+    if (ref.current && initialValueRef.current) {
+      ref.current.innerHTML = initialValueRef.current;
     }
-  }, [initialValue]);
+  }, []);
 
   return (
     <div className="overflow-hidden rounded-lg border border-input focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
@@ -118,26 +117,6 @@ export function RichTextEditor({
           <ImageIconRTE className="h-3.5 w-3.5" />
         </button>
 
-        {/* Table — placeholder */}
-        <button
-          type="button"
-          title="Bảng (chưa hỗ trợ)"
-          className="flex h-7 w-7 cursor-not-allowed items-center justify-center rounded text-gray-400"
-        >
-          <svg
-            className="h-3.5 w-3.5"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          >
-            <rect x="1" y="1" width="14" height="14" rx="1" />
-            <line x1="1" y1="5" x2="15" y2="5" />
-            <line x1="1" y1="9" x2="15" y2="9" />
-            <line x1="5" y1="1" x2="5" y2="15" />
-            <line x1="10" y1="1" x2="10" y2="15" />
-          </svg>
-        </button>
       </div>
 
       {/* Editable area */}

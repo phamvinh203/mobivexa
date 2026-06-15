@@ -19,6 +19,7 @@ import { SectionCard } from "./_shared";
 import {
   ProductBasicInfoSection,
   ProductImagesSection,
+  type PickedImage,
   ProductPublishCard,
   ProductClassificationCard,
 } from "./_sections";
@@ -29,11 +30,6 @@ interface ProductFormProps {
   mode: "create" | "edit";
   product?: Product;
   onDone: () => void;
-}
-
-interface PickedImage {
-  file: File;
-  url: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -253,7 +249,7 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
             onRegenerateSlug={() => setSlug(buildSlug(name))}
             shortDescription={shortDescription}
             onShortDescriptionChange={setShortDescription}
-            initialDescription={product?.description}
+            initialDescription={product?.description ?? undefined}
             onDescriptionChange={setDescription}
           />
 

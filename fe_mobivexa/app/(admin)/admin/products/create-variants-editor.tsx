@@ -10,7 +10,6 @@ import type { DraftVariant } from './_variants/types'
 
 // ─── Re-exports (backward compat) ────────────────────────────────────────────
 export type { DraftVariant }
-export type { PickableImage }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

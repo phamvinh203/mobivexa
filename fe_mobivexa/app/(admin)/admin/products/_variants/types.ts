@@ -15,3 +15,14 @@ export type RowEdit = {
   salePrice: string;
   stock: string;
 };
+
+export const VARIANT_HEADERS = [
+  "ẢNH",
+  "MÀU SẮC",
+  "RAM",
+  "DUNG LƯỢNG",
+  "SKU",
+  "GIÁ GỐC",
+  "GIÁ BÁN",
+  "TỒN KHO",
+] as const;

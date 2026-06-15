@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { X, Plus, Search } from "lucide-react";
 import type { Tag } from "@/features/tags/types";
+import { useClickOutside } from "@/lib/hooks/use-click-outside";
 
 export function TagPicker({
   allTags,
@@ -17,26 +18,18 @@ export function TagPicker({
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-        setSearch("");
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
+  useClickOutside(containerRef, () => { setOpen(false); setSearch(""); }, open);
 
-  const selectedTags = allTags.filter((t) => selectedIds.includes(t.id));
-  const availableTags = allTags.filter(
-    (t) =>
-      !selectedIds.includes(t.id) &&
-      t.name.toLowerCase().includes(search.toLowerCase()),
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const searchLower = search.toLowerCase();
+
+  const selectedTags = useMemo(
+    () => allTags.filter((t) => selectedSet.has(t.id)),
+    [allTags, selectedSet],
+  );
+  const availableTags = useMemo(
+    () => allTags.filter((t) => !selectedSet.has(t.id) && t.name.toLowerCase().includes(searchLower)),
+    [allTags, selectedSet, searchLower],
   );
 
   return (

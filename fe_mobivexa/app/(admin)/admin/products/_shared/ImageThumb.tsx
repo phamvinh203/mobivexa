@@ -1,4 +1,5 @@
 import { Star, X } from "lucide-react";
+import { Loading } from "@/components/ui/loading";
 
 export function ImageThumb({
   src,
@@ -53,7 +54,7 @@ export function ImageThumb({
 
       {busy && (
         <div className="absolute inset-0 flex items-center justify-center bg-white/50">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
+          <Loading.Spinner size="sm" />
         </div>
       )}
     </div>

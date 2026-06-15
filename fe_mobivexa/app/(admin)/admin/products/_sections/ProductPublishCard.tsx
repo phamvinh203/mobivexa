@@ -26,9 +26,7 @@ export function ProductPublishCard({
   onSaveDraft,
   onPublish,
 }: ProductPublishCardProps) {
-  const displayDate = createdAt
-    ? new Date(createdAt).toLocaleDateString("vi-VN")
-    : new Date().toLocaleDateString("vi-VN");
+  const displayDate = new Date(createdAt ?? Date.now()).toLocaleDateString("vi-VN");
 
   return (
     <SectionCard title="XUẤT BẢN">

@@ -4,7 +4,7 @@ import { Camera } from "lucide-react";
 import type { ProductImage } from "@/features/products/types";
 import { SectionCard, ImageThumb } from "../_shared";
 
-interface PickedImage {
+export interface PickedImage {
   file: File;
   url: string;
 }
