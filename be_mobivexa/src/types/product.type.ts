@@ -3,6 +3,7 @@ export interface VariantInput {
   color?: string
   storage?: string
   ram?: string
+  imageUrl?: string
   originalPrice: number
   salePrice: number
   stock?: number

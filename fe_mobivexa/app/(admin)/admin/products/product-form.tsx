@@ -195,6 +195,7 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
             color: d.color,
             storage: d.storage,
             ram: d.ram,
+            imageUrl: d.imageUrl,
             originalPrice: d.originalPrice,
             salePrice: d.salePrice,
             stock: d.stock,

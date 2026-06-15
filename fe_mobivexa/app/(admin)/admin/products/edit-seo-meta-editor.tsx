@@ -8,7 +8,7 @@ interface EditSeoMetaEditorProps {
   productSlug?: string
 }
 
-export function EditSeoMetaEditor({ initial, productName, productSlug }: EditSeoMetaEditorProps = {}) {
+export function EditSeoMetaEditor({ initial, productName, productSlug }: EditSeoMetaEditorProps) {
   return (
     <SeoMetaCard
       initial={initial}

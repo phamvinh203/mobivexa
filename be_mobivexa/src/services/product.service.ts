@@ -59,6 +59,7 @@ function variantCreateData(v: VariantInput) {
     color: v.color,
     storage: v.storage,
     ram: v.ram,
+    imageUrl: v.imageUrl,
     originalPrice: v.originalPrice,
     salePrice: v.salePrice,
     stock: v.stock ?? 0,
@@ -414,6 +415,7 @@ export async function updateVariant(productId: string, variantId: string, body: 
   if (body.color !== undefined) data.color = body.color
   if (body.storage !== undefined) data.storage = body.storage
   if (body.ram !== undefined) data.ram = body.ram
+  if (body.imageUrl !== undefined) data.imageUrl = body.imageUrl || null
   if (body.originalPrice !== undefined) data.originalPrice = body.originalPrice
   if (body.salePrice !== undefined) data.salePrice = body.salePrice
   if (body.stock !== undefined) data.stock = body.stock

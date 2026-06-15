@@ -43,8 +43,10 @@ interface EditVariantsEditorProps {
 export function EditVariantsEditor({ productId, existingVariants = [], onError, availableImages = [] }: EditVariantsEditorProps) {
   const [variants, setVariants] = useState<ProductVariant[]>(existingVariants)
   const [busyId, setBusyId] = useState<string | null>(null)
-  // UI-only: variant image selection (not persisted to API — no image field in ProductVariant)
-  const [variantImages, setVariantImages] = useState<Record<string, string>>({})
+  // Variant image: khởi tạo từ server (v.imageUrl), persist qua updateVariant khi chọn
+  const [variantImages, setVariantImages] = useState<Record<string, string>>(() =>
+    Object.fromEntries(existingVariants.filter((v) => v.imageUrl).map((v) => [v.id, v.imageUrl!])),
+  )
   const [pickerFor, setPickerFor] = useState<string | null>(null)
 
   // Per-row edit buffer: id → current field values (strings for input binding)
@@ -79,6 +81,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
       color: row.color.trim() || undefined,
       storage: row.storage.trim() || undefined,
       ram: variant.ram ?? undefined,
+      imageUrl: variantImages[variant.id] ?? variant.imageUrl ?? undefined,
       originalPrice: Number(row.originalPrice) || Number(variant.originalPrice),
       salePrice: Number(row.salePrice) || Number(variant.salePrice),
       stock: Number(row.stock) || variant.stock,
@@ -106,6 +109,21 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
       setVariants((prev) => [...prev, created])
       setRows((prev) => ({ ...prev, [created.id]: toRowEdit(created) }))
     }, 'Thêm biến thể thất bại')
+  }
+
+  // ── Select variant image and persist immediately ────────────────────────────
+
+  async function handleImageSelect(variantId: string, url: string | undefined) {
+    // Use '' as sentinel for "explicitly cleared" so handleBlur doesn't fall back to old server value
+    setVariantImages((prev) => ({ ...prev, [variantId]: url ?? '' }))
+    setPickerFor(null)
+
+    // '' → backend does '' || null = null (clears imageUrl); truthy url → stored as-is
+    await runBusy(variantId, async () => {
+      const updated = await adminProductApi.updateVariant(productId, variantId, { imageUrl: url || '' })
+      setVariants((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
+      setRows((prev) => ({ ...prev, [updated.id]: toRowEdit(updated) }))
+    }, 'Cập nhật ảnh biến thể thất bại')
   }
 
   // ── Remove variant ──────────────────────────────────────────────────────────
@@ -293,15 +311,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
         <ImagePickerOverlay
           images={availableImages}
           selectedUrl={variantImages[pickerFor]}
-          onSelect={(url) => {
-            setVariantImages((prev) => {
-              const next = { ...prev }
-              if (url) next[pickerFor] = url
-              else delete next[pickerFor]
-              return next
-            })
-            setPickerFor(null)
-          }}
+          onSelect={(url) => handleImageSelect(pickerFor, url)}
           onClose={() => setPickerFor(null)}
         />
       )}

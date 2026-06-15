@@ -7,10 +7,9 @@ import type { VariantPayload } from '@/features/products/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-/** Dòng variant đang soạn (chưa có id) — imageUrl là UI-only, không gửi API. */
+/** Dòng variant đang soạn (chưa có id). imageUrl kế thừa từ VariantPayload → gửi lên API khi create. */
 export interface DraftVariant extends VariantPayload {
   key: string
-  imageUrl?: string
 }
 
 export interface PickableImage {
@@ -54,8 +53,6 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
 
   function addDraft() { commit([...drafts, emptyDraft()]) }
   function removeDraft(key: string) { commit(drafts.filter((d) => d.key !== key)) }
-
-  const pickerDraft = pickerFor ? drafts.find((d) => d.key === pickerFor) : null
 
   return (
     <>
@@ -155,7 +152,7 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
       {pickerFor !== null && (
         <ImagePickerOverlay
           images={availableImages}
-          selectedUrl={pickerDraft?.imageUrl}
+          selectedUrl={drafts.find((d) => d.key === pickerFor)?.imageUrl}
           onSelect={(url) => { setVariantImage(pickerFor, url); setPickerFor(null) }}
           onClose={() => setPickerFor(null)}
         />
