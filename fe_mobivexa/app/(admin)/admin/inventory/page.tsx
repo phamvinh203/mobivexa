@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import {
   Search, PackageX, AlertTriangle, PackageCheck, Boxes, Layers,
@@ -15,12 +15,9 @@ import { formatVND } from '@/lib/utils/format'
 import { adminInventoryApi } from '@/features/inventory/api'
 import { adminBrandApi } from '@/features/brands/api'
 import type { Brand } from '@/features/brands/types'
-import type {
-  InventoryListResult,
-  InventorySummary,
-  InventoryVariant,
-  StockStatus,
-} from '@/features/inventory/types'
+import type { InventoryListResult, InventorySummary, InventoryVariant, StockStatus } from '@/features/inventory/types'
+import { groupByProduct, stockLevel } from '@/features/inventory/group'
+import type { ColorGroup, ProductGroup } from '@/features/inventory/group'
 import type { PaginationMeta } from '@/types/api'
 
 const PAGE_SIZE = 20
@@ -28,42 +25,6 @@ const LOW_THRESHOLD = 5
 const EMPTY_PAGINATION: PaginationMeta = { page: 1, limit: PAGE_SIZE, total: 0, totalPages: 0 }
 
 type StockFilter = 'all' | StockStatus
-
-// ─── Group helpers ─────────────────────────────────────────────────────────────
-
-interface ProductGroup {
-  productId: string
-  name: string
-  categoryName: string | null
-  brandName: string | null
-  coverUrl: string | null
-  variants: InventoryVariant[]
-}
-
-function groupByProduct(variants: InventoryVariant[]): ProductGroup[] {
-  const map = new Map<string, ProductGroup>()
-  for (const v of variants) {
-    const pid = v.product.id
-    if (!map.has(pid)) {
-      map.set(pid, {
-        productId: pid,
-        name: v.product.name,
-        categoryName: v.product.category?.name ?? null,
-        brandName: v.product.brand?.name ?? null,
-        coverUrl: v.product.images?.[0]?.url ?? null,
-        variants: [],
-      })
-    }
-    map.get(pid)!.variants.push(v)
-  }
-  return Array.from(map.values())
-}
-
-function stockLevel(stock: number): StockStatus {
-  if (stock === 0) return 'out_of_stock'
-  if (stock <= LOW_THRESHOLD) return 'low_stock'
-  return 'in_stock'
-}
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -95,7 +56,6 @@ export default function AdminInventoryPage() {
         brandSlug: brandSlug || undefined,
       })
       setResult(data)
-      // Mặc định mở rộng tất cả khi load lần đầu
       setExpandedIds((prev) => {
         if (prev.size > 0) return prev
         const ids = new Set<string>()
@@ -129,7 +89,7 @@ export default function AdminInventoryPage() {
   const summary = result?.summary
   const variants = result?.variants ?? []
   const pagination = result?.pagination ?? EMPTY_PAGINATION
-  const groups = groupByProduct(variants)
+  const groups = useMemo(() => groupByProduct(variants), [variants])
 
   return (
     <div className="space-y-5">
@@ -192,7 +152,7 @@ export default function AdminInventoryPage() {
             <thead>
               <tr className="border-b border-border bg-gray-50">
                 <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                  Sản phẩm / Biến thể
+                  Sản phẩm / Màu sắc
                 </th>
                 <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                   Mã SKU
@@ -268,15 +228,14 @@ function ProductGroupRows({
   expanded: boolean
   onToggle: () => void
 }) {
-  const totalStock = group.variants.reduce((sum, v) => sum + v.stock, 0)
-
-  // Worst status: hết hàng > sắp hết > còn hàng
+  const totalStock = group.colorGroups.reduce((sum, cg) => sum + cg.totalStock, 0)
+  const totalVariants = group.colorGroups.reduce((sum, cg) => sum + cg.variants.length, 0)
   const worstLevel: StockStatus =
-    group.variants.some((v) => v.stock === 0)
-      ? 'out_of_stock'
-      : group.variants.some((v) => v.stock > 0 && v.stock <= LOW_THRESHOLD)
-        ? 'low_stock'
-        : 'in_stock'
+    group.colorGroups.some((cg) => cg.worstLevel === 'out_of_stock') ? 'out_of_stock'
+    : group.colorGroups.some((cg) => cg.worstLevel === 'low_stock') ? 'low_stock'
+    : 'in_stock'
+
+  const swatches = group.colorGroups.slice(0, 5)
 
   return (
     <>
@@ -285,7 +244,6 @@ function ProductGroupRows({
         className="cursor-pointer bg-gray-50/70 transition-colors hover:bg-gray-100/80"
         onClick={onToggle}
       >
-        {/* Sản phẩm */}
         <td className="px-4 py-3">
           <div className="flex items-center gap-2.5">
             <ChevronRight
@@ -293,118 +251,184 @@ function ProductGroupRows({
                 expanded ? 'rotate-90' : ''
               }`}
             />
-            {/* Thumbnail */}
             <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-gray-100 ring-1 ring-border">
               {group.coverUrl ? (
-                <Image
-                  src={group.coverUrl}
-                  alt={group.name}
-                  fill
-                  sizes="40px"
-                  className="object-cover"
-                />
+                <Image src={group.coverUrl} alt={group.name} fill sizes="40px" className="object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-gray-300">
                   <ImageOff className="h-4 w-4" />
                 </div>
               )}
             </div>
-            {/* Name + meta */}
             <div className="min-w-0">
               <p className="truncate font-semibold text-gray-800">{group.name}</p>
-              <div className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-400">
-                {group.categoryName && <span>{group.categoryName}</span>}
-                {group.categoryName && group.brandName && (
-                  <span className="text-gray-300">|</span>
+              <div className="mt-1 flex items-center gap-1.5">
+                {/* Color swatch preview */}
+                <div className="flex items-center gap-0.5">
+                  {swatches.map((cg) => (
+                    <span
+                      key={cg.colorKey}
+                      title={cg.colorDisplay}
+                      className="inline-block h-3 w-3 rounded-full ring-1 ring-white"
+                      style={{ backgroundColor: cg.colorCss, outline: `1px solid ${cg.colorCss}40` }}
+                    />
+                  ))}
+                  {group.colorGroups.length > 5 && (
+                    <span className="text-[10px] text-gray-400 ml-0.5">+{group.colorGroups.length - 5}</span>
+                  )}
+                </div>
+                {(group.categoryName || group.brandName) && (
+                  <span className="text-[10px] text-gray-300">·</span>
                 )}
-                {group.brandName && <span>{group.brandName}</span>}
+                {group.categoryName && <span className="text-[11px] text-gray-400">{group.categoryName}</span>}
+                {group.categoryName && group.brandName && (
+                  <span className="text-[10px] text-gray-300">|</span>
+                )}
+                {group.brandName && <span className="text-[11px] text-gray-400">{group.brandName}</span>}
               </div>
             </div>
           </div>
         </td>
 
-        {/* SKU — empty for product row */}
         <td className="px-4 py-3 text-gray-300 text-xs">—</td>
 
-        {/* Biến thể count */}
         <td className="px-4 py-3">
           <span className="inline-flex items-center rounded-full bg-[var(--color-primary)]/8 px-2.5 py-0.5 text-xs font-medium text-[var(--color-primary)] ring-1 ring-inset ring-[var(--color-primary)]/20">
-            {group.variants.length} biến thể
+            {totalVariants} biến thể
           </span>
         </td>
 
-        {/* Giá — empty for product row */}
         <td className="px-4 py-3 text-right text-gray-300 text-xs">—</td>
 
-        {/* Tổng tồn kho */}
         <td className="px-4 py-3 text-right">
-          <span className="font-semibold text-gray-700">
-            {totalStock.toLocaleString('vi-VN')}
-          </span>
+          <span className="font-semibold text-gray-700">{totalStock.toLocaleString('vi-VN')}</span>
         </td>
 
-        {/* Status tổng */}
         <td className="px-4 py-3 text-center">
           <StatusBadge level={worstLevel} compact />
         </td>
       </tr>
 
-      {/* ── Variant rows ── */}
+      {/* ── Color groups (khi mở rộng) ── */}
       {expanded &&
-        group.variants.map((v) => (
-          <VariantRow key={v.id} variant={v} />
+        group.colorGroups.map((cg) => (
+          <ColorGroupSection
+            key={cg.colorKey}
+            colorGroup={cg}
+            productCoverUrl={group.coverUrl}
+          />
         ))}
+    </>
+  )
+}
+
+// ─── Color group section ───────────────────────────────────────────────────────
+
+function ColorGroupSection({
+  colorGroup,
+  productCoverUrl,
+}: {
+  colorGroup: ColorGroup
+  productCoverUrl: string | null
+}) {
+  const { colorCss, colorDisplay, variants, totalStock, worstLevel } = colorGroup
+
+  return (
+    <>
+      {/* Color subheader */}
+      <tr>
+        <td
+          colSpan={6}
+          className="py-0"
+          style={{ borderLeft: `3px solid ${colorCss}` }}
+        >
+          <div
+            className="flex items-center gap-2.5 px-4 py-1.5"
+            style={{ backgroundColor: `${colorCss}12` }}
+          >
+            <span
+              className="inline-block h-3.5 w-3.5 shrink-0 rounded-full shadow-sm ring-2 ring-white"
+              style={{ backgroundColor: colorCss }}
+            />
+            <span
+              className="text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: colorCss }}
+            >
+              {colorDisplay}
+            </span>
+            <span className="text-[10px] text-gray-400">
+              {variants.length} SKU · {totalStock.toLocaleString('vi-VN')} sản phẩm
+            </span>
+            <span className="ml-auto">
+              <StatusBadge level={worstLevel} compact />
+            </span>
+          </div>
+        </td>
+      </tr>
+
+      {/* Variant rows */}
+      {variants.map((v) => (
+        <VariantRow key={v.id} variant={v} colorCss={colorCss} productCoverUrl={productCoverUrl} />
+      ))}
     </>
   )
 }
 
 // ─── Variant row ──────────────────────────────────────────────────────────────
 
-function VariantRow({ variant }: { variant: InventoryVariant }) {
+function VariantRow({
+  variant,
+  colorCss,
+  productCoverUrl,
+}: {
+  variant: InventoryVariant
+  colorCss: string
+  productCoverUrl: string | null
+}) {
   const level = stockLevel(variant.stock)
-  const attrs = [variant.color, variant.ram, variant.storage].filter(Boolean).join(' · ')
-  const imgSrc = variant.imageUrl ?? variant.product.images?.[0]?.url ?? null
+  const attrs = [variant.ram, variant.storage].filter(Boolean).join(' · ')
+  const imgSrc = variant.imageUrl ?? productCoverUrl ?? null
 
   return (
-    <tr className="bg-white transition-colors hover:bg-gray-50/50">
-      {/* Sản phẩm / Biến thể — ảnh + attributes, indented */}
-      <td className="py-2.5 pl-14 pr-4">
+    <tr
+      className="bg-white transition-colors hover:bg-gray-50/60"
+      style={{ borderLeft: `3px solid ${colorCss}` }}
+    >
+      <td className="py-2.5 pl-12 pr-4">
         <div className="flex items-center gap-2.5">
-          {/* Thumbnail ảnh biến thể (fallback về ảnh sản phẩm) */}
           <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md bg-gray-100 ring-1 ring-border">
             {imgSrc ? (
               <Image src={imgSrc} alt="" fill sizes="32px" className="object-cover" />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-gray-200">
-                <ImageOff className="h-3.5 w-3.5" />
+              <div className="flex h-full w-full items-center justify-center">
+                <ImageOff className="h-3.5 w-3.5 text-gray-200" />
               </div>
             )}
           </div>
-          <span className="text-gray-600">{attrs || <span className="text-gray-300">—</span>}</span>
+          {attrs ? (
+            <span className="text-gray-600">{attrs}</span>
+          ) : (
+            <span className="text-gray-300">—</span>
+          )}
         </div>
       </td>
 
-      {/* SKU */}
       <td className="px-4 py-2.5">
         <code className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-600">
           {variant.sku}
         </code>
       </td>
 
-      {/* Biến thể — empty for variant row */}
       <td className="px-4 py-2.5 text-gray-300 text-xs">—</td>
 
-      {/* Giá bán */}
       <td className="px-4 py-2.5 text-right text-gray-700">
         {formatVND(variant.salePrice)}
       </td>
 
-      {/* Tồn kho */}
       <td className="px-4 py-2.5 text-right">
         <StockNumber stock={variant.stock} level={level} />
       </td>
 
-      {/* Trạng thái */}
       <td className="px-4 py-2.5 text-center">
         <StatusBadge level={level} />
       </td>

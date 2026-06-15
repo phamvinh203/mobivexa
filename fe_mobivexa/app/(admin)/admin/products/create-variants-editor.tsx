@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Plus, Trash2, ImageIcon, X, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import type { VariantPayload } from '@/features/products/types'
 import { buildSku } from '@/lib/utils/sku'
+import { resolveColor, COLOR_PRESETS } from '@/lib/utils/color'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -121,7 +122,10 @@ export function CreateVariantsEditor({ onChange, availableImages = [], productNa
 
                   {/* Color */}
                   <td className="px-3 py-2.5">
-                    <Input placeholder="màu sắc" value={d.color ?? ''} onChange={(e) => updateDraft(d.key, 'color', e.target.value)} className="h-8 min-w-[90px] text-sm" />
+                    <ColorPickerInput
+                      value={d.color ?? ''}
+                      onChange={(v) => updateDraft(d.key, 'color', v)}
+                    />
                   </td>
 
                   {/* Ram */}
@@ -194,6 +198,80 @@ export function CreateVariantsEditor({ onChange, availableImages = [], productNa
         />
       )}
     </>
+  )
+}
+
+// ─── ColorPickerInput (dùng chung với edit-variants-editor) ──────────────────
+
+export function ColorPickerInput({
+  value,
+  onChange,
+  disabled,
+  onBlur,
+}: {
+  value: string
+  onChange: (v: string) => void
+  disabled?: boolean
+  onBlur?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const dotColor = resolveColor(value || null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <div ref={containerRef} className="relative min-w-[100px]">
+      {/* Input với chấm màu live bên trái */}
+      <span
+        className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full ring-1 ring-black/10"
+        style={{ backgroundColor: dotColor }}
+      />
+      <Input
+        value={value}
+        disabled={disabled}
+        placeholder="màu sắc"
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={onBlur}
+        className="h-8 pl-7 text-sm"
+      />
+
+      {/* Dropdown preset */}
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-border bg-white py-1.5 shadow-lg">
+          <div className="grid grid-cols-2 gap-0.5 px-1.5">
+            {COLOR_PRESETS.map((p) => (
+              <button
+                key={p.name}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault() // giữ focus vào input, không trigger onBlur sớm
+                  onChange(p.name)
+                  setOpen(false)
+                }}
+                className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[11px] text-gray-700 transition-colors hover:bg-gray-50 ${
+                  value.toLowerCase() === p.name.toLowerCase() ? 'bg-gray-100 font-semibold text-gray-900' : ''
+                }`}
+              >
+                <span
+                  className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10"
+                  style={{ backgroundColor: p.hex }}
+                />
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

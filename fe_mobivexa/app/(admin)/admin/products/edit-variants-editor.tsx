@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { ApiError } from '@/lib/api/http'
 import { adminProductApi } from '@/features/products/api'
 import type { ProductVariant, VariantPayload } from '@/features/products/types'
-import { ImagePickerOverlay, type PickableImage } from './create-variants-editor'
+import { ColorPickerInput, ImagePickerOverlay, type PickableImage } from './create-variants-editor'
 import { buildSku } from '@/lib/utils/sku'
 
 // ─── Local row state (mirrors server, allows in-place editing) ────────────────
@@ -227,13 +227,11 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
 
                     {/* Color — editable */}
                     <td className="px-3 py-2.5">
-                      <Input
+                      <ColorPickerInput
                         value={row.color}
                         disabled={busy}
-                        placeholder="màu sắc"
-                        onChange={(e) => updateRow(v.id, 'color', e.target.value)}
+                        onChange={(newColor) => updateRow(v.id, 'color', newColor)}
                         onBlur={() => handleBlur(v, 'color')}
-                        className="h-8 min-w-[90px] text-sm"
                       />
                     </td>
 
