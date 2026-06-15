@@ -17,6 +17,7 @@ export function CountdownTimer({ endTime }: { endTime: number }) {
   const [t, setT] = useState(() => getTimeLeft(endTime))
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
     const id = setInterval(() => setT(getTimeLeft(endTime)), 1000)
     return () => clearInterval(id)

@@ -65,7 +65,10 @@ export default function AdminUsersPage() {
     }
   }, [page, search, roleFilter, statusFilter])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault()

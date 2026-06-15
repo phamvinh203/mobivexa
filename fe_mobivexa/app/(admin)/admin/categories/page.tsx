@@ -40,7 +40,10 @@ export default function AdminCategoriesPage() {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   function openCreate() { setEditing(null); setModalOpen(true) }
   function openEdit(category: Category) { setEditing(category); setModalOpen(true) }

@@ -29,6 +29,7 @@ export default function AdminTagsPage() {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load()
   }, [load])
 
@@ -78,7 +79,7 @@ export default function AdminTagsPage() {
       ) : tags.length === 0 ? (
         <div className="rounded-xl bg-white px-4 py-10 text-center text-sm text-gray-400 ring-1 ring-border">
           <TagIcon className="mx-auto mb-2 h-8 w-8 text-gray-200" />
-          Chưa có tag nào. Bấm "Thêm tag" để tạo mới.
+          Chưa có tag nào. Bấm &quot;Thêm tag&quot; để tạo mới.
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">

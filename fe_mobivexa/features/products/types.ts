@@ -19,6 +19,7 @@ export interface ProductVariant {
   color: string | null
   storage: string | null
   ram: string | null
+  imageUrl: string | null
   originalPrice: Money
   salePrice: Money
   stock: number
@@ -72,6 +73,7 @@ export interface VariantPayload {
   color?: string
   storage?: string
   ram?: string
+  imageUrl?: string
   originalPrice: number
   salePrice: number
   stock: number

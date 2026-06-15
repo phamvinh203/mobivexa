@@ -14,7 +14,7 @@ import type {
 
 // Khớp src/routes/user.route.ts — prefix /users/me (yêu cầu đăng nhập)
 export const userApi = {
-  getMe: () => http.get<AuthUser>('/users/me'),
+  getMe: () => http.get<{ user: AuthUser }>('/users/me').then((r) => r.user),
 
   updateMe: (body: UpdateProfilePayload) =>
     http.put<AuthUser>('/users/me', body),

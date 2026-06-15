@@ -46,7 +46,10 @@ export default function AdminBannersPage() {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   // Tải toàn bộ banner một lần; lọc theo vị trí ở client (danh sách nhỏ).
   const visible = useMemo(

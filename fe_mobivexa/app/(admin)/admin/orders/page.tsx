@@ -54,7 +54,10 @@ export default function AdminOrdersPage() {
     }
   }, [page, statusFilter, paymentFilter])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   const resetPage = () => setPage(1)
 

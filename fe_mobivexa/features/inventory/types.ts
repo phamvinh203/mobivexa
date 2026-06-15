@@ -6,6 +6,7 @@ export interface InventoryVariant {
   color: string | null
   storage: string | null
   ram: string | null
+  imageUrl: string | null
   stock: number
   isActive: boolean
   salePrice: number
@@ -13,6 +14,9 @@ export interface InventoryVariant {
     id: string
     name: string
     slug: string
+    category: { name: string } | null
+    brand: { name: string } | null
+    images: { url: string }[]
   }
 }
 
@@ -31,11 +35,10 @@ export interface InventoryListResult {
 }
 
 // Tình trạng tồn kho — khớp switch(query.stockStatus) trong product.service.ts.
-// ('all' là sentinel FE-only cho "không filter", khai báo local ở trang admin.)
 export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock'
 
-// Extend ListQuery để có index signature [key: string] — cần cho http.get params
 export interface InventoryQuery extends ListQuery {
   stockStatus?: StockStatus
-  lowThreshold?: number  // ngưỡng cảnh báo tồn kho thấp, mặc định 5
+  lowThreshold?: number
+  brandSlug?: string
 }

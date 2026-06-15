@@ -3,6 +3,7 @@ export interface VariantInput {
   color?: string
   storage?: string
   ram?: string
+  imageUrl?: string
   originalPrice: number
   salePrice: number
   stock?: number
@@ -35,7 +36,8 @@ export interface InventoryQuery {
   limit?: string
   search?: string
   stockStatus?: 'all' | 'in_stock' | 'low_stock' | 'out_of_stock'
-  lowThreshold?: string // ngưỡng cảnh báo tồn kho thấp, mặc định 5
+  lowThreshold?: string
+  brandSlug?: string
 }
 
 // Query params cho listing (dùng chung public + admin).

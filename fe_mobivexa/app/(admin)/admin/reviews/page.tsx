@@ -54,7 +54,10 @@ export default function AdminReviewsPage() {
     }
   }, [page, ratingFilter, statusFilter])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   const resetPage = () => setPage(1)
 
