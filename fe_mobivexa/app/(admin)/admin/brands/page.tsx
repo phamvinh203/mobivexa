@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import { Plus, Pencil, Trash2, Eye, EyeOff, ImageOff } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { AdminTable } from '@/components/ui/admin-table'
 import { StatusDot } from '@/components/ui/status-dot'
 import { upsertById } from '@/lib/utils/list'
+import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { adminBrandApi } from '@/features/brands/api'
@@ -18,45 +20,38 @@ const COLUMNS = [
 ] as const
 
 export default function AdminBrandsPage() {
-  const [brands, setBrands] = useState<Brand[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+
+  const [actionError, setActionError] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Brand | null>(null)
 
-  const { busyId, runBusy } = useRowAction(setError)
+  const { busyId, runBusy } = useRowAction(setActionError)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      setBrands(await adminBrandApi.list())
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách thương hiệu')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data: brands = [], isLoading, error: fetchError } = useQuery<Brand[]>({
+    queryKey: ['admin-brands'],
+    queryFn: () => adminBrandApi.list(),
+  })
 
   function openCreate() { setEditing(null); setModalOpen(true) }
   function openEdit(brand: Brand) { setEditing(brand); setModalOpen(true) }
 
   function handleSaved(savedBrand?: Brand) {
     setModalOpen(false)
-    if (savedBrand) setBrands((prev) => upsertById(prev, savedBrand))
-    else void load()
+    if (savedBrand) {
+      queryClient.setQueryData<Brand[]>('admin-brands', (prev) => upsertById(prev ?? [], savedBrand))
+    } else {
+      queryClient.invalidateQueries({ queryKey: ['admin-brands'] })
+    }
   }
 
   function handleToggle(brand: Brand) {
     return runBusy(brand.id, async () => {
       const updated = await adminBrandApi.toggleStatus(brand.id)
-      setBrands((prev) => prev.map((b) => (b.id === updated.id ? updated : b)))
+      queryClient.setQueryData<Brand[]>('admin-brands', (prev) =>
+        (prev ?? []).map((b) => (b.id === updated.id ? updated : b))
+      )
     }, 'Cập nhật trạng thái thất bại')
   }
 
@@ -64,9 +59,13 @@ export default function AdminBrandsPage() {
     if (!confirm(`Xoá thương hiệu "${brand.name}"?`)) return
     return runBusy(brand.id, async () => {
       await adminBrandApi.remove(brand.id)
-      setBrands((prev) => prev.filter((b) => b.id !== brand.id))
+      queryClient.setQueryData<Brand[]>('admin-brands', (prev) =>
+        (prev ?? []).filter((b) => b.id !== brand.id)
+      )
     }, 'Xoá thương hiệu thất bại')
   }
+
+  const errorMsg = consolidateApiError(actionError, fetchError, 'thương hiệu')
 
   return (
     <div className="space-y-5">
@@ -81,14 +80,14 @@ export default function AdminBrandsPage() {
         </Button>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       <AdminTable
         columns={COLUMNS}
         colSpan={4}
-        loading={loading}
+        loading={isLoading}
         empty={brands.length === 0}
         emptyMessage='Chưa có thương hiệu nào. Bấm "Thêm thương hiệu" để tạo mới.'
       >

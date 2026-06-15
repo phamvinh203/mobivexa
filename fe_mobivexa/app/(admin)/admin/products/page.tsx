@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Plus, Pencil, Trash2, Eye, EyeOff, Star, Search, ImageOff } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { FilterChip } from '@/components/ui/filter-chip'
 import { Input } from '@/components/ui/input'
@@ -11,6 +12,7 @@ import { AdminTable } from '@/components/ui/admin-table'
 import { Pagination } from '@/components/ui/pagination'
 import { NativeSelect } from '@/components/ui/native-select'
 import { StatusDot } from '@/components/ui/status-dot'
+import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
@@ -18,8 +20,6 @@ import { adminProductApi } from '@/features/products/api'
 import type { Product } from '@/features/products/types'
 import { categoryApi } from '@/features/categories/api'
 import { brandApi } from '@/features/brands/api'
-import type { Category } from '@/features/categories/types'
-import type { Brand } from '@/features/brands/types'
 import type { PaginationMeta } from '@/types/api'
 
 const PAGE_SIZE = 12
@@ -36,10 +36,11 @@ const COLUMNS = [
   { label: 'Thao tác', className: 'text-right' },
 ] as const
 
+type ProductsData = { products: Product[]; pagination: PaginationMeta }
+
 export default function AdminProductsPage() {
-  const [result, setResult] = useState<{ products: Product[]; pagination: PaginationMeta } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+  const [actionError, setActionError] = useState('')
 
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
@@ -49,39 +50,37 @@ export default function AdminProductsPage() {
   const [featuredFilter, setFeaturedFilter] = useState<FeaturedFilter>('ALL')
   const [page, setPage] = useState(1)
 
-  const [categories, setCategories] = useState<Category[]>([])
-  const [brands, setBrands] = useState<Brand[]>([])
+  const { busyId, runBusy } = useRowAction(setActionError)
 
-  const { busyId, runBusy } = useRowAction(setError)
+  // ── Filter data (hiếm thay đổi) ───────────────────────────────────────────
+  const { data: categories = [] } = useQuery({
+    queryKey: ['admin-categories'],
+    queryFn: () => categoryApi.list(),
+  })
+  const { data: brands = [] } = useQuery({
+    queryKey: ['admin-brands'],
+    queryFn: () => brandApi.list(),
+  })
 
-  useEffect(() => {
-    Promise.all([categoryApi.list(), brandApi.list()])
-      .then(([cats, brs]) => { setCategories(cats); setBrands(brs) })
-      .catch(() => { /* filter dropdown để trống — không chặn load sản phẩm */ })
-  }, [])
+  // ── Danh sách sản phẩm ────────────────────────────────────────────────────
+  const productsKey = ['admin-products', page, search, categorySlug, brandSlug, statusFilter, featuredFilter]
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await adminProductApi.list({
-        page,
-        limit: PAGE_SIZE,
-        search: search || undefined,
-        category: categorySlug || undefined,
-        brand: brandSlug || undefined,
-        isActive: statusFilter === 'ALL' ? undefined : statusFilter === 'ACTIVE',
-        isFeatured: featuredFilter === 'ALL' ? undefined : featuredFilter === 'FEATURED',
-      })
-      setResult(data)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách sản phẩm')
-    } finally {
-      setLoading(false)
-    }
-  }, [page, search, categorySlug, brandSlug, statusFilter, featuredFilter])
+  const { data, isLoading, error: fetchError } = useQuery<ProductsData>({
+    queryKey: productsKey,
+    queryFn: () => adminProductApi.list({
+      page,
+      limit: PAGE_SIZE,
+      search: search || undefined,
+      category: categorySlug || undefined,
+      brand: brandSlug || undefined,
+      isActive: statusFilter === 'ALL' ? undefined : statusFilter === 'ACTIVE',
+      isFeatured: featuredFilter === 'ALL' ? undefined : featuredFilter === 'FEATURED',
+    }),
+  })
 
-  useEffect(() => { void load() }, [load])
+  const products = data?.products ?? []
+  const pagination = data?.pagination ?? EMPTY_PAGINATION
+  const errorMsg = consolidateApiError(actionError, fetchError, 'sản phẩm')
 
   const resetPage = () => setPage(1)
 
@@ -94,10 +93,8 @@ export default function AdminProductsPage() {
   function patchProduct(id: string, fn: () => Promise<Product>, errMsg: string) {
     return runBusy(id, async () => {
       const updated = await fn()
-      setResult((prev) =>
-        prev
-          ? { ...prev, products: prev.products.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)) }
-          : prev,
+      queryClient.setQueryData<ProductsData>(productsKey, (prev) =>
+        prev ? { ...prev, products: prev.products.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)) } : prev,
       )
     }, errMsg)
   }
@@ -109,7 +106,7 @@ export default function AdminProductsPage() {
     if (!confirm(`Xoá sản phẩm "${product.name}"? Hành động này không thể hoàn tác.`)) return
     return runBusy(product.id, async () => {
       await adminProductApi.remove(product.id)
-      setResult((prev) => {
+      queryClient.setQueryData<ProductsData>(productsKey, (prev) => {
         if (!prev) return prev
         const total = Math.max(0, prev.pagination.total - 1)
         return {
@@ -119,9 +116,6 @@ export default function AdminProductsPage() {
       })
     }, 'Xoá sản phẩm thất bại')
   }
-
-  const products = result?.products ?? []
-  const pagination = result?.pagination ?? EMPTY_PAGINATION
 
   return (
     <div className="space-y-5">
@@ -177,20 +171,20 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       <AdminTable
         columns={COLUMNS}
         colSpan={7}
-        loading={loading}
+        loading={isLoading}
         empty={products.length === 0}
         emptyMessage="Không có sản phẩm phù hợp."
         scrollable
         footer={
           pagination.totalPages > 1
-            ? <Pagination meta={pagination} loading={loading} emptyLabel="Không có sản phẩm" onChange={setPage} />
+            ? <Pagination meta={pagination} loading={isLoading} emptyLabel="Không có sản phẩm" onChange={setPage} />
             : undefined
         }
       >

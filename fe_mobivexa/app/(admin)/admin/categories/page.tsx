@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import { Plus, Pencil, Trash2, Eye, EyeOff, ImageOff } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { AdminTable } from '@/components/ui/admin-table'
 import { StatusDot } from '@/components/ui/status-dot'
 import { upsertById } from '@/lib/utils/list'
+import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
 import { adminCategoryApi } from '@/features/categories/api'
@@ -19,45 +21,38 @@ const COLUMNS = [
 ] as const
 
 export default function AdminCategoriesPage() {
-  const [categories, setCategories] = useState<Category[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+
+  const [actionError, setActionError] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Category | null>(null)
 
-  const { busyId, runBusy } = useRowAction(setError)
+  const { busyId, runBusy } = useRowAction(setActionError)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      setCategories(await adminCategoryApi.list())
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được danh sách danh mục')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load()
-  }, [load])
+  const { data: categories = [], isLoading, error: fetchError } = useQuery<Category[]>({
+    queryKey: ['admin-categories'],
+    queryFn: () => adminCategoryApi.list(),
+  })
 
   function openCreate() { setEditing(null); setModalOpen(true) }
   function openEdit(category: Category) { setEditing(category); setModalOpen(true) }
 
   function handleSaved(savedCategory?: Category) {
     setModalOpen(false)
-    if (savedCategory) setCategories((prev) => upsertById(prev, savedCategory))
-    else void load()
+    if (savedCategory) {
+      queryClient.setQueryData<Category[]>('admin-categories', (prev) => upsertById(prev ?? [], savedCategory))
+    } else {
+      queryClient.invalidateQueries({ queryKey: ['admin-categories'] })
+    }
   }
 
   function handleToggle(category: Category) {
     return runBusy(category.id, async () => {
       const updated = await adminCategoryApi.toggleStatus(category.id)
-      setCategories((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+      queryClient.setQueryData<Category[]>('admin-categories', (prev) =>
+        (prev ?? []).map((c) => (c.id === updated.id ? updated : c))
+      )
     }, 'Cập nhật trạng thái thất bại')
   }
 
@@ -65,9 +60,13 @@ export default function AdminCategoriesPage() {
     if (!confirm(`Xoá danh mục "${category.name}"?`)) return
     return runBusy(category.id, async () => {
       await adminCategoryApi.remove(category.id)
-      setCategories((prev) => prev.filter((c) => c.id !== category.id))
+      queryClient.setQueryData<Category[]>('admin-categories', (prev) =>
+        (prev ?? []).filter((c) => c.id !== category.id)
+      )
     }, 'Xoá danh mục thất bại')
   }
+
+  const errorMsg = consolidateApiError(actionError, fetchError, 'danh mục')
 
   return (
     <div className="space-y-5">
@@ -82,14 +81,14 @@ export default function AdminCategoriesPage() {
         </Button>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       <AdminTable
         columns={COLUMNS}
         colSpan={7}
-        loading={loading}
+        loading={isLoading}
         empty={categories.length === 0}
         emptyMessage='Chưa có danh mục nào. Bấm "Thêm danh mục" để tạo mới.'
       >

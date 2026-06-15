@@ -1,20 +1,21 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import {
   Search, PackageX, AlertTriangle, PackageCheck, Boxes, Layers,
   ChevronRight, ImageOff, CircleCheck,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { FilterChip } from '@/components/ui/filter-chip'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Pagination } from '@/components/ui/pagination'
+import { consolidateApiError } from '@/lib/utils/error'
 import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
 import { adminInventoryApi } from '@/features/inventory/api'
 import { adminBrandApi } from '@/features/brands/api'
-import type { Brand } from '@/features/brands/types'
 import type { InventoryListResult, InventorySummary, InventoryVariant, StockStatus } from '@/features/inventory/types'
 import { groupByProduct, stockLevel } from '@/features/inventory/group'
 import type { ColorGroup, ProductGroup } from '@/features/inventory/group'
@@ -29,48 +30,41 @@ type StockFilter = 'all' | StockStatus
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminInventoryPage() {
-  const [result, setResult] = useState<InventoryListResult | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [stockFilter, setStockFilter] = useState<StockFilter>('all')
   const [page, setPage] = useState(1)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const [brands, setBrands] = useState<Brand[]>([])
   const [brandSlug, setBrandSlug] = useState('')
 
+  // ── Filter data (hiếm thay đổi) ───────────────────────────────────────
+  const { data: brands = [] } = useQuery({
+    queryKey: ['admin-brands'],
+    queryFn: () => adminBrandApi.list(),
+  })
+
+  // ── Dữ liệu tồn kho ──────────────────────────────────────────────────────
+  const { data, isLoading, error: fetchError } = useQuery<InventoryListResult>({
+    queryKey: ['admin-inventory', page, search, stockFilter, brandSlug],
+    queryFn: () => adminInventoryApi.list({
+      page,
+      limit: PAGE_SIZE,
+      search: search || undefined,
+      stockStatus: stockFilter === 'all' ? undefined : stockFilter,
+      brandSlug: brandSlug || undefined,
+    }),
+  })
+
+  // Tự động mở rộng tất cả sản phẩm khi load lần đầu
   useEffect(() => {
-    adminBrandApi.list().then(setBrands).catch(() => {/* filter để trống nếu lỗi */})
-  }, [])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await adminInventoryApi.list({
-        page,
-        limit: PAGE_SIZE,
-        search: search || undefined,
-        stockStatus: stockFilter === 'all' ? undefined : stockFilter,
-        brandSlug: brandSlug || undefined,
-      })
-      setResult(data)
-      setExpandedIds((prev) => {
-        if (prev.size > 0) return prev
-        const ids = new Set<string>()
-        data.variants.forEach((v) => ids.add(v.product.id))
-        return ids
-      })
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Không tải được dữ liệu tồn kho')
-    } finally {
-      setLoading(false)
-    }
-  }, [page, search, stockFilter, brandSlug])
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void load() }, [load])
+    if (!data) return
+    setExpandedIds((prev) => {
+      if (prev.size > 0) return prev
+      const ids = new Set<string>()
+      data.variants.forEach((v) => ids.add(v.product.id))
+      return ids
+    })
+  }, [data])
 
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -86,9 +80,10 @@ export default function AdminInventoryPage() {
     })
   }
 
-  const summary = result?.summary
-  const variants = result?.variants ?? []
-  const pagination = result?.pagination ?? EMPTY_PAGINATION
+  const summary = data?.summary
+  const variants = data?.variants ?? []
+  const pagination = data?.pagination ?? EMPTY_PAGINATION
+  const errorMsg = consolidateApiError('', fetchError, 'dữ liệu tồn kho')
   const groups = useMemo(() => groupByProduct(variants), [variants])
 
   return (
@@ -141,8 +136,8 @@ export default function AdminInventoryPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
+      {errorMsg && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
       )}
 
       {/* ── Table ── */}
@@ -173,7 +168,7 @@ export default function AdminInventoryPage() {
             </thead>
 
             <tbody className="divide-y divide-border/60">
-              {loading ? (
+              {isLoading ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-14 text-center text-sm text-gray-400">
                     <div className="flex flex-col items-center gap-2">
@@ -206,7 +201,7 @@ export default function AdminInventoryPage() {
           <div className="border-t border-border px-4 py-3">
             <Pagination
               meta={pagination}
-              loading={loading}
+              isLoading={isLoading}
               emptyLabel="Không có biến thể"
               onChange={setPage}
             />
