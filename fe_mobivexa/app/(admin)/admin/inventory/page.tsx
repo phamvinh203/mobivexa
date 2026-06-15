@@ -11,6 +11,7 @@ import { FilterChip } from '@/components/ui/filter-chip'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Pagination } from '@/components/ui/pagination'
+import { Loading } from '@/components/ui/loading'
 import { consolidateApiError } from '@/lib/utils/error'
 import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
@@ -169,14 +170,7 @@ export default function AdminInventoryPage() {
 
             <tbody className="divide-y divide-border/60">
               {isLoading ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-14 text-center text-sm text-gray-400">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
-                      Đang tải dữ liệu...
-                    </div>
-                  </td>
-                </tr>
+                <Loading.TableRow colSpan={6} message="Đang tải dữ liệu..." />
               ) : groups.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-14 text-center text-sm text-gray-400">

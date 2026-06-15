@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { FilterChip } from '@/components/ui/filter-chip'
 import { StarRating } from '@/components/ui/star-rating'
 import { Pagination } from '@/components/ui/pagination'
+import { Loading } from '@/components/ui/loading'
 import { consolidateApiError } from '@/lib/utils/error'
 import { useRowAction } from '@/lib/hooks/use-row-action'
 import { ApiError } from '@/lib/api/http'
@@ -118,9 +119,7 @@ export default function AdminReviewsPage() {
       )}
 
       {isLoading ? (
-        <div className="rounded-xl bg-white px-4 py-10 text-center text-sm text-gray-400 ring-1 ring-border">
-          Đang tải...
-        </div>
+        <Loading.FullPage message="Đang tải đánh giá..." />
       ) : reviews.length === 0 ? (
         <div className="rounded-xl bg-white px-4 py-10 text-center text-sm text-gray-400 ring-1 ring-border">
           Không có đánh giá phù hợp.

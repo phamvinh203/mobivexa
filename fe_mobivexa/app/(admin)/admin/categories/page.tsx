@@ -41,7 +41,7 @@ export default function AdminCategoriesPage() {
   function handleSaved(savedCategory?: Category) {
     setModalOpen(false)
     if (savedCategory) {
-      queryClient.setQueryData<Category[]>('admin-categories', (prev) => upsertById(prev ?? [], savedCategory))
+      queryClient.setQueryData<Category[]>(['admin-categories'], (prev) => upsertById(prev ?? [], savedCategory))
     } else {
       queryClient.invalidateQueries({ queryKey: ['admin-categories'] })
     }
@@ -50,7 +50,7 @@ export default function AdminCategoriesPage() {
   function handleToggle(category: Category) {
     return runBusy(category.id, async () => {
       const updated = await adminCategoryApi.toggleStatus(category.id)
-      queryClient.setQueryData<Category[]>('admin-categories', (prev) =>
+      queryClient.setQueryData<Category[]>(['admin-categories'], (prev) =>
         (prev ?? []).map((c) => (c.id === updated.id ? updated : c))
       )
     }, 'Cập nhật trạng thái thất bại')
@@ -60,7 +60,7 @@ export default function AdminCategoriesPage() {
     if (!confirm(`Xoá danh mục "${category.name}"?`)) return
     return runBusy(category.id, async () => {
       await adminCategoryApi.remove(category.id)
-      queryClient.setQueryData<Category[]>('admin-categories', (prev) =>
+      queryClient.setQueryData<Category[]>(['admin-categories'], (prev) =>
         (prev ?? []).filter((c) => c.id !== category.id)
       )
     }, 'Xoá danh mục thất bại')

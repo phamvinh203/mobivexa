@@ -26,7 +26,7 @@ export default function AdminTagsPage() {
   function handleSaved(savedTag: Tag) {
     setModalOpen(false)
     // Optimistic update: thêm tag mới vào đầu danh sách
-    queryClient.setQueryData<Tag[]>('admin-tags', (prev) => [savedTag, ...(prev ?? [])])
+    queryClient.setQueryData<Tag[]>(['admin-tags'], (prev) => [savedTag, ...(prev ?? [])])
   }
 
   async function handleDelete(tag: Tag) {
@@ -35,7 +35,7 @@ export default function AdminTagsPage() {
     setBusyId(tag.id)
     try {
       await adminTagApi.remove(tag.id)
-      queryClient.setQueryData<Tag[]>('admin-tags', (prev) => (prev ?? []).filter((t) => t.id !== tag.id))
+      queryClient.setQueryData<Tag[]>(['admin-tags'], (prev) => (prev ?? []).filter((t) => t.id !== tag.id))
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Xoá tag thất bại')
     } finally {

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Loading } from '@/components/ui/loading'
 import { consolidateApiError } from '@/lib/utils/error'
 import { ApiError } from '@/lib/api/http'
 import { formatVND, formatDateTime } from '@/lib/utils/format'
@@ -155,9 +156,7 @@ export default function AdminPaymentPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-gray-400">Đang tải...</td>
-                </tr>
+                <Loading.TableRow colSpan={5} message="Đang tải..." />
               ) : awaiting.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-10 text-center text-gray-400">

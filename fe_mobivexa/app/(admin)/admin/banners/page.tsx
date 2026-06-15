@@ -53,7 +53,7 @@ export default function AdminBannersPage() {
   function handleSaved(savedBanner?: Banner) {
     setModalOpen(false)
     if (savedBanner) {
-      queryClient.setQueryData<Banner[]>('admin-banners', (prev) => upsertById(prev ?? [], savedBanner))
+      queryClient.setQueryData<Banner[]>(['admin-banners'], (prev) => upsertById(prev ?? [], savedBanner))
     } else {
       queryClient.invalidateQueries({ queryKey: ['admin-banners'] })
     }
@@ -62,7 +62,7 @@ export default function AdminBannersPage() {
   function handleToggle(banner: Banner) {
     return runBusy(banner.id, async () => {
       const updated = await adminBannerApi.toggleStatus(banner.id)
-      queryClient.setQueryData<Banner[]>('admin-banners', (prev) =>
+      queryClient.setQueryData<Banner[]>(['admin-banners'], (prev) =>
         (prev ?? []).map((b) => (b.id === updated.id ? updated : b))
       )
     }, 'Cập nhật trạng thái thất bại')
@@ -72,7 +72,7 @@ export default function AdminBannersPage() {
     if (!confirm(`Xoá banner "${banner.alt}"?`)) return
     return runBusy(banner.id, async () => {
       await adminBannerApi.remove(banner.id)
-      queryClient.setQueryData<Banner[]>('admin-banners', (prev) =>
+      queryClient.setQueryData<Banner[]>(['admin-banners'], (prev) =>
         (prev ?? []).filter((b) => b.id !== banner.id)
       )
     }, 'Xoá banner thất bại')

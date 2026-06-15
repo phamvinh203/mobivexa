@@ -40,7 +40,7 @@ export default function AdminBrandsPage() {
   function handleSaved(savedBrand?: Brand) {
     setModalOpen(false)
     if (savedBrand) {
-      queryClient.setQueryData<Brand[]>('admin-brands', (prev) => upsertById(prev ?? [], savedBrand))
+      queryClient.setQueryData<Brand[]>(['admin-brands'], (prev) => upsertById(prev ?? [], savedBrand))
     } else {
       queryClient.invalidateQueries({ queryKey: ['admin-brands'] })
     }
@@ -49,7 +49,7 @@ export default function AdminBrandsPage() {
   function handleToggle(brand: Brand) {
     return runBusy(brand.id, async () => {
       const updated = await adminBrandApi.toggleStatus(brand.id)
-      queryClient.setQueryData<Brand[]>('admin-brands', (prev) =>
+      queryClient.setQueryData<Brand[]>(['admin-brands'], (prev) =>
         (prev ?? []).map((b) => (b.id === updated.id ? updated : b))
       )
     }, 'Cập nhật trạng thái thất bại')
@@ -59,7 +59,7 @@ export default function AdminBrandsPage() {
     if (!confirm(`Xoá thương hiệu "${brand.name}"?`)) return
     return runBusy(brand.id, async () => {
       await adminBrandApi.remove(brand.id)
-      queryClient.setQueryData<Brand[]>('admin-brands', (prev) =>
+      queryClient.setQueryData<Brand[]>(['admin-brands'], (prev) =>
         (prev ?? []).filter((b) => b.id !== brand.id)
       )
     }, 'Xoá thương hiệu thất bại')
