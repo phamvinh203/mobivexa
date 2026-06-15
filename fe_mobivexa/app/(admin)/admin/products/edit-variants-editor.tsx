@@ -1,13 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, ImageIcon } from 'lucide-react'
+import { Plus, Trash2, ImageIcon, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
 import { adminProductApi } from '@/features/products/api'
 import type { ProductVariant, VariantPayload } from '@/features/products/types'
 import { ImagePickerOverlay, type PickableImage } from './create-variants-editor'
+import { buildSku } from '@/lib/utils/sku'
 
 // ─── Local row state (mirrors server, allows in-place editing) ────────────────
 
@@ -40,9 +41,10 @@ interface EditVariantsEditorProps {
   existingVariants?: ProductVariant[]
   onError: (msg: string) => void
   availableImages?: PickableImage[]
+  productName?: string
 }
 
-export function EditVariantsEditor({ productId, existingVariants = [], onError, availableImages = [] }: EditVariantsEditorProps) {
+export function EditVariantsEditor({ productId, existingVariants = [], onError, availableImages = [], productName = '' }: EditVariantsEditorProps) {
   const [variants, setVariants] = useState<ProductVariant[]>(existingVariants)
   const [busyId, setBusyId] = useState<string | null>(null)
   // Variant image: khởi tạo từ server (v.imageUrl), persist qua updateVariant khi chọn
@@ -126,6 +128,30 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
       setVariants((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
       setRows((prev) => ({ ...prev, [updated.id]: toRowEdit(updated) }))
     }, 'Cập nhật ảnh biến thể thất bại')
+  }
+
+  // ── Regenerate SKU ──────────────────────────────────────────────────────────
+
+  async function regenerateSku(variant: ProductVariant) {
+    const row = rows[variant.id]
+    if (!row) return
+    const sku = buildSku(productName, row.color, row.ram, row.storage)
+    if (!sku || sku === row.sku) return
+    updateRow(variant.id, 'sku', sku)
+    await runBusy(variant.id, async () => {
+      const updated = await adminProductApi.updateVariant(productId, variant.id, {
+        sku,
+        color: row.color.trim() || undefined,
+        ram: row.ram.trim() || undefined,
+        storage: row.storage.trim() || undefined,
+        imageUrl: variantImages[variant.id] ?? variant.imageUrl ?? undefined,
+        originalPrice: Number(row.originalPrice) || Number(variant.originalPrice),
+        salePrice: Number(row.salePrice) || Number(variant.salePrice),
+        stock: Number(row.stock) || variant.stock,
+      })
+      setVariants((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
+      setRows((prev) => ({ ...prev, [updated.id]: toRowEdit(updated) }))
+    }, 'Cập nhật SKU thất bại')
   }
 
   // ── Remove variant ──────────────────────────────────────────────────────────
@@ -240,14 +266,25 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
 
                     {/* SKU — editable */}
                     <td className="px-3 py-2.5">
-                      <Input
-                        value={row.sku}
-                        disabled={busy}
-                        placeholder="IPH15PRO-BLK-256"
-                        onChange={(e) => updateRow(v.id, 'sku', e.target.value)}
-                        onBlur={() => handleBlur(v, 'sku')}
-                        className="h-8 min-w-[130px] font-mono text-xs text-[var(--color-primary)]"
-                      />
+                      <div className="flex items-center gap-1">
+                        <Input
+                          value={row.sku}
+                          disabled={busy}
+                          placeholder="IPH15PRO-BLK-256"
+                          onChange={(e) => updateRow(v.id, 'sku', e.target.value)}
+                          onBlur={() => handleBlur(v, 'sku')}
+                          className="h-8 min-w-[130px] font-mono text-xs text-[var(--color-primary)]"
+                        />
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => regenerateSku(v)}
+                          title="Tự động tạo SKU"
+                          className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[var(--color-primary)] disabled:opacity-40"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
 
                     {/* Original price — editable */}

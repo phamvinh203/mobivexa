@@ -496,11 +496,13 @@ export function ProductForm({ mode, product, onDone }: ProductFormProps) {
                 existingVariants={product.variants}
                 onError={setError}
                 availableImages={images.map((i) => ({ url: i.url }))}
+                productName={name}
               />
             ) : (
               <CreateVariantsEditor
                 onChange={setDraftVariants}
                 availableImages={newImages.map((i) => ({ url: i.url }))}
+                productName={name}
               />
             )}
           </SectionCard>

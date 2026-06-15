@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import { Plus, Trash2, ImageIcon, X } from 'lucide-react'
+import { Plus, Trash2, ImageIcon, X, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import type { VariantPayload } from '@/features/products/types'
+import { buildSku } from '@/lib/utils/sku'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,9 +30,10 @@ function emptyDraft(): DraftVariant {
 interface CreateVariantsEditorProps {
   onChange: (variants: DraftVariant[]) => void
   availableImages?: PickableImage[]
+  productName?: string
 }
 
-export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateVariantsEditorProps) {
+export function CreateVariantsEditor({ onChange, availableImages = [], productName = '' }: CreateVariantsEditorProps) {
   const [drafts, setDrafts] = useState<DraftVariant[]>([emptyDraft()])
   const [pickerFor, setPickerFor] = useState<string | null>(null)
 
@@ -39,9 +41,28 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
 
   function updateDraft(key: string, field: keyof DraftVariant, value: string) {
     commit(
+      drafts.map((d) => {
+        if (d.key !== key) return d
+        const updated = { ...d, [field]: STRING_FIELDS.has(field as string) ? value : Number(value) || 0 }
+        // Auto-fill SKU nếu đang rỗng khi thay đổi các trường định danh
+        if (['color', 'ram', 'storage'].includes(field as string) && !d.sku && productName) {
+          updated.sku = buildSku(
+            productName,
+            field === 'color' ? value : d.color ?? '',
+            field === 'ram' ? value : d.ram ?? '',
+            field === 'storage' ? value : d.storage ?? '',
+          )
+        }
+        return updated
+      }),
+    )
+  }
+
+  function regenerateSku(key: string) {
+    commit(
       drafts.map((d) =>
         d.key === key
-          ? { ...d, [field]: STRING_FIELDS.has(field as string) ? value : Number(value) || 0 }
+          ? { ...d, sku: buildSku(productName, d.color ?? '', d.ram ?? '', d.storage ?? '') }
           : d,
       ),
     )
@@ -115,7 +136,12 @@ export function CreateVariantsEditor({ onChange, availableImages = [] }: CreateV
 
                   {/* SKU */}
                   <td className="px-3 py-2.5">
-                    <Input placeholder="IPH15PRO-BLK-256" value={d.sku} onChange={(e) => updateDraft(d.key, 'sku', e.target.value)} className="h-8 min-w-[130px] font-mono text-xs" />
+                    <div className="flex items-center gap-1">
+                      <Input placeholder="IPH15PRO-BLK-256" value={d.sku} onChange={(e) => updateDraft(d.key, 'sku', e.target.value)} className="h-8 min-w-[130px] font-mono text-xs" />
+                      <button type="button" onClick={() => regenerateSku(d.key)} title="Tự động tạo SKU" className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-[var(--color-primary)]">
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </td>
 
                   {/* Original price */}
