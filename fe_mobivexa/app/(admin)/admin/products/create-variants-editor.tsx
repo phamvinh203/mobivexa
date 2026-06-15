@@ -83,7 +83,7 @@ export function CreateVariantsEditor({ onChange, availableImages = [], productNa
           <table className="w-full min-w-[580px] text-sm">
             <thead>
               <tr className="border-b border-border bg-gray-50">
-                {['ẢNH', 'MÀU SẮC', 'Ram', 'DUNG LƯỢNG', 'SKU', 'GIÁ', 'GIẢM GIÁ', 'TỒN KHO'].map((h) => (
+                {['ẢNH', 'MÀU SẮC', 'RAM', 'DUNG LƯỢNG', 'SKU', 'GIÁ GỐC', 'GIÁ BÁN', 'TỒN KHO'].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 first:w-12">
                     {h}
                   </th>

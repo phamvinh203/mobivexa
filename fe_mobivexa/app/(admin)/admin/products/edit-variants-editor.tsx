@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { Plus, Trash2, ImageIcon, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { ApiError } from '@/lib/api/http'
-import { formatVND } from '@/lib/utils/format'
 import { adminProductApi } from '@/features/products/api'
 import type { ProductVariant, VariantPayload } from '@/features/products/types'
 import { ImagePickerOverlay, type PickableImage } from './create-variants-editor'
@@ -85,10 +84,9 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
       color: row.color.trim() || undefined,
       ram: row.ram.trim() || undefined,
       storage: row.storage.trim() || undefined,
-      imageUrl: variantImages[variant.id] ?? variant.imageUrl ?? undefined,
-      originalPrice: Number(row.originalPrice) || Number(variant.originalPrice),
-      salePrice: Number(row.salePrice) || Number(variant.salePrice),
-      stock: Number(row.stock) || variant.stock,
+      originalPrice: row.originalPrice === '' ? Number(variant.originalPrice) : Number(row.originalPrice),
+      salePrice: row.salePrice === '' ? Number(variant.salePrice) : Number(row.salePrice),
+      stock: row.stock === '' ? variant.stock : Number(row.stock),
     }
 
     await runBusy(variant.id, async () => {
@@ -144,10 +142,9 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
         color: row.color.trim() || undefined,
         ram: row.ram.trim() || undefined,
         storage: row.storage.trim() || undefined,
-        imageUrl: variantImages[variant.id] ?? variant.imageUrl ?? undefined,
-        originalPrice: Number(row.originalPrice) || Number(variant.originalPrice),
-        salePrice: Number(row.salePrice) || Number(variant.salePrice),
-        stock: Number(row.stock) || variant.stock,
+        originalPrice: row.originalPrice === '' ? Number(variant.originalPrice) : Number(row.originalPrice),
+        salePrice: row.salePrice === '' ? Number(variant.salePrice) : Number(row.salePrice),
+        stock: row.stock === '' ? variant.stock : Number(row.stock),
       })
       setVariants((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
       setRows((prev) => ({ ...prev, [updated.id]: toRowEdit(updated) }))
@@ -179,7 +176,7 @@ export function EditVariantsEditor({ productId, existingVariants = [], onError, 
           <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="border-b border-border bg-gray-50">
-                {['ẢNH', 'MÀU SẮC', 'Ram', 'DUNG LƯỢNG', 'SKU', 'GIÁ', 'GIẢM GIÁ', 'TỒN KHO'].map((h) => (
+                {['ẢNH', 'MÀU SẮC', 'RAM', 'DUNG LƯỢNG', 'SKU', 'GIÁ GỐC', 'GIÁ BÁN', 'TỒN KHO'].map((h) => (
                   <th
                     key={h}
                     className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 first:w-12 last:w-24"

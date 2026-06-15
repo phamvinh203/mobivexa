@@ -66,11 +66,11 @@ export const adminProductApi = {
   setCover: (id: string, imageId: string) =>
     http.patch<Product>(`/admin/products/${id}/images/${imageId}/cover`),
 
-  // Variants
+  // Variants — backend bọc { message, variant } → unwrap tại đây
   createVariant: (id: string, body: VariantPayload) =>
-    http.post<ProductVariant>(`/admin/products/${id}/variants`, body),
+    http.post<{ variant: ProductVariant }>(`/admin/products/${id}/variants`, body).then((r) => r.variant),
   updateVariant: (id: string, variantId: string, body: Partial<VariantPayload>) =>
-    http.put<ProductVariant>(`/admin/products/${id}/variants/${variantId}`, body),
+    http.put<{ variant: ProductVariant }>(`/admin/products/${id}/variants/${variantId}`, body).then((r) => r.variant),
   removeVariant: (id: string, variantId: string) =>
     http.delete<{ message: string }>(
       `/admin/products/${id}/variants/${variantId}`,

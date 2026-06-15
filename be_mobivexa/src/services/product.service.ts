@@ -507,6 +507,10 @@ export async function getInventory(query: InventoryQuery) {
     where.productId = { in: rows.map((r) => r.id) }
   }
 
+  if (query.brandSlug) {
+    where.product = { brand: { slug: query.brandSlug } }
+  }
+
   switch (query.stockStatus) {
     case 'out_of_stock': where.stock = { equals: 0 };            break
     case 'low_stock':    where.stock = { gt: 0, lte: threshold }; break
@@ -521,8 +525,15 @@ export async function getInventory(query: InventoryQuery) {
       take:  limit,
       select: {
         id: true, sku: true, color: true, storage: true, ram: true,
-        stock: true, isActive: true, salePrice: true,
-        product: { select: { id: true, name: true, slug: true } },
+        imageUrl: true, stock: true, isActive: true, salePrice: true,
+        product: {
+          select: {
+            id: true, name: true, slug: true,
+            category: { select: { name: true } },
+            brand: { select: { name: true } },
+            images: { where: { isCover: true }, take: 1, select: { url: true } },
+          },
+        },
       },
     }),
     prisma.productVariant.count({ where }),
