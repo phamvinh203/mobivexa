@@ -36,7 +36,7 @@ export function ProductImagesSection({
     <SectionCard title="Hình ảnh sản phẩm">
       {totalImages > 0 && (
         <p className="text-xs text-gray-400">
-          Hiển thị 1–{totalImages} / {totalImages} sản phẩm đang tạo
+          Đã chọn {totalImages} ảnh
         </p>
       )}
 

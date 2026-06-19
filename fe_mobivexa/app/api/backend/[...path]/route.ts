@@ -16,6 +16,35 @@ export const runtime = 'nodejs'
 // refresh-cookie, set cookie mới rồi retry. Token không bao giờ lộ ra client.
 // ─────────────────────────────────────────────────────────────────────────────
 
+type TokenPair = { accessToken: string; refreshToken: string }
+
+// Single-flight: chỉ 1 refresh call đồng thời per stale token — tránh race
+// condition khi nhiều request cùng gặp 401 (ví dụ admin page load 3 query lúc
+// token hết hạn). Nếu không serialise, tất cả đều gọi /auth/refresh với cùng
+// token cũ; cái thứ 2 trở đi thất bại do token đã bị rotate → xoá cookie →
+// logout ngoài ý muốn.
+// NOTE: deduplication is per-process only — in multi-worker / serverless
+// deployments each worker maintains its own map.
+const inflightRefreshMap = new Map<string, Promise<TokenPair | null>>()
+
+function singleFlightRefresh(refreshToken: string): Promise<TokenPair | null> {
+  const existing = inflightRefreshMap.get(refreshToken)
+  if (existing) return existing
+
+  const p = fetch(`${API_URL}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+  })
+    .then((r) => (r.ok ? (r.json() as Promise<TokenPair>) : null))
+    .finally(() => {
+      inflightRefreshMap.delete(refreshToken)
+    })
+
+  inflightRefreshMap.set(refreshToken, p)
+  return p
+}
+
 function forward(
   path: string,
   search: string,
@@ -68,15 +97,10 @@ async function handler(
   let newAccess: string | undefined
   let newRefresh: string | undefined
 
-  // Token hết hạn → refresh 1 lần rồi retry
+  // Token hết hạn → single-flight refresh rồi retry
   if (backendRes.status === 401 && refresh) {
-    const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: refresh }),
-    })
-    if (refreshRes.ok) {
-      const tokens = await refreshRes.json()
+    const tokens = await singleFlightRefresh(refresh)
+    if (tokens) {
       newAccess = tokens.accessToken
       newRefresh = tokens.refreshToken
       backendRes = await forward(joined, search, method, contentType, body, newAccess)

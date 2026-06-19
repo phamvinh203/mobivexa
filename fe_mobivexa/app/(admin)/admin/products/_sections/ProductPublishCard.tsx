@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { formatDate } from "@/lib/utils/format";
 import { SectionCard, Toggle } from "../_shared";
 
 interface ProductPublishCardProps {
@@ -26,7 +27,7 @@ export function ProductPublishCard({
   onSaveDraft,
   onPublish,
 }: ProductPublishCardProps) {
-  const displayDate = new Date(createdAt ?? Date.now()).toLocaleDateString("vi-VN");
+  const displayDate = createdAt ? formatDate(createdAt) : "—";
 
   return (
     <SectionCard title="XUẤT BẢN">

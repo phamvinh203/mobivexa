@@ -21,15 +21,17 @@ export function TagPicker({
   useClickOutside(containerRef, () => { setOpen(false); setSearch(""); }, open);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const searchLower = search.toLowerCase();
 
   const selectedTags = useMemo(
     () => allTags.filter((t) => selectedSet.has(t.id)),
     [allTags, selectedSet],
   );
   const availableTags = useMemo(
-    () => allTags.filter((t) => !selectedSet.has(t.id) && t.name.toLowerCase().includes(searchLower)),
-    [allTags, selectedSet, searchLower],
+    () => {
+      const q = search.toLowerCase();
+      return allTags.filter((t) => !selectedSet.has(t.id) && t.name.toLowerCase().includes(q));
+    },
+    [allTags, selectedSet, search],
   );
 
   return (
