@@ -3,7 +3,6 @@ import { Prisma } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { generateUniqueSlug, slugTaken } from '../utils/slug'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
-import { cacheGet, cacheSet, cacheBust, TTL } from '../utils/cache'
 import { toTsQuery } from '../utils/search'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type {
@@ -78,7 +77,7 @@ const PRODUCT_DETAIL_INCLUDE = {
 // ─── Public ─────────────────────────────────────────────────────────────────
 
 // Listing sản phẩm dùng chung cho public + admin (admin: thấy cả sản phẩm ẩn,
-// không cache, filter thêm isActive/isFeatured, giới hạn MAX cao hơn).
+// filter thêm isActive/isFeatured, giới hạn MAX cao hơn).
 // Khớp pattern getBrands(true) / getCategories(true) — 1 hàm, admin=true bật quyền.
 export async function listProducts(
   query: ProductListQuery,
@@ -86,13 +85,6 @@ export async function listProducts(
 ) {
   const admin = opts.admin === true
   const { page, limit } = parsePagination(query, LIMITS.PRODUCT, admin ? LIMITS.MAX : undefined)
-
-  // Cache chỉ áp dụng cho public (admin cần data tươi)
-  const cacheKey = `products:list:${JSON.stringify({ ...query, page, limit, admin })}`
-  if (!admin) {
-    const cached = await cacheGet(cacheKey)
-    if (cached) return cached
-  }
 
   const where: Prisma.ProductWhereInput = admin ? {} : { isActive: true }
 
@@ -151,13 +143,10 @@ export async function listProducts(
     prisma.product.count({ where }),
   ])
 
-  const result = {
+  return {
     products,
     pagination: paginationMeta(page, limit, total),
   }
-
-  if (!admin) await cacheSet(cacheKey, result, TTL.PRODUCT_LIST)
-  return result
 }
 
 function resolveSort(sort?: string): Prisma.ProductOrderByWithRelationInput {
@@ -174,21 +163,16 @@ function resolveSort(sort?: string): Prisma.ProductOrderByWithRelationInput {
 }
 
 export async function getProductBySlug(slug: string) {
-  const cacheKey = `products:slug:${slug}`
-  const cached = await cacheGet(cacheKey)
-  if (cached) return cached
-
   const product = await prisma.product.findUnique({
     where: { slug },
     include: PRODUCT_DETAIL_INCLUDE,
   })
   if (!product || !product.isActive) throw new AppError(404, 'Sản phẩm không tồn tại')
 
-  await cacheSet(cacheKey, product, TTL.PRODUCT_DETAIL)
   return product
 }
 
-// Lấy chi tiết đầy đủ theo id cho admin (thấy cả sản phẩm ẩn, không cache).
+// Lấy chi tiết đầy đủ theo id cho admin (thấy cả sản phẩm ẩn).
 export async function getProductById(id: string) {
   const product = await prisma.product.findUnique({
     where: { id },
@@ -199,11 +183,7 @@ export async function getProductById(id: string) {
 }
 
 export async function getFeaturedProducts(limit = 8) {
-  const cacheKey = `products:featured:${limit}`
-  const cached = await cacheGet(cacheKey)
-  if (cached) return cached
-
-  const products = await prisma.product.findMany({
+  return prisma.product.findMany({
     where: { isActive: true, isFeatured: true },
     orderBy: { createdAt: 'desc' },
     take: limit,
@@ -213,20 +193,9 @@ export async function getFeaturedProducts(limit = 8) {
       images: { where: { isCover: true }, take: 1 },
     },
   })
-
-  await cacheSet(cacheKey, products, TTL.PRODUCT_FEATURED)
-  return products
 }
 
 // ─── Admin: Product ───────────────────────────────────────────────────────────
-
-async function bustProductCache(slug?: string) {
-  await Promise.all([
-    cacheBust('products:list:*'),
-    cacheBust('products:featured:*'),
-    slug ? cacheBust(`products:slug:${slug}`) : Promise.resolve(),
-  ])
-}
 
 export async function createProduct(body: CreateProductBody, files?: Express.Multer.File[]) {
   const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds = [], variants } = body
@@ -261,8 +230,6 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
     },
     include: PRODUCT_DETAIL_INCLUDE,
   })
-
-  void bustProductCache()
   return product
 }
 
@@ -307,8 +274,6 @@ export async function updateProduct(id: string, body: UpdateProductBody, files?:
   } else {
     updated = await prisma.product.update({ where: { id }, data, include: PRODUCT_DETAIL_INCLUDE })
   }
-
-  void bustProductCache(updated.slug)
   return updated
 }
 
@@ -319,7 +284,6 @@ export async function deleteProduct(id: string) {
   ])
   await prisma.product.delete({ where: { id } })
   images.forEach((img) => void destroyImage(img.publicId))
-  void bustProductCache(product?.slug)
 }
 
 // ─── Admin: Product Images ────────────────────────────────────────────────────
@@ -341,8 +305,6 @@ export async function addProductImages(productId: string, files: Express.Multer.
       sortOrder: existingCount + i,
     })),
   })
-
-  void bustProductCache()
   return result
 }
 
@@ -376,14 +338,12 @@ export async function setProductImageCover(productId: string, imageId: string) {
 export async function toggleProductStatus(id: string) {
   const { isActive } = await findProductOrThrow(id)
   const updated = await prisma.product.update({ where: { id }, data: { isActive: !isActive }, select: { slug: true } })
-  void bustProductCache(updated.slug)
   return updated
 }
 
 export async function toggleProductFeatured(id: string) {
   const { isFeatured } = await findProductOrThrow(id)
   const updated = await prisma.product.update({ where: { id }, data: { isFeatured: !isFeatured }, select: { slug: true } })
-  void bustProductCache(updated.slug)
   return updated
 }
 
@@ -422,12 +382,6 @@ export async function updateVariant(productId: string, variantId: string, body: 
   if (body.isActive !== undefined) data.isActive = body.isActive
 
   const updated = await prisma.productVariant.update({ where: { id: variantId }, data })
-
-  // Giá hoặc stock thay đổi → list/detail cache lỗi thời
-  if (body.salePrice !== undefined || body.stock !== undefined || body.isActive !== undefined) {
-    const product = await prisma.product.findUnique({ where: { id: variant.productId }, select: { slug: true } })
-    void bustProductCache(product?.slug)
-  }
 
   return updated
 }

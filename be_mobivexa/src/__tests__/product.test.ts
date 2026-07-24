@@ -49,12 +49,6 @@ vi.mock('../config/cloudinary', () => ({
   uploadEntityImage: vi.fn().mockResolvedValue({ url: 'https://cdn/product.jpg', publicId: 'products/img' }),
   destroyImage: vi.fn().mockResolvedValue(undefined),
 }))
-vi.mock('../utils/cache', () => ({
-  cacheGet:  vi.fn().mockResolvedValue(null),
-  cacheSet:  vi.fn().mockResolvedValue(undefined),
-  cacheBust: vi.fn().mockResolvedValue(undefined),
-  TTL: { PRODUCT_LIST: 300, PRODUCT_DETAIL: 300, PRODUCT_FEATURED: 600 },
-}))
 
 import { createApp } from '../app'
 import { signAccessToken } from '../utils/token_manager'
