@@ -1,13 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
 import Image from 'next/image'
 import { Phone, Settings, ShoppingCart, User, Package } from 'lucide-react'
 import { useAuth } from '@/lib/auth/auth-context'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { useCart } from '@/lib/cart/cart-context'
+import { SearchBox } from '@/components/layout/search-box'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,16 +14,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export function ClientNavbar() {
+export function ClientNavbar({ trending = [] }: { trending?: string[] }) {
   const { user, isAuthenticated, logout } = useAuth()
-  const router = useRouter()
-  const [q, setQ] = useState('')
-
-  function onSearch(e: React.FormEvent) {
-    e.preventDefault()
-    const term = q.trim()
-    router.push(term ? `/products?search=${encodeURIComponent(term)}` : '/products')
-  }
+  const { itemCount } = useCart()
 
   const isStaff = user?.role === 'ADMIN' || user?.role === 'STAFF'
 
@@ -71,48 +62,37 @@ export function ClientNavbar() {
             aria-label="Mobivexa — Trang chủ"
           >
             <Image
-              src="/mobivexa-logo.png"
+              src="/mobivexa-logo.svg"
               alt="Mobivexa"
-              width={129}
+              width={128}
               height={36}
-              sizes="(max-width: 640px) 116px, 129px"
+              sizes="(max-width: 640px) 114px, 128px"
               className="h-8 w-auto sm:h-9"
               priority
             />
           </Link>
 
-          {/* Search */}
-          <form onSubmit={onSearch} role="search" className="mx-auto max-w-[560px] flex-1">
-            <label htmlFor="navbar-search" className="sr-only">
-              Tìm kiếm sản phẩm
-            </label>
-            <div className="relative">
-              <Input
-                id="navbar-search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                type="search"
-                placeholder="Tìm iPhone, Galaxy, Xiaomi..."
-                className="h-11 pr-24 rounded-full border-[var(--color-border)] bg-gray-50 focus-visible:bg-white focus-visible:ring-[var(--color-primary)]"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                className="absolute right-1 top-1 h-9 rounded-full bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)]"
-              >
-                Tìm
-              </Button>
-            </div>
-          </form>
+          {/* Search — gợi ý sản phẩm, lịch sử tìm, thương hiệu phổ biến */}
+          <SearchBox trending={trending} />
 
           {/* Phải */}
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <Link
               href="/cart"
-              aria-label="Giỏ hàng"
-              className="inline-flex items-center justify-center rounded-lg p-2 text-gray-700 transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)] sm:px-3 sm:py-2"
+              aria-label={
+                itemCount > 0 ? `Giỏ hàng, ${itemCount} sản phẩm` : 'Giỏ hàng'
+              }
+              className="relative inline-flex items-center justify-center rounded-lg p-2 text-gray-700 transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)] sm:px-3 sm:py-2"
             >
               <ShoppingCart className="h-5 w-5" aria-hidden />
+              {itemCount > 0 && (
+                <span
+                  aria-hidden
+                  className="absolute left-5 top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[var(--color-sale-strong)] px-1 text-[10px] font-bold leading-none text-white sm:left-6"
+                >
+                  {itemCount > 99 ? '99+' : itemCount}
+                </span>
+              )}
               <span className="ml-2 hidden text-sm font-medium sm:inline">Giỏ hàng</span>
             </Link>
 

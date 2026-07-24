@@ -79,6 +79,12 @@ export interface AdminOrderListQuery extends ListQuery {
 }
 
 /** Kết quả GET /admin/orders — paginated */
+/** Kết quả GET /orders (khách hàng) — listMyOrders trả kèm phân trang */
+export interface OrderListResult {
+  orders: Order[]
+  pagination: PaginationMeta
+}
+
 export interface AdminOrderListResult {
   orders: AdminOrder[]
   pagination: PaginationMeta

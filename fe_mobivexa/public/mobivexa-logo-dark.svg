@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="20 22 370 104" role="img" aria-labelledby="title desc">
+  <title id="title">Mobivexa</title>
+  <desc id="desc">Logo Mobivexa cho nền tối — biểu tượng đảo màu, wordmark trắng ngà.</desc>
+  <g transform="translate(28 27) scale(.75)">
+    <rect x="8" y="8" width="112" height="112" rx="24" fill="#F7F9FB"/>
+    <path d="M26 91L40 37H56L42 91H26Z" fill="#101316"/>
+    <path d="M50 37H65L75 78H60L50 37Z" fill="#101316"/>
+    <path d="M73 78L88 37H103L87 91H72L73 78Z" fill="#00BFA6"/>
+    <path d="M88 91L103 37H112L97 91H88Z" fill="#101316"/>
+    <rect x="29" y="98" width="27" height="6" rx="3" fill="#00BFA6"/>
+  </g>
+  <text x="142" y="72" fill="#F7F9FB" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="42" font-weight="700" letter-spacing="0">Mobivexa</text>
+  <text x="145" y="104" fill="#8b969c" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="16" font-weight="500" letter-spacing="1.2">TECHNOLOGY WITHIN REACH.</text>
+</svg>

@@ -1,14 +1,10 @@
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import type { Metadata } from 'next'
+import { MyReviews } from './_components/my-reviews'
+
+export const metadata: Metadata = {
+  title: 'Đánh giá của tôi · Mobivexa',
+}
 
 export default function MyReviewsPage() {
-  return (
-    <PagePlaceholder
-      title="Đánh giá của tôi"
-      endpoint="GET /users/me/reviews · reviewApi.myReviews()"
-      todos={[
-        'Tab: Đã đánh giá / Chờ đánh giá (link /account/reviews/pending)',
-        'Sửa (reviewApi.update) / xoá (remove) đánh giá',
-      ]}
-    />
-  )
+  return <MyReviews />
 }

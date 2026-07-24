@@ -10,11 +10,11 @@ const CTA_LINKS: { href: string; label: string; Icon: LucideIcon }[] = [
 
 export function CtaStrip() {
   return (
-    <section className="bg-[#1a1535] text-white">
+    <section className="bg-[var(--color-ink)] text-white">
       <div className="max-w-[1280px] mx-auto flex flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row">
         <div>
           <div className="text-sm text-white/60">Cần tư vấn chọn máy?</div>
-          <a href="tel:18001234" className="text-2xl font-extrabold text-amber-300 hover:text-amber-200">
+          <a href="tel:18001234" className="text-2xl font-extrabold text-teal-300 hover:text-teal-200">
             1800&nbsp;1234
           </a>
           <div className="mt-0.5 text-xs text-white/40">Miễn phí · 8:00 – 22:00 hằng ngày</div>

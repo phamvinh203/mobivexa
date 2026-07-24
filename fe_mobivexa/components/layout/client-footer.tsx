@@ -49,18 +49,18 @@ const SOCIAL = [
 
 export function ClientFooter() {
   return (
-    <footer className="mt-auto bg-[#1a1535] text-white/70">
+    <footer className="mt-auto bg-[var(--color-ink)] text-white/70">
       {/* ── Top: brand + newsletter ──────────────────────────────────────── */}
       <div className="border-b border-white/10">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-6 px-6 py-8 md:flex-row md:items-center md:justify-between">
           <div className="max-w-sm">
             <Link href="/" aria-label="Mobivexa — Trang chủ" className="mb-3 inline-block">
               <Image
-                src="/mobivexa-logo-white.png"
+                src="/mobivexa-logo-dark.svg"
                 alt="Mobivexa"
-                width={143}
-                height={40}
-                sizes="143px"
+                width={128}
+                height={36}
+                sizes="128px"
                 className="h-9 w-auto"
               />
             </Link>
@@ -71,7 +71,7 @@ export function ClientFooter() {
 
           <div className="md:max-w-md md:flex-1">
             <h4 className="text-sm font-semibold text-white">Đăng ký nhận khuyến mãi</h4>
-            <form className="mt-3 flex overflow-hidden rounded-full border border-white/15 bg-white/[0.06] focus-within:border-indigo-300">
+            <form className="mt-3 flex overflow-hidden rounded-full border border-white/15 bg-white/[0.06] focus-within:border-teal-300">
               <Input
                 type="email"
                 placeholder="Nhập email của bạn"
@@ -80,7 +80,7 @@ export function ClientFooter() {
               <Button
                 type="submit"
                 size="sm"
-                className="m-1 h-8 rounded-full bg-gradient-to-r from-[var(--color-primary)] to-fuchsia-500 text-white hover:opacity-90"
+                className="m-1 h-8 rounded-full bg-gradient-to-r from-[var(--color-primary)] to-[var(--color-primary-accent)] text-white hover:opacity-90"
               >
                 Đăng ký
               </Button>
@@ -99,7 +99,7 @@ export function ClientFooter() {
                 <li key={l.label}>
                   <Link
                     href={l.href}
-                    className="text-sm text-white/55 transition-colors hover:text-indigo-300"
+                    className="text-sm text-white/55 transition-colors hover:text-teal-300"
                   >
                     {l.label}
                   </Link>
@@ -114,7 +114,7 @@ export function ClientFooter() {
           <ul className="space-y-2.5 text-sm text-white/55">
             <li className="flex items-center gap-2">
               <Phone className="h-4 w-4 shrink-0" aria-hidden />
-              <a href="tel:18001234" className="hover:text-indigo-300">
+              <a href="tel:18001234" className="hover:text-teal-300">
                 1800 1234
               </a>
             </li>
@@ -164,7 +164,7 @@ export function ClientFooter() {
             {['VISA', 'MASTERCARD', 'MOMO', 'VNPAY', 'COD'].map((m) => (
               <span
                 key={m}
-                className="rounded-md bg-white/90 px-2 py-1 text-[10px] font-bold text-[#1a1535]"
+                className="rounded-md bg-white/90 px-2 py-1 text-[10px] font-bold text-[var(--color-ink)]"
               >
                 {m}
               </span>

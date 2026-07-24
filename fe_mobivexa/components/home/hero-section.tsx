@@ -13,12 +13,12 @@ export function HeroSection({ products }: HeroSectionProps) {
   const heroProducts = products.slice(0, 3)
 
   return (
-    <section className="relative overflow-hidden bg-[#1a1535] text-white">
-      {/* gradient mesh + glow orbs */}
+    <section className="relative overflow-hidden bg-[var(--color-ink)] text-white">
+      {/* gradient mesh + glow orbs — teal/cyan khớp logo, amber giữ vai trò nhấn ấm */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute -top-24 -left-16 h-96 w-96 rounded-full bg-[var(--color-primary)] opacity-40 blur-[120px]" />
-        <div className="absolute top-10 right-0 h-80 w-80 rounded-full bg-fuchsia-500 opacity-30 blur-[120px]" />
-        <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-amber-400 opacity-20 blur-[120px]" />
+        <div className="absolute -top-24 -left-16 h-96 w-96 rounded-full bg-[var(--color-primary)] opacity-35 blur-[120px]" />
+        <div className="absolute top-10 right-0 h-80 w-80 rounded-full bg-cyan-500 opacity-25 blur-[120px]" />
+        <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-amber-400 opacity-15 blur-[120px]" />
         <div
           className="absolute inset-0 opacity-[0.07]"
           style={{
@@ -38,7 +38,7 @@ export function HeroSection({ products }: HeroSectionProps) {
           <h1 className="text-4xl md:text-6xl font-extrabold leading-[1.05] tracking-tight">
             Công nghệ đỉnh cao,
             <br />
-            <span className="bg-gradient-to-r from-amber-300 via-fuchsia-300 to-indigo-300 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-emerald-300 via-teal-300 to-cyan-300 bg-clip-text text-transparent">
               trong tầm tay bạn.
             </span>
           </h1>
@@ -49,7 +49,7 @@ export function HeroSection({ products }: HeroSectionProps) {
           <div className="flex flex-wrap gap-3 pt-1">
             <Link
               href="/products"
-              className="inline-flex items-center justify-center rounded-xl bg-white px-6 py-3 text-sm font-bold text-[#1a1535] shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-white/90"
+              className="inline-flex items-center justify-center rounded-xl bg-white px-6 py-3 text-sm font-bold text-[var(--color-ink)] shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-white/90"
             >
               Mua sắm ngay
             </Link>
@@ -106,7 +106,7 @@ export function HeroSection({ products }: HeroSectionProps) {
                     {p.name}
                   </div>
                   {p.variants?.[0] && (
-                    <div className="text-[11px] font-bold text-amber-300">
+                    <div className="text-[11px] font-bold text-teal-300">
                       {formatVND(p.variants[0].salePrice)}
                     </div>
                   )}

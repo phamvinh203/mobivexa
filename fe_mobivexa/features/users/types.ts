@@ -17,6 +17,13 @@ export interface Address {
   updatedAt: string
 }
 
+/** Kết quả POST /users/me/avatar — backend select đúng 2 field này,
+ *  không trả về user đầy đủ (xem uploadAvatar trong user.service.ts). */
+export interface AvatarUploadResult {
+  avatarUrl: string
+  avatarPublicId: string
+}
+
 export interface UpdateProfilePayload {
   fullName?: string
   phone?: string
