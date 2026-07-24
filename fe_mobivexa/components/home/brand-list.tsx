@@ -53,7 +53,7 @@ export function BrandList({ brands }: BrandListProps) {
                     />
                   ) : (
                     <Image
-                      src="/mobivexa-logo.png"
+                      src="/mobivexa-logo.svg"
                       alt={brand.name}
                       fill
                       sizes="96px"

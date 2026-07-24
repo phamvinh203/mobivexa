@@ -110,7 +110,7 @@ export function AdminSidebar() {
                     href={item.href}
                     className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm transition-colors ${
                       active
-                        ? 'bg-[var(--color-primary)] text-white border-l-2 border-indigo-300'
+                        ? 'bg-[var(--color-primary)] text-white border-l-2 border-teal-300'
                         : 'text-gray-400 hover:bg-[var(--color-admin-sidebar-hover)] hover:text-white'
                     }`}
                   >

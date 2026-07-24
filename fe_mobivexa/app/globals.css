@@ -4,13 +4,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ── Design tokens Mobivexa (đồng bộ với prompt thiết kế Stitch) ───────────── */
+/* ── Design tokens Mobivexa (đồng bộ với logo Velocity Fold — teal #00BFA6,
+   mực #101316, trắng ngà #F7F9FB, slate #556066) ─────────────────────────── */
 :root {
 
-  /* Brand */
-  --color-primary: #4f46e5;
-  --color-primary-light: #eef2ff;
-  --color-primary-hover: #4338ca;
+  /* Brand — accent logo #00BFA6 quá sáng cho chữ/nút trên nền trắng (contrast
+     ~2.5:1) nên primary tương tác dùng teal đậm cùng hue; teal sáng của logo
+     giữ cho accent trên nền tối (teal-300 ở hero/footer) */
+  --color-primary: #0d9488;
+  --color-primary-light: #e4f7f4;
+  --color-primary-hover: #0f766e;
+  --color-brand-accent: #00bfa6; /* teal nguyên bản của logo — accent đồ hoạ */
 
   /* Trạng thái */
   --color-success: #10b981;
@@ -19,21 +23,21 @@
   --color-info: #3b82f6;
 
   /* Văn bản & viền */
-  --color-text-secondary: #6b7280;
+  --color-text-secondary: #556066;
   --color-text-disabled: #9ca3af;
   --color-border: #e5e7eb;
 
   /* Bề mặt tối & accent thương mại (dùng chung hero / navbar / footer / sale) */
-  --color-ink: #1a1535;            /* nền tối: hero, utility bar, footer, CTA */
-  --color-ink-soft: #251d47;       /* nền tối nhạt hơn cho lớp phụ */
-  --color-primary-accent: #d946ef; /* fuchsia — đối tác gradient với primary */
-  --color-sale: #ff5a3c;           /* flash sale (coral) */
-  --color-sale-strong: #ff2d6f;    /* giá khuyến mãi / badge giảm giá */
+  --color-ink: #101316;            /* nền tối: hero, utility bar, footer, CTA — khớp tile logo */
+  --color-ink-soft: #1a2025;       /* nền tối nhạt hơn cho lớp phụ */
+  --color-primary-accent: #0891b2; /* cyan — đối tác gradient với teal */
+  --color-sale: #ff5a3c;           /* flash sale (coral — cặp bổ túc của teal) */
+  --color-sale-strong: #e8442e;    /* giá khuyến mãi / badge giảm giá (coral đậm) */
   --color-highlight: #fbbf24;      /* nhấn vàng (amber) */
 
   /* Admin */
-  --color-admin-sidebar: #1e1e2e;
-  --color-admin-sidebar-hover: #2d2d3f;
+  --color-admin-sidebar: #12171b;
+  --color-admin-sidebar-hover: #1e262c;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

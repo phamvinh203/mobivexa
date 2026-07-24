@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import type { ComponentType } from 'react'
 import Link from 'next/link'
 import {
@@ -16,7 +15,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Loading } from '@/components/ui/loading'
 import { consolidateApiError } from '@/lib/utils/error'
-import { ApiError } from '@/lib/api/http'
 import { formatVND, formatDateTime } from '@/lib/utils/format'
 import { paymentApi } from '@/features/payment/api'
 import type { PaymentStats } from '@/features/payment/types'
@@ -29,17 +27,15 @@ const AWAITING_LIMIT = 10
 export default function AdminPaymentPage() {
   const queryClient = useQueryClient()
 
-  const [error, setError] = useState('')
-
   // Stats tổng hợp
   const { data: stats, isLoading: statsLoading, error: statsError } = useQuery<PaymentStats>({
-    queryKey: ['admin-payment-stats'],
+    queryKey: ['admin-payment', 'stats'],
     queryFn: () => paymentApi.getStats(),
   })
 
   // Danh sách đơn CK đang chờ đối soát (UNPAID + BANK_TRANSFER)
   const { data: awaitingData, isLoading: awaitingLoading, error: awaitingError } = useQuery<{ orders: AdminOrder[] }>({
-    queryKey: ['admin-payment-awaiting'],
+    queryKey: ['admin-payment', 'awaiting'],
     queryFn: () => adminOrderApi.list({
       page: 1,
       limit: AWAITING_LIMIT,
@@ -50,15 +46,10 @@ export default function AdminPaymentPage() {
 
   const awaiting = awaitingData?.orders ?? []
   const loading = statsLoading || awaitingLoading
-  const errorMsg = consolidateApiError(
-    error,
-    statsError || awaitingError,
-    'thống kê thanh toán'
-  )
+  const errorMsg = consolidateApiError(null, statsError || awaitingError, 'thống kê thanh toán')
 
   function handleRefresh() {
-    queryClient.invalidateQueries({ queryKey: ['admin-payment-stats'] })
-    queryClient.invalidateQueries({ queryKey: ['admin-payment-awaiting'] })
+    queryClient.invalidateQueries({ queryKey: ['admin-payment'] })
   }
 
   return (
@@ -77,9 +68,7 @@ export default function AdminPaymentPage() {
         </Button>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{error}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

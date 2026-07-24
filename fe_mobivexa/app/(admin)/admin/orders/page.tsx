@@ -9,7 +9,7 @@ import { FilterChip } from '@/components/ui/filter-chip'
 import { AdminTable } from '@/components/ui/admin-table'
 import { Pagination } from '@/components/ui/pagination'
 import { consolidateApiError } from '@/lib/utils/error'
-import { ApiError } from '@/lib/api/http'
+import { Loading } from '@/components/ui/loading'
 import { formatVND, formatDate } from '@/lib/utils/format'
 import { adminOrderApi } from '@/features/orders/api'
 import type { AdminOrder } from '@/features/orders/types'
@@ -52,7 +52,7 @@ export default function AdminOrdersPage() {
 
   const orders = data?.orders ?? []
   const pagination = data?.pagination ?? EMPTY_PAGINATION
-  const errorMsg = consolidateApiError('', fetchError, 'đơn hàng')
+  const errorMsg = consolidateApiError(null, fetchError, 'đơn hàng')
 
   return (
     <div className="space-y-5">
@@ -76,9 +76,7 @@ export default function AdminOrdersPage() {
         onChange={(p) => { setPaymentFilter(p); resetPage() }}
       />
 
-      {errorMsg && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]">{errorMsg}</div>
-      )}
+      <Loading.ErrorMessage message={errorMsg} />
 
       <AdminTable
         columns={COLUMNS}

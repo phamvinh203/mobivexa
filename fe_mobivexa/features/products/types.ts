@@ -42,6 +42,9 @@ export interface Product {
   images?: ProductImage[]
   variants?: ProductVariant[]
   tags?: Tag[]
+  /** Dạng backend thực sự trả về (PRODUCT_DETAIL_INCLUDE: productTags → tag).
+   *  Dùng productTagList() trong ./utils để đọc, đừng đọc trực tiếp. */
+  productTags?: { tag: Tag }[]
 }
 
 /** Query lọc danh sách sản phẩm public */
@@ -60,6 +63,12 @@ export interface AdminProductListQuery extends ListQuery {
   brand?: string // slug
   isActive?: boolean
   isFeatured?: boolean
+}
+
+/** Kết quả GET /products — paginated (public) */
+export interface ProductListResult {
+  products: Product[]
+  pagination: PaginationMeta
 }
 
 /** Kết quả GET /admin/products — paginated */

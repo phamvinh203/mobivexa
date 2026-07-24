@@ -175,28 +175,23 @@ export function Skeleton({ className }: SkeletonProps) {
   )
 }
 
-// ─── Combined exports ─────────────────────────────────────────────────────────────
+// ─── Error message ────────────────────────────────────────────────────────────
 
-/**
- * Loading component chính.
- * Sử dụng destructuring để chọn variant cần thiết:
- * ```tsx
- * import { Loading } from '@/components/ui/loading'
- *
- * <Loading.FullPage message="Đang tải dữ liệu..." />
- * <Loading.Inline message="Đang tải..." size="sm" />
- * <Loading.TableRow colSpan={6} />
- * ```
- */
-export const Loading = {
-  FullPage,
-  Inline,
-  TableRow,
-  Centered,
-  Overlay,
-  Skeleton,
-  Spinner,
+interface ErrorMessageProps {
+  message: string
+  className?: string
 }
 
-// Export Spinner as default cho backward compatibility
-export default Spinner
+export function ErrorMessage({ message, className }: ErrorMessageProps) {
+  if (!message) return null
+  return (
+    <div className={cn('rounded-lg bg-red-50 px-3 py-2 text-sm text-[var(--color-danger)]', className)}>
+      {message}
+    </div>
+  )
+}
+
+// ─── Namespace re-export ──────────────────────────────────────────────────────
+// Allows `import { Loading } from '@/components/ui/loading'` with dot-notation
+// access (e.g. <Loading.TableRow />) alongside individual named imports.
+export const Loading = { FullPage, Inline, TableRow, Centered, Overlay, Skeleton, Spinner, ErrorMessage }

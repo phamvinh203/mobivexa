@@ -3,6 +3,10 @@ import { assertImageFiles } from '@/lib/utils/file'
 import type {
   Review,
   ReviewSummary,
+  ProductReviewListResult,
+  ProductReviewQuery,
+  MyReviewListResult,
+  HelpfulResult,
   PendingReviewItem,
   CreateReviewPayload,
   UpdateReviewPayload,
@@ -15,17 +19,36 @@ import type { ListQuery } from '@/types/api'
 
 // Khớp src/routes/review.route.ts
 export const reviewApi = {
-  // Public: /products/:slug/reviews
-  listByProduct: (slug: string, query?: ListQuery) =>
-    http.get<Review[]>(`/products/${slug}/reviews`, { auth: false, params: query }),
+  // Public: /products/:slug/reviews — backend bọc { reviews, pagination },
+  // unwrap tại đây để consumer nhận thẳng ProductReview[] (khớp pattern productApi).
+  listByProduct: (slug: string, query?: ProductReviewQuery) =>
+    http
+      .get<ProductReviewListResult>(`/products/${slug}/reviews`, {
+        auth: false,
+        params: query,
+        revalidate: 60,
+      })
+      .then((r) => r.reviews ?? []),
+  listByProductPaged: (slug: string, query?: ProductReviewQuery) =>
+    http.get<ProductReviewListResult>(`/products/${slug}/reviews`, {
+      auth: false,
+      params: query,
+    }),
   summary: (slug: string) =>
-    http.get<ReviewSummary>(`/products/${slug}/reviews/summary`, { auth: false }),
+    http.get<ReviewSummary>(`/products/${slug}/reviews/summary`, {
+      auth: false,
+      revalidate: 60,
+    }),
 
-  // User: /users/me/reviews
+  // User: /users/me/reviews — backend bọc { reviews, pagination }
   myReviews: (query?: ListQuery) =>
-    http.get<Review[]>('/users/me/reviews', { params: query }),
-  pending: () =>
-    http.get<PendingReviewItem[]>('/users/me/reviews/pending'),
+    http
+      .get<MyReviewListResult>('/users/me/reviews', { params: query })
+      .then((r) => r.reviews ?? []),
+  myReviewsPaged: (query?: ListQuery) =>
+    http.get<MyReviewListResult>('/users/me/reviews', { params: query }),
+  // Trả thẳng mảng orderItem (không bọc)
+  pending: () => http.get<PendingReviewItem[]>('/users/me/reviews/pending'),
 
   // User: tạo review cho 1 order item (kèm tối đa 5 ảnh)
   create: (orderItemId: string, body: CreateReviewPayload, photos?: File[]) => {
@@ -46,9 +69,12 @@ export const reviewApi = {
     photos?.forEach((f) => form.append('photos', f))
     return http.put<Review>(`/reviews/${id}`, form)
   },
-  remove: (id: string) => http.delete<{ message: string }>(`/reviews/${id}`),
+  // Backend trả 204 No Content (không có body)
+  remove: (id: string) => http.delete<void>(`/reviews/${id}`),
+  // toggleHelpful trả { helpful: đã-bấm-hay-chưa, count: tổng lượt } —
+  // "helpful" là boolean trạng thái, KHÔNG phải số lượt.
   markHelpful: (id: string) =>
-    http.post<{ helpful: number }>(`/reviews/${id}/helpful`),
+    http.post<HelpfulResult>(`/reviews/${id}/helpful`),
 }
 
 // Admin: /admin/reviews (STAFF + ADMIN). Backend bọc { reviews, pagination }

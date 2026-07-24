@@ -49,7 +49,7 @@ export default async function HomePage() {
   const empty = featured.length === 0 && hot.length === 0;
 
   return (
-    <div className="bg-[#f4f4f7]">
+    <div className="bg-[#f2f5f6]">
       {/* ── HERO ──────────────────────────────────────────────────────────── */}
       <HeroSection products={featured} />
 

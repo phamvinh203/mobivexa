@@ -3,6 +3,7 @@ import prisma from '../config/db'
 import { Prisma, OrderStatus, PaymentStatus } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
+import { dateRange } from '../utils/date_range'
 import type {
   CreateOrderBody,
   OrderItemInput,
@@ -205,12 +206,8 @@ export async function listOrders(query: AdminOrderListQuery) {
   if (query.userId)        where.userId        = query.userId
   if (query.paymentMethod) where.paymentMethod = query.paymentMethod
   if (query.paymentStatus) where.paymentStatus = query.paymentStatus
-  if (query.from || query.to) {
-    where.createdAt = {
-      ...(query.from ? { gte: new Date(query.from) } : {}),
-      ...(query.to   ? { lte: new Date(query.to)   } : {}),
-    }
-  }
+  const range = dateRange(query.from, query.to)
+  if (range)               where.createdAt     = range
 
   // List chỉ cần SỐ LƯỢNG items (không cần chi tiết) → dùng _count thay vì items:true
   // để tránh hydrate toàn bộ OrderItem[] (productName, sku, giá...) cho mỗi đơn.
