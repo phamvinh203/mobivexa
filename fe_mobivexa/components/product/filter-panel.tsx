@@ -8,10 +8,12 @@ import type { Brand } from '@/features/brands/types'
 import type { Tag } from '@/features/tags/types'
 import {
   PRICE_RANGES,
+  PRODUCTS_BASE,
   buildHref,
   matchedPriceRange,
   type ProductFilters,
-} from '../_lib/filters'
+  type LockedFacet,
+} from '@/features/products/filters'
 
 export interface FacetData {
   categories: Category[]
@@ -24,6 +26,10 @@ interface FilterPanelProps {
   facets: FacetData
   /** Gọi sau khi chọn — drawer mobile dùng để tự đóng */
   onNavigate?: () => void
+  /** Route gốc để dựng link (mặc định /products) */
+  basePath?: string
+  /** Facet do route quyết định → ẩn khỏi sidebar vì đổi nó là rời trang */
+  locked?: LockedFacet
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -68,7 +74,13 @@ function OptionRow({
   )
 }
 
-export function FilterPanel({ filters, facets, onNavigate }: FilterPanelProps) {
+export function FilterPanel({
+  filters,
+  facets,
+  onNavigate,
+  basePath = PRODUCTS_BASE,
+  locked,
+}: FilterPanelProps) {
   const router = useRouter()
   const [minInput, setMinInput] = useState(
     filters.minPrice !== undefined ? String(filters.minPrice) : '',
@@ -80,7 +92,7 @@ export function FilterPanel({ filters, facets, onNavigate }: FilterPanelProps) {
   const activeRange = matchedPriceRange(filters)
 
   function go(patch: Partial<ProductFilters>) {
-    router.push(buildHref(filters, patch))
+    router.push(buildHref(filters, patch, basePath, locked))
     onNavigate?.()
   }
 
@@ -106,7 +118,7 @@ export function FilterPanel({ filters, facets, onNavigate }: FilterPanelProps) {
   return (
     <div className="flex flex-col gap-6">
       {/* ── Danh mục ───────────────────────────────────────────────────────── */}
-      {rootCategories.length > 0 && (
+      {locked !== 'category' && rootCategories.length > 0 && (
         <section>
           <SectionTitle>Danh mục</SectionTitle>
           <div className="flex flex-col gap-0.5">
@@ -143,7 +155,7 @@ export function FilterPanel({ filters, facets, onNavigate }: FilterPanelProps) {
       )}
 
       {/* ── Thương hiệu ────────────────────────────────────────────────────── */}
-      {activeBrands.length > 0 && (
+      {locked !== 'brand' && activeBrands.length > 0 && (
         <section>
           <SectionTitle>Thương hiệu</SectionTitle>
           <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">

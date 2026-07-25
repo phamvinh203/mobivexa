@@ -7,16 +7,22 @@ import { formatVND } from '@/lib/utils/format'
 import { FilterPanel, type FacetData } from './filter-panel'
 import {
   SORT_OPTIONS,
+  PRODUCTS_BASE,
   buildHref,
   hasActiveFilters,
   type ProductFilters,
   type SortValue,
-} from '../_lib/filters'
+  type LockedFacet,
+} from '@/features/products/filters'
 
 interface ProductControlsProps {
   filters: ProductFilters
   facets: FacetData
   total: number
+  /** Route gốc để dựng link (mặc định /products) */
+  basePath?: string
+  /** Facet do route quyết định → không hiện chip (gỡ nó là rời trang) */
+  locked?: LockedFacet
 }
 
 interface ActiveChip {
@@ -25,7 +31,11 @@ interface ActiveChip {
 }
 
 /** Chip cho từng filter đang bật, kèm patch để gỡ đúng filter đó. */
-function activeChips(filters: ProductFilters, facets: FacetData): ActiveChip[] {
+function activeChips(
+  filters: ProductFilters,
+  facets: FacetData,
+  locked?: LockedFacet,
+): ActiveChip[] {
   const chips: ActiveChip[] = []
 
   if (filters.search) {
@@ -34,11 +44,11 @@ function activeChips(filters: ProductFilters, facets: FacetData): ActiveChip[] {
   if (filters.featured) {
     chips.push({ label: 'Nổi bật', patch: { featured: false } })
   }
-  if (filters.category) {
+  if (locked !== 'category' && filters.category) {
     const name = facets.categories.find((c) => c.slug === filters.category)?.name
     chips.push({ label: name ?? filters.category, patch: { category: undefined } })
   }
-  if (filters.brand) {
+  if (locked !== 'brand' && filters.brand) {
     const name = facets.brands.find((b) => b.slug === filters.brand)?.name
     chips.push({ label: name ?? filters.brand, patch: { brand: undefined } })
   }
@@ -56,12 +66,18 @@ function activeChips(filters: ProductFilters, facets: FacetData): ActiveChip[] {
   return chips
 }
 
-export function ProductControls({ filters, facets, total }: ProductControlsProps) {
+export function ProductControls({
+  filters,
+  facets,
+  total,
+  basePath = PRODUCTS_BASE,
+  locked,
+}: ProductControlsProps) {
   const router = useRouter()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  const chips = activeChips(filters, facets)
-  const showClearAll = hasActiveFilters(filters)
+  const chips = activeChips(filters, facets, locked)
+  const showClearAll = hasActiveFilters(filters, locked)
 
   return (
     <>
@@ -92,7 +108,7 @@ export function ProductControls({ filters, facets, total }: ProductControlsProps
             <select
               value={filters.sort}
               onChange={(e) =>
-                router.push(buildHref(filters, { sort: e.target.value as SortValue }))
+                router.push(buildHref(filters, { sort: e.target.value as SortValue }, basePath, locked))
               }
               className="rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium outline-none focus:border-[var(--color-primary)]"
             >
@@ -111,7 +127,7 @@ export function ProductControls({ filters, facets, total }: ProductControlsProps
               <button
                 key={chip.label}
                 type="button"
-                onClick={() => router.push(buildHref(filters, chip.patch))}
+                onClick={() => router.push(buildHref(filters, chip.patch, basePath, locked))}
                 className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-primary-light)] py-1 pl-3 pr-2 text-xs font-medium text-[var(--color-primary)] transition-opacity hover:opacity-80"
               >
                 {chip.label}
@@ -122,7 +138,7 @@ export function ProductControls({ filters, facets, total }: ProductControlsProps
             {showClearAll && (
               <button
                 type="button"
-                onClick={() => router.push('/products')}
+                onClick={() => router.push(basePath)}
                 className="text-xs font-medium text-muted-foreground underline underline-offset-2 hover:text-gray-800"
               >
                 Xoá tất cả
@@ -158,6 +174,8 @@ export function ProductControls({ filters, facets, total }: ProductControlsProps
               <FilterPanel
                 filters={filters}
                 facets={facets}
+                basePath={basePath}
+                locked={locked}
                 onNavigate={() => setDrawerOpen(false)}
               />
             </div>
@@ -167,7 +185,7 @@ export function ProductControls({ filters, facets, total }: ProductControlsProps
                 <button
                   type="button"
                   onClick={() => {
-                    router.push('/products')
+                    router.push(basePath)
                     setDrawerOpen(false)
                   }}
                   className="w-full rounded-xl border border-border py-2.5 text-sm font-semibold text-gray-700"
