@@ -1,0 +1,6 @@
+/* MUI CssBaseline lo phần reset — file này chỉ giữ vài chỉnh sửa cấp document. */
+html,
+body,
+#root {
+  height: 100%;
+}
