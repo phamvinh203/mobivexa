@@ -31,7 +31,9 @@ export interface Tag {
   slug: string;
 }
 
-/** Danh sách sản phẩm chỉ kèm category/brand rút gọn (select id,name,slug bên backend). */
+/** Dạng rút gọn của category/brand. Endpoint danh sách select đúng
+ *  id,name,slug; endpoint chi tiết dùng `category: true` nên trả full record —
+ *  FE chủ động thu hẹp về 3 field này vì UI không cần thêm gì. */
 export interface CategoryRef {
   id: string;
   name: string;
@@ -57,11 +59,18 @@ export interface Product {
   updatedAt: string;
   category?: CategoryRef;
   brand?: BrandRef;
+  /** Endpoint danh sách chỉ trả 0..1 ảnh bìa (where isCover, take 1); endpoint
+   *  chi tiết trả đủ ảnh đã sort theo sortOrder. Đừng dựng gallery từ dữ liệu
+   *  trang danh sách — sẽ chỉ có đúng một ảnh. */
   images?: ProductImage[];
   /** CHÚ Ý: endpoint chi tiết trả cả variant isActive=false — luôn lọc qua
-   *  activeVariants() trước khi hiển thị. Endpoint danh sách thì đã lọc sẵn. */
+   *  activeVariants() (utils/product.ts, Task 4) trước khi hiển thị. Endpoint
+   *  danh sách thì đã lọc sẵn. */
   variants?: ProductVariant[];
-  /** Backend trả productTags[{ tag }], không phải mảng tag phẳng. */
+  /** CHỈ có ở endpoint chi tiết. Endpoint danh sách không include productTags,
+   *  nên ở trang danh sách field này LUÔN undefined — ProductCard đừng render
+   *  chip tag, sẽ không bao giờ hiện. Backend trả productTags[{ tag }], không
+   *  phải mảng tag phẳng. */
   productTags?: { tag: Tag }[];
 }
 
