@@ -4,7 +4,14 @@ import type { ProductListQuery, ProductSort } from "../types";
 /** Mặc định của backend. Không ghi vào URL lẫn query object — xem parseSort. */
 const DEFAULT_SORT: ProductSort = "newest";
 
-/** Thứ tự đọc/ghi các khoá. Gom một chỗ để parse và serialize không lệch nhau. */
+/**
+ * Thứ tự đọc/ghi các khoá. Gom một chỗ để parse và serialize không lệch nhau.
+ *
+ * CỐ Ý không có `limit`, dù `ListQuery` khai báo `limit?: number`: page size do FE
+ * cố định theo mặc định 12 của backend, không nhận từ URL — nếu không, ai cũng có
+ * thể sửa link thành ?limit=10000 và ép backend trả cả bảng. `toSearchParams` vì
+ * thế nuốt `limit` một cách có chủ đích.
+ */
 const KEYS = [
   "search",
   "category",
@@ -63,9 +70,14 @@ export function parseProductQuery(params: URLSearchParams): ProductListQuery {
   if (tag) query.tag = tag;
 
   const minPrice = parseCount(params.get("minPrice"));
-  if (minPrice !== undefined) query.minPrice = minPrice;
+  // 0 là "không có cận dưới" — giống hệt không truyền gì. Bỏ đi để slider giá
+  // kéo về đáy không sinh thêm một cache entry cho cùng một kết quả.
+  if (minPrice) query.minPrice = minPrice;
 
   const maxPrice = parseCount(params.get("maxPrice"));
+  // KHÔNG rút gọn thành `if (maxPrice)` cho "nhất quán" với minPrice ở trên:
+  // maxPrice=0 tới backend là chuỗi "0" nên lọt qua `if (query.maxPrice)` và
+  // thành `salePrice lte 0` — bộ lọc có nghĩa, dù kết quả rỗng.
   if (maxPrice !== undefined) query.maxPrice = maxPrice;
 
   const sort = parseSort(params.get("sort"));
