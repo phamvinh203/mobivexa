@@ -143,14 +143,19 @@ describe('GET /api/users/me/reviews', () => {
 describe('POST /api/order-items/:id/review', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('201 - tạo đánh giá thành công', async () => {
+  // Dòng hàng đã giao, chưa đánh giá — điều kiện để createReview đi hết luồng.
+  const arrangeReviewableItem = () => {
     mockPrisma.orderItem.findFirst.mockResolvedValue({
       id: 'item-1', variantId: 'var-1',
       order:  { id: 'order-1' },
       review: null,
     })
     mockPrisma.productVariant.findUnique.mockResolvedValue({ productId: 'prod-1' })
-    mockPrisma.review.create.mockResolvedValue({ ...BASE_REVIEW, photos: [] })
+    mockPrisma.review.create.mockResolvedValue(BASE_REVIEW)
+  }
+
+  it('201 - tạo đánh giá thành công', async () => {
+    arrangeReviewableItem()
 
     const res = await request(app)
       .post('/api/order-items/item-1/review')
@@ -158,6 +163,23 @@ describe('POST /api/order-items/:id/review', () => {
       .send({ rating: 5, content: 'Sản phẩm tốt lắm' })
 
     expect(res.status).toBe(201)
+  })
+
+  // Client thật gửi multipart (route có upload ảnh) nên rating tới server là
+  // chuỗi "5". Không ép về số thì Prisma ném "Expected Int, provided String".
+  it('201 - gửi multipart: rating chuỗi được ép về số trước khi vào Prisma', async () => {
+    arrangeReviewableItem()
+
+    const res = await request(app)
+      .post('/api/order-items/item-1/review')
+      .set('Authorization', USER_TOKEN)
+      .field('rating', '5')
+      .field('content', 'Sản phẩm tốt lắm')
+
+    expect(res.status).toBe(201)
+    expect(mockPrisma.review.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ rating: 5 }) })
+    )
   })
 
   it('400 - thiếu rating', async () => {
@@ -228,6 +250,21 @@ describe('PUT /api/reviews/:id', () => {
       .send({ content: 'Đã cập nhật', rating: 4 })
 
     expect(res.status).toBe(200)
+  })
+
+  it('200 - gửi multipart: rating chuỗi được ép về số trước khi vào Prisma', async () => {
+    mockPrisma.review.findFirst.mockResolvedValue(BASE_REVIEW)
+    mockPrisma.review.update.mockResolvedValue(BASE_REVIEW)
+
+    const res = await request(app)
+      .put('/api/reviews/review-1')
+      .set('Authorization', USER_TOKEN)
+      .field('rating', '4')
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.review.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ rating: 4 }) })
+    )
   })
 
   it('404 - đánh giá không thuộc về user', async () => {

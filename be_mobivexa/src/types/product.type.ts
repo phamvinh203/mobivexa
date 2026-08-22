@@ -10,6 +10,13 @@ export interface VariantInput {
   isActive?: boolean
 }
 
+// Một dòng thông số kỹ thuật. Thứ tự hiển thị lấy theo thứ tự trong mảng gửi
+// lên, nên client không phải tự đánh sortOrder.
+export interface SpecInput {
+  label: string
+  value: string
+}
+
 export interface CreateProductBody {
   name: string
   slug?: string
@@ -20,10 +27,15 @@ export interface CreateProductBody {
   isFeatured?: boolean
   tagIds?: string[]
   variants: VariantInput[]
+  specs?: SpecInput[]
 }
 
-// Cập nhật product: không đụng tới variants ở đây (quản lý qua endpoint /variants riêng)
-export type UpdateProductBody = Partial<Omit<CreateProductBody, 'variants'>>
+// Cập nhật product: không đụng tới variants và specs ở đây (mỗi thứ có endpoint riêng)
+export type UpdateProductBody = Partial<Omit<CreateProductBody, 'variants' | 'specs'>>
+
+export interface ReplaceSpecsBody {
+  specs: SpecInput[]
+}
 
 export type UpdateVariantBody = Partial<VariantInput>
 

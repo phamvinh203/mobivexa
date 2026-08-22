@@ -4,6 +4,7 @@ import { AppError } from '../helpers/app_error'
 import { USER_PUBLIC_SELECT } from './user.service'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type { AdminUserListQuery } from '../types/admin.type'
+import { parseSearch } from '../utils/search'
 
 // Set cho O(1) lookup — không tái tính mỗi request
 const VALID_ROLES = new Set(Object.values(UserRole))
@@ -41,10 +42,13 @@ export async function listUsers(query: AdminUserListQuery) {
   const { page, limit } = parsePagination(query, LIMITS.INVENTORY, LIMITS.MAX_INVENTORY)
 
   const where: Prisma.UserWhereInput = {}
-  if (query.search) {
+  // Trim trước khi lọc, giống listOrders: ô tìm kiếm chỉ có khoảng trắng phải
+  // coi như không lọc, chứ không phải lọc theo ' ' rồi ra danh sách vô nghĩa.
+  const search = parseSearch(query.search)
+  if (search) {
     where.OR = [
-      { email: { contains: query.search, mode: 'insensitive' } },
-      { fullName: { contains: query.search, mode: 'insensitive' } },
+      { email:    { contains: search, mode: 'insensitive' } },
+      { fullName: { contains: search, mode: 'insensitive' } },
     ]
   }
   if (query.role && VALID_ROLES.has(query.role as UserRole)) {

@@ -13,10 +13,12 @@ import {
   toggleProductFeatured,
   addVariant,
   updateVariant,
+  updateVariantStock,
   deleteVariant,
   addProductImages,
   deleteProductImage,
   setProductImageCover,
+  replaceProductSpecs,
   getInventory,
 } from '../services/product.service'
 
@@ -96,6 +98,13 @@ export const setCover = asyncHandler(async (req: Request, res: Response) => {
   sendSuccess(res, { message: 'Đã đặt làm ảnh bìa', images })
 })
 
+// ─── Admin: Product specs ─────────────────────────────────────────────────────
+
+export const replaceSpecs = asyncHandler(async (req: Request, res: Response) => {
+  const specs = await replaceProductSpecs(req.params.id as string, req.body.specs)
+  sendSuccess(res, { message: 'Cập nhật thông số kỹ thuật thành công', specs })
+})
+
 // ─── Admin: Variant ─────────────────────────────────────────────────────────
 
 export const createVariant = asyncHandler(async (req: Request, res: Response) => {
@@ -116,7 +125,13 @@ export const removeVariant = asyncHandler(async (req: Request, res: Response) =>
 // ─── Admin: Stock ─────────────────────────────────────────────────────────────
 
 export const patchStock = asyncHandler(async (req: Request, res: Response) => {
-  const variant = await updateVariant(req.params.id as string, req.params.variantId as string, { stock: Number(req.body.stock) })
+  const { expectedStock } = req.body
+  const variant = await updateVariantStock(
+    req.params.id as string,
+    req.params.variantId as string,
+    Number(req.body.stock),
+    expectedStock === undefined ? undefined : Number(expectedStock),
+  )
   sendSuccess(res, { message: 'Cập nhật tồn kho thành công', variant })
 })
 

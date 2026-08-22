@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import rateLimit from 'express-rate-limit'
+import { authLimiter } from '../middlewares/rate_limit.middleware'
 import * as controller from '../controllers/auth.controller'
 import {
   validateRegister,
@@ -10,15 +10,6 @@ import {
 } from '../validators/auth.validator'
 
 const router: Router = Router()
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 phút
-  max: 10,
-  message: { message: 'Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút' },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: () => process.env.NODE_ENV === 'test',
-})
 
 router.post('/register',        authLimiter, validateRegister,        controller.register)
 router.post('/login',           authLimiter, validateLogin,           controller.login)

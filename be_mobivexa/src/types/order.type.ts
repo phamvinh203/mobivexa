@@ -9,6 +9,8 @@ export interface CreateOrderBody {
   addressId: string
   paymentMethod?: PaymentMethod
   note?: string
+  /** Mã giảm giá, không phân biệt hoa thường */
+  couponCode?: string
   // Nếu không truyền items → tự động lấy từ giỏ hàng
   items?: OrderItemInput[]
 }
@@ -29,9 +31,11 @@ export interface OrderListQuery {
 }
 
 export interface AdminOrderListQuery extends OrderListQuery {
+  /** Tìm theo mã đơn — khớp một phần, không phân biệt hoa thường */
+  search?: string
   userId?: string
   paymentMethod?: PaymentMethod
   paymentStatus?: PaymentStatus
-  from?: string // ISO date
-  to?: string
+  from?: string // yyyy-mm-dd (nới ra đầu ngày) hoặc ISO datetime
+  to?: string   // yyyy-mm-dd (nới tới cuối ngày) hoặc ISO datetime
 }

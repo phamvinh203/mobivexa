@@ -11,6 +11,8 @@ export default defineConfig({
       JWT_REFRESH_SECRET: 'test-refresh-secret-minimum-32-characters!!',
       DATABASE_URL: 'postgresql://test',
       SEPAY_WEBHOOK_SECRET: 'test-webhook-secret',
+      SEPAY_API_TOKEN: 'test-api-token',
+      SEPAY_ACCOUNT_NUMBER: '0123456789',
     },
     coverage: {
       provider: 'v8',

@@ -39,6 +39,18 @@ const BASE_USER = {
 describe('GET /api/admin/users', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  // Express 5 trả MẢNG khi query lặp key, nên `.trim()` ném TypeError → 500.
+  it('200 - search lặp key vẫn chạy, không phải 500', async () => {
+    mockPrisma.user.findMany.mockResolvedValue([])
+    mockPrisma.user.count.mockResolvedValue(0)
+
+    const res = await request(app)
+      .get('/api/admin/users?search=a&search=b')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+  })
+
   it('200 - admin lấy danh sách người dùng', async () => {
     mockPrisma.user.findMany.mockResolvedValue([BASE_USER])
     mockPrisma.user.count.mockResolvedValue(1)
