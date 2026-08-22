@@ -199,7 +199,28 @@ const toCheckInput = (c: CouponRow) => ({
 // Tính subtotal từ chính bộ hàng sẽ được đặt. KHÔNG nhận subtotal từ client —
 // nhận là mời người ta gửi subtotal: 999999999 để qua ải minOrderValue.
 async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<number> {
-  const resolved = await resolveItems(userId, items)
+  // Preview là endpoint KIỂM TRA, không phải endpoint ĐẶT HÀNG: giỏ trống là một
+  // trạng thái bình thường để đứng đó thử mã, không phải lỗi. resolveItems ném
+  // AppError(400, 'Giỏ hàng trống, không thể đặt hàng') vì nó sinh ra cho luồng
+  // đặt hàng — thả lỗi đó bay lên là vừa bắn thông báo của luồng đặt hàng vào mặt
+  // người chỉ vừa gõ mã, vừa phá hợp đồng "preview luôn trả 200, client đọc cờ
+  // `valid`" — chính thứ khiến FE không phải phân nhánh theo bốn mã HTTP.
+  //
+  // Nuốt thành subtotal 0 rồi để checkCouponUsable phán như mọi ca khác: mã có
+  // sàn đơn thì trả lý do "đơn tối thiểu", mã không sàn thì valid với discount 0
+  // — mã đúng là hợp lệ, chỉ là chưa có gì để giảm.
+  //
+  // Chỉ nuốt AppError, và đó là tín hiệu nghiệp vụ DUY NHẤT resolveItems ném ra.
+  // Lỗi hạ tầng (Prisma chết) không phải AppError nên vẫn bay lên thành 500, đúng
+  // như nó phải thế: trả subtotal 0 im lặng khi DB hỏng thì khách đọc được "chưa
+  // đạt đơn tối thiểu" trong khi sự thật là hệ thống đang gãy.
+  const resolved: OrderItemInput[] = await resolveItems(userId, items).catch((err) => {
+    if (err instanceof AppError) return []
+    throw err
+  })
+
+  // `in: []` là một lượt truy vấn chắc chắn không trả về gì.
+  if (resolved.length === 0) return 0
 
   const variants = await prisma.productVariant.findMany({
     where:  { id: { in: resolved.map((i) => i.variantId) } },

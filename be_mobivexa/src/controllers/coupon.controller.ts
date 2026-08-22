@@ -11,6 +11,7 @@ import {
   listActiveCoupons,
   previewCoupon,
 } from '../services/coupon.service'
+import type { PreviewCouponBody } from '../types/coupon.type'
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,10 @@ export const listMine = asyncHandler(async (req: Request, res: Response) => {
 })
 
 export const preview = asyncHandler(async (req: Request, res: Response) => {
-  const { code, items } = req.body
+  // Gắn kiểu vào chỗ bóc body để interface là hợp đồng THẬT của endpoint: đổi
+  // chữ ký previewCoupon hay đổi PreviewCouponBody mà quên bên kia là lỗi biên
+  // dịch, chứ không phải một field undefined lặng lẽ chạy tiếp tới tầng service.
+  const { code, items }: PreviewCouponBody = req.body
   const result = await previewCoupon(req.user!.userId, code, items)
   sendSuccess(res, result)
 })

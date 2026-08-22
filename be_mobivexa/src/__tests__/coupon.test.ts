@@ -481,4 +481,64 @@ describe('POST /api/coupons/preview', () => {
     const res = await request(app).post('/api/coupons/preview').send({ code: 'SALE10' })
     expect(res.status).toBe(401)
   })
+
+  // Preview là endpoint KIỂM TRA: khách mở ngăn mã giảm giá trước khi bỏ gì vào
+  // giỏ là chuyện bình thường. resolveItems ném 'Giỏ hàng trống, không thể đặt
+  // hàng' vì nó sinh ra cho luồng ĐẶT HÀNG — thả lỗi đó bay lên là vừa phá hợp
+  // đồng luôn-200, vừa bắn thông báo của luồng đặt hàng vào mặt người chỉ vừa gõ
+  // mã. Kết quả đúng là 200 với subtotal 0, lý do đọc qua cờ `valid`.
+  it('200 - giỏ trống vẫn trả 200 với subtotal 0, không lộ lỗi luồng đặt hàng', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.cart.findUnique.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.subtotal).toBe(0)
+    expect(JSON.stringify(res.body)).not.toContain('Giỏ hàng trống, không thể đặt hàng')
+
+    // BASE_COUPON có sàn 500.000 nên mã chưa dùng được — nhưng đó là lý do CỦA MÃ,
+    // trả qua `valid` + `reason`, không phải một mã HTTP khác.
+    expect(res.body.valid).toBe(false)
+    expect(res.body.reason).toMatch(/tối thiểu/)
+  })
+
+  // Mặt còn lại của cùng một luật: mã không có sàn đơn thì giỏ trống vẫn là mã
+  // HỢP LỆ, chỉ là chưa có gì để giảm. valid: true kèm discount 0 là câu trả lời
+  // đúng, không phải lỗi.
+  it('200 - giỏ trống + mã không có đơn tối thiểu vẫn valid, giảm 0', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue({ ...BASE_COUPON, minOrderValue: 0 })
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.cart.findUnique.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.valid).toBe(true)
+    expect(res.body.subtotal).toBe(0)
+    expect(res.body.discount).toBe(0)
+    expect(res.body.total).toBe(0)
+  })
+
+  // Lỗi hạ tầng KHÔNG được nuốt thành subtotal 0: nếu nuốt, khách đọc được "chưa
+  // đạt đơn tối thiểu" trong khi sự thật là DB đang gãy.
+  it('500 - lỗi DB khi đọc giỏ vẫn nổi lên, không hoá thành subtotal 0', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.cart.findUnique.mockRejectedValue(new Error('connection lost'))
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10' })
+
+    expect(res.status).toBe(500)
+  })
 })
