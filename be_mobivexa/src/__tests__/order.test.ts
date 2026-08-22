@@ -14,6 +14,8 @@ const mockPrisma = vi.hoisted(() => ({
     update:     vi.fn(),
   },
   cartItem: { deleteMany: vi.fn() },
+  coupon:      { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+  couponUsage: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), delete: vi.fn() },
   $transaction: vi.fn(),
 }))
 
@@ -418,5 +420,150 @@ describe('PATCH /api/admin/orders/:id/payment', () => {
       .send({ paymentStatus: 'PAID' })
 
     expect(res.status).toBe(404)
+  })
+})
+
+// ─── Đặt hàng có mã giảm giá ──────────────────────────────────────────────────
+
+const ACTIVE_COUPON = {
+  id:            'coupon-1',
+  code:          'SALE10',
+  type:          'PERCENT',
+  value:         10,
+  maxDiscount:   null,
+  minOrderValue: 0,
+  usageLimit:    100,
+  usedCount:     0,
+  startsAt:      new Date('2020-01-01T00:00:00.000Z'),
+  endsAt:        new Date('2099-01-01T00:00:00.000Z'),
+  isActive:      true,
+}
+
+describe('POST /api/orders - có mã giảm giá', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+    mockPrisma.address.findFirst.mockResolvedValue({
+      id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001',
+      province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC',
+    })
+    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.order.create.mockResolvedValue(BASE_ORDER)
+  })
+
+  const postOrder = () =>
+    request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({
+        addressId: 'addr-1',
+        items: [{ variantId: 'var-1', quantity: 1 }],
+        couponCode: 'sale10',
+      })
+
+  it('201 - đơn mang discount và couponCode snapshot', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(ACTIVE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.coupon.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.couponUsage.create.mockResolvedValue({})
+
+    const res = await postOrder()
+
+    expect(res.status).toBe(201)
+    const data = mockPrisma.order.create.mock.calls[0][0].data
+    expect(data.discount).toBe(100_000)   // 10% của 1.000.000
+    expect(data.couponCode).toBe('SALE10')
+    expect(data.total).toBe(900_000)
+  })
+
+  it('400 - mã không tồn tại, đơn không được tạo', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(null)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+
+    const res = await postOrder()
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toBe('Mã giảm giá không tồn tại')
+    expect(mockPrisma.order.create).not.toHaveBeenCalled()
+  })
+
+  // Mã hết lượt GIỮA lúc kiểm tra và lúc ghi: guard usedCount < usageLimit không
+  // khớp nên updateMany trả count 0, transaction rollback.
+  it('409 - mã vừa hết lượt trong lúc đặt', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(ACTIVE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.coupon.updateMany.mockResolvedValue({ count: 0 })
+
+    const res = await postOrder()
+
+    expect(res.status).toBe(409)
+    expect(res.body.message).toMatch(/hết lượt/)
+  })
+
+  // Khoá chính (couponId, userId) là thứ chặn, không phải logic ứng dụng.
+  it('409 - khách đặt hai đơn song song cùng một mã', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(ACTIVE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.coupon.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.couponUsage.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    )
+
+    const res = await postOrder()
+
+    expect(res.status).toBe(409)
+    expect(res.body.message).toBe('Bạn đã sử dụng mã này rồi')
+  })
+})
+
+// ─── Huỷ đơn có mã ────────────────────────────────────────────────────────────
+
+describe('PATCH /api/orders/:id/cancel - hoàn lại mã', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+    mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+  })
+
+  it('200 - xoá usage và giảm usedCount', async () => {
+    mockPrisma.couponUsage.findUnique.mockResolvedValue({
+      couponId: 'coupon-1', userId: 'user-1', orderId: 'order-1',
+    })
+    mockPrisma.couponUsage.delete.mockResolvedValue({})
+    mockPrisma.coupon.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({})
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.couponUsage.delete).toHaveBeenCalledWith({
+      where: { couponId_userId: { couponId: 'coupon-1', userId: 'user-1' } },
+    })
+    // gt: 0 là chốt phòng thân để usedCount không bao giờ âm
+    expect(mockPrisma.coupon.updateMany.mock.calls[0][0].where.usedCount).toEqual({ gt: 0 })
+  })
+
+  it('200 - đơn không dùng mã thì không đụng tới bảng coupon', async () => {
+    mockPrisma.couponUsage.findUnique.mockResolvedValue(null)
+
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({})
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.coupon.updateMany).not.toHaveBeenCalled()
   })
 })
