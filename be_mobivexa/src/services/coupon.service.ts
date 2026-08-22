@@ -196,9 +196,14 @@ const toCheckInput = (c: CouponRow) => ({
   minOrderValue: Number(c.minOrderValue),
 })
 
+// Trả về CẢ subtotal lẫn cờ "có món không mua được", không phải mỗi con số:
+// preview phải từ chối được cả giỏ, mà chỉ nhìn subtotal thì không phân biệt nổi
+// "giỏ rẻ" với "giỏ có hàng đã ngừng bán".
+type CartValuation = { subtotal: number; unavailable: boolean }
+
 // Tính subtotal từ chính bộ hàng sẽ được đặt. KHÔNG nhận subtotal từ client —
 // nhận là mời người ta gửi subtotal: 999999999 để qua ải minOrderValue.
-async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<number> {
+async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<CartValuation> {
   // Preview là endpoint KIỂM TRA, không phải endpoint ĐẶT HÀNG: giỏ trống là một
   // trạng thái bình thường để đứng đó thử mã, không phải lỗi. resolveItems ném
   // AppError(400, 'Giỏ hàng trống, không thể đặt hàng') vì nó sinh ra cho luồng
@@ -220,15 +225,35 @@ async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<num
   })
 
   // `in: []` là một lượt truy vấn chắc chắn không trả về gì.
-  if (resolved.length === 0) return 0
+  if (resolved.length === 0) return { subtotal: 0, unavailable: false }
 
+  // Lấy kèm isActive: createOrder ném 400 cho biến thể đã ngừng bán, nên preview
+  // phải THẤY được điều đó mới nói không y hệt. Thiếu cột này thì hàng ngừng bán
+  // được tính nguyên giá và preview hứa một khoản giảm không đặt hàng nổi.
   const variants = await prisma.productVariant.findMany({
     where:  { id: { in: resolved.map((i) => i.variantId) } },
-    select: { id: true, salePrice: true },
+    select: { id: true, salePrice: true, isActive: true },
   })
-  const priceById = new Map(variants.map((v) => [v.id, Number(v.salePrice)]))
+  const byId = new Map(variants.map((v) => [v.id, v]))
 
-  return resolved.reduce((sum, i) => sum + (priceById.get(i.variantId) ?? 0) * i.quantity, 0)
+  let subtotal    = 0
+  let unavailable = false
+
+  for (const item of resolved) {
+    const variant = byId.get(item.variantId)
+
+    // Đúng hai ca createOrder ném 400: biến thể không còn tồn tại, và biến thể đã
+    // ngừng bán. Ghi cờ rồi bỏ qua — KHÔNG cộng nguyên giá (nói dối về giỏ), cũng
+    // KHÔNG lặng lẽ tính 0 như `?? 0` cũ (giấu luôn việc có món hỏng).
+    if (!variant || !variant.isActive) {
+      unavailable = true
+      continue
+    }
+
+    subtotal += Number(variant.salePrice) * item.quantity
+  }
+
+  return { subtotal, unavailable }
 }
 
 export async function listActiveCoupons(userId: string) {
@@ -262,11 +287,34 @@ export async function listActiveCoupons(userId: string) {
 export async function previewCoupon(userId: string, code: string, items?: OrderItemInput[]) {
   const normalized = normalizeCode(code)
 
-  const [coupon, usage, subtotal] = await Promise.all([
+  const [coupon, usage, { subtotal, unavailable }] = await Promise.all([
     prisma.coupon.findUnique({ where: { code: normalized } }),
     prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
     subtotalOf(userId, items),
   ])
+
+  // Chặn TRƯỚC khi hỏi tới mã. Giỏ có món không mua được thì đơn này không đặt
+  // được, mã tốt đến mấy cũng vậy — createOrder ném 400 cho đúng hai ca đó, nên
+  // preview phải nói KHÔNG y hệt. Không thế thì: giỏ có A đang bán 1.000.000 và B
+  // bị admin tắt sau khi đã vào giỏ 4.000.000 (CartItem chỉ cascade khi biến thể
+  // bị XOÁ, nên B nằm lại), preview cộng đủ 5.000.000 rồi báo "giảm 500.000đ" —
+  // và POST /api/orders trả 400. Con số vừa hứa với khách chưa bao giờ có thật.
+  //
+  // TỪ CHỐI chứ không LỌC. Lọc món hỏng ra rồi vẫn báo giảm giá là báo cho một
+  // giỏ khách không mua được — vẫn là lời hứa suông, chỉ nói khẽ hơn. Đừng "tối
+  // ưu" đoạn này thành filter.
+  //
+  // Lý do gọi đúng tên vấn đề: khách cần biết CÓ MÓN TRONG GIỎ không mua được,
+  // chứ không phải tưởng mã giảm giá của mình hỏng.
+  if (unavailable) {
+    return {
+      valid:    false,
+      subtotal,
+      discount: 0,
+      total:    subtotal,
+      reason:   'Giỏ hàng có sản phẩm không còn bán, vui lòng cập nhật giỏ hàng',
+    }
+  }
 
   const check = checkCouponUsable(coupon && toCheckInput(coupon), usage !== null, subtotal)
 

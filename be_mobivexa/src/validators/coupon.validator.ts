@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
 import { CouponType } from '../generated/prisma/client'
-import { checkId } from './common.validator'
+import { checkId, checkQuantity } from './common.validator'
 
-const CODE_RE = /^[A-Z0-9_-]{3,32}$/
+const MAX_CODE_LENGTH = 32
+const CODE_RE = new RegExp(`^[A-Z0-9_-]{3,${MAX_CODE_LENGTH}}$`)
 
 // Các cột schema khai NOT NULL, kèm nhãn tiếng Việt để dựng thông báo lỗi.
 // Cột nullable (description, maxDiscount, usageLimit) CỐ Ý không có mặt: gửi null
@@ -129,6 +130,37 @@ export function validateUpdateCoupon(req: Request, res: Response, next: NextFunc
 }
 
 export function validatePreviewCoupon(req: Request, res: Response, next: NextFunction): void {
-  if (!checkId(res, req.body?.code, 'Vui lòng nhập mã giảm giá')) return
+  const { code, items } = req.body ?? {}
+
+  if (!checkId(res, code, 'Vui lòng nhập mã giảm giá')) return
+
+  // Chặn ĐỘ DÀI ngay tại cổng. Không có trần thì một `code` vài megabyte vẫn đi
+  // trọn normalizeCode rồi thành một lượt truy vấn Prisma — lỗi của client mà bắt
+  // DB gánh. Dùng đúng trần 32 của CODE_RE ở validateBody để hai cổng cùng một luật.
+  if (code.trim().length > MAX_CODE_LENGTH) {
+    sendError(res, 400, `Mã giảm giá không được dài quá ${MAX_CODE_LENGTH} ký tự`)
+    return
+  }
+
+  // Cùng bộ luật items với validateCreateOrder: preview và đặt hàng phải từ chối
+  // đúng những payload như nhau, nếu không preview báo giảm được rồi đặt hàng ăn 400.
+  //
+  // Quan trọng hơn: thiếu `quantity` cho ra salePrice * undefined = NaN, mà
+  // `NaN < minOrderValue` là FALSE nên nhánh đơn tối thiểu không bao giờ chạy —
+  // cổng sàn đơn biến mất, đúng thứ mà "server tự tính subtotal" sinh ra để chặn.
+  // Forged subtotal còn so sánh được, NaN thì làm phép so sánh thành vô nghĩa.
+  if (items !== undefined) {
+    if (!Array.isArray(items) || items.length === 0) {
+      sendError(res, 400, 'Danh sách sản phẩm không hợp lệ')
+      return
+    }
+    for (const item of items) {
+      // `item?.` chứ không `item.`: phần tử null trong mảng sẽ ném TypeError thành
+      // 500, mà preview là endpoint KIỂM TRA — payload rác phải ra 400.
+      if (!checkId(res, item?.variantId, 'variantId không hợp lệ')) return
+      if (!checkQuantity(res, Number(item?.quantity))) return
+    }
+  }
+
   next()
 }

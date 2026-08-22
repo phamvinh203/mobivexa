@@ -541,4 +541,124 @@ describe('POST /api/coupons/preview', () => {
 
     expect(res.status).toBe(500)
   })
+
+  // ── items rác phải ra 400, không phải NaN lọt lưới và không phải 500 ────────
+
+  // Thiếu quantity là lỗ thủng nặng nhất: salePrice * undefined = NaN, mà
+  // `NaN < minOrderValue` là FALSE nên nhánh đơn tối thiểu KHÔNG BAO GIỜ chạy —
+  // cổng sàn đơn biến mất và server trả valid:true với subtotal null. Forged
+  // subtotal còn so sánh được; NaN làm phép so sánh thành vô nghĩa.
+  it('400 - thiếu quantity không được biến subtotal thành NaN', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{ variantId: 'var-1' }] })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.findUnique).not.toHaveBeenCalled()
+  })
+
+  it('400 - quantity không phải số', async () => {
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{ variantId: 'var-1', quantity: 'abc' }] })
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - quantity âm', async () => {
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{ variantId: 'var-1', quantity: -5 }] })
+
+    expect(res.status).toBe(400)
+  })
+
+  // items rác từng ném TypeError/PrismaClientValidationError NGOÀI khối catch
+  // AppError, thành 500 — phá hợp đồng luôn-200 bằng đúng cái cách ồn ào nhất.
+  it('400 - items là chuỗi chứ không phải mảng, không phải 500', async () => {
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: 'abc' })
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - item thiếu variantId, không phải 500', async () => {
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{}] })
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - code dài quá trần 32 ký tự thì chặn trước khi chạm DB', async () => {
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'A'.repeat(5_000) })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.findUnique).not.toHaveBeenCalled()
+  })
+
+  // ── Hàng ngừng bán / không còn tồn tại: preview TỪ CHỐI, không lọc ──────────
+
+  // Ca có thật, không cần client xấu: giỏ có A đang bán (1.000.000) và B bị admin
+  // tắt SAU KHI đã vào giỏ (4.000.000) — CartItem chỉ cascade khi biến thể bị
+  // XOÁ, nên B nằm lại. Trước khi sửa: subtotal cộng cả B thành 5.000.000, vượt
+  // sàn, preview báo valid:true giảm 500.000 — rồi POST /api/orders trả 400 vì B
+  // ngừng bán. Khoản giảm đó chưa bao giờ có thật.
+  it('200 - hàng ngừng bán trong giỏ bị từ chối kèm lý do, không quy ra tiền giảm', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue({ ...BASE_COUPON, minOrderValue: 5_000_000 })
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.cart.findUnique.mockResolvedValue({
+      items: [
+        { variantId: 'var-1', quantity: 1 },
+        { variantId: 'var-2', quantity: 1 },
+      ],
+    })
+    mockPrisma.productVariant.findMany.mockResolvedValue([
+      { ...VARIANT, id: 'var-1', salePrice: 1_000_000, isActive: true },
+      { ...VARIANT, id: 'var-2', salePrice: 4_000_000, isActive: false },
+    ])
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.valid).toBe(false)
+    expect(res.body.discount).toBe(0)
+    expect(res.body.reason).toMatch(/không còn bán/)
+
+    // Và KHÔNG được lọc B ra rồi im lặng báo mã hỏng: lý do phải nói về giỏ hàng.
+    expect(res.body.reason).not.toMatch(/tối thiểu/)
+  })
+
+  // Mặt kia của cùng một luật: id không còn ứng với biến thể nào. `?? 0` cũ định
+  // giá nó bằng 0 rồi đi tiếp như không có chuyện gì; createOrder thì ném 400.
+  it('200 - biến thể không tồn tại cũng bị từ chối, không định giá 0 rồi đi tiếp', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue({ ...BASE_COUPON, minOrderValue: 0 })
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.productVariant.findMany.mockResolvedValue([])
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{ variantId: 'khong-co', quantity: 1 }] })
+
+    expect(res.status).toBe(200)
+    expect(res.body.valid).toBe(false)
+    expect(res.body.discount).toBe(0)
+    expect(res.body.reason).toMatch(/không còn bán/)
+  })
 })
