@@ -4,7 +4,7 @@ import request from 'supertest'
 const mockPrisma = vi.hoisted(() => ({
   address:        { findFirst: vi.fn() },
   cart:           { findUnique: vi.fn() },
-  productVariant: { findMany: vi.fn(), update: vi.fn() },
+  productVariant: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   order: {
     create:     vi.fn(),
     findFirst:  vi.fn(),
@@ -27,6 +27,12 @@ const app = createApp()
 
 const USER_TOKEN  = `Bearer ${signAccessToken({ userId: 'user-1',  email: 'user@test.com',  role: 'CUSTOMER' })}`
 const ADMIN_TOKEN = `Bearer ${signAccessToken({ userId: 'admin-1', email: 'admin@test.com', role: 'ADMIN' })}`
+
+const conflictError = () =>
+  new Prisma.PrismaClientKnownRequestError('Record not found', {
+    code: 'P2025',
+    clientVersion: 'test',
+  })
 
 const BASE_VARIANT = {
   id:        'var-1',
@@ -81,12 +87,7 @@ describe('POST /api/orders', () => {
     mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
     mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
     mockPrisma.order.create.mockResolvedValue(BASE_ORDER)
-    mockPrisma.productVariant.update.mockResolvedValue({})
-    // updateMany được gọi trong transaction
-    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
-
-    // mock updateMany via productVariant (trong tx = mockPrisma)
-    ;(mockPrisma.productVariant as any).updateMany = vi.fn().mockResolvedValue({ count: 1 })
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .post('/api/orders')
@@ -196,7 +197,7 @@ describe('PATCH /api/orders/:id/cancel', () => {
   it('200 - hủy đơn hàng PENDING thành công', async () => {
     mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
     mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
-    mockPrisma.productVariant.update.mockResolvedValue({})
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .patch('/api/orders/order-1/cancel')
@@ -224,12 +225,7 @@ describe('PATCH /api/orders/:id/cancel', () => {
   // TRƯỚC bước increment.
   it('409 - đơn vừa bị đổi trạng thái ở nơi khác, không hoàn kho', async () => {
     mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
-    mockPrisma.order.update.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Record not found', {
-        code: 'P2025',
-        clientVersion: 'test',
-      })
-    )
+    mockPrisma.order.update.mockRejectedValue(conflictError())
 
     const res = await request(app)
       .patch('/api/orders/order-1/cancel')
@@ -237,7 +233,7 @@ describe('PATCH /api/orders/:id/cancel', () => {
       .send({})
 
     expect(res.status).toBe(409)
-    expect(mockPrisma.productVariant.update).not.toHaveBeenCalled()
+    expect(mockPrisma.productVariant.updateMany).not.toHaveBeenCalled()
   })
 })
 
@@ -375,12 +371,7 @@ describe('PATCH /api/admin/orders/:id/status', () => {
 
   it('409 - admin khác vừa đổi trạng thái đơn này', async () => {
     mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
-    mockPrisma.order.update.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Record not found', {
-        code: 'P2025',
-        clientVersion: 'test',
-      })
-    )
+    mockPrisma.order.update.mockRejectedValue(conflictError())
 
     const res = await request(app)
       .patch('/api/admin/orders/order-1/status')

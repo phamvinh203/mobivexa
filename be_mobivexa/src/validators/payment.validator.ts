@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
+import { checkId } from './common.validator'
 import { SePayTxStatus } from '../generated/prisma/client'
 import { ORDER_CODE_EXACT_RE } from '../utils/order_code'
 
@@ -32,10 +33,7 @@ export function validateSePayWebhook(req: Request, res: Response, next: NextFunc
 export function validateMatchTransaction(req: Request, res: Response, next: NextFunction): void {
   const { orderCode } = req.body ?? {}
 
-  if (!orderCode || typeof orderCode !== 'string') {
-    sendError(res, 400, 'Vui lòng nhập mã đơn hàng')
-    return
-  }
+  if (!checkId(res, orderCode, 'Vui lòng nhập mã đơn hàng')) return
   if (!ORDER_CODE_EXACT_RE.test(orderCode.trim())) {
     sendError(res, 400, 'Mã đơn hàng không đúng định dạng (ORD-YYYYMMDD-XXXXXX)')
     return

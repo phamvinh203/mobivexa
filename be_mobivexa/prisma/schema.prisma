@@ -77,6 +77,7 @@ model User {
   orders        Order[]
   reviews       Review[]
   reviewHelpful ReviewHelpful[]
+  favorites     Favorite[]
 
   @@index([role])
   @@index([isActive])
@@ -193,6 +194,7 @@ model Product {
   images      ProductImage[]
   specs       ProductSpec[]
   reviews     Review[]
+  favorites   Favorite[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -463,6 +465,28 @@ model ReviewHelpful {
 
   @@id([userId, reviewId])
   @@map("review_helpful")
+}
+
+// Sản phẩm yêu thích của khách. Gắn ở mức Product chứ không phải variant: khách
+// bấm tim trên card sản phẩm ngoài trang listing, lúc đó chưa chọn màu/dung lượng.
+//
+// Composite PK thay cho cột id + unique riêng: khoá chính đã là (userId, productId)
+// nên thích trùng bị chặn ngay ở DB — service chỉ cần bắt P2002, không phải đọc
+// thêm một vòng để dò trùng. (Nó vẫn đọc product một lần, nhưng để chặn sản phẩm
+// đã ngừng bán — việc khác.)
+model Favorite {
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([userId, productId])
+  // Danh sách yêu thích luôn đọc theo user rồi sắp mới nhất trước — index gộp
+  // phục vụ trọn câu truy vấn, không phải sort lại sau khi lọc.
+  @@index([userId, createdAt])
+  @@map("favorites")
 }
 
 model Banner {

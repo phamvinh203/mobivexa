@@ -1,6 +1,7 @@
 import prisma from '../config/db'
 import { Prisma, OrderStatus, ReviewStatus } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type {
@@ -330,9 +331,10 @@ export async function replyReview(reviewId: string, content: string) {
       data:   { replyContent: content.trim(), repliedAt: new Date() },
       include: REVIEW_ADMIN_INCLUDE,
     })
-  } catch (e: any) {
-    if (e?.code === 'P2025') throw new AppError(404, 'Đánh giá không tồn tại')
-    throw e
+  } catch (err) {
+    // WHERE chỉ có khoá chính, nên P2025 ở đây nghĩa là bản ghi không tồn tại
+    if (isPrismaError(err, 'P2025')) throw new AppError(404, 'Đánh giá không tồn tại')
+    throw err
   }
 }
 

@@ -1,6 +1,6 @@
 import './config/env'
 import http from 'http'
-import { connectDB, ensureFtsIndexes } from './config/db'
+import { connectDB, ensureSearchIndexes } from './config/db'
 import { createApp } from './app'
 import { cleanupExpiredTokens } from './services/auth.service'
 
@@ -15,7 +15,7 @@ const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 async function bootstrap() {
   await connectDB()
-  await ensureFtsIndexes()
+  await ensureSearchIndexes()
 
   await cleanupExpiredTokens()
   setInterval(() => void cleanupExpiredTokens(), CLEANUP_INTERVAL_MS)

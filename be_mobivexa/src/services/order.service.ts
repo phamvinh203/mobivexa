@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto'
 import prisma from '../config/db'
-import { Prisma, OrderStatus, PaymentStatus } from '../generated/prisma/client'
+import { Prisma, OrderStatus, PaymentStatus, type OrderItem } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
 import type {
@@ -50,55 +51,60 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.CANCELLED]: [],
 }
 
-const CONCURRENT_UPDATE = 'Đơn hàng vừa được cập nhật ở nơi khác, vui lòng tải lại'
-
 // Trạng thái đơn được đọc ở ngoài transaction, nên giữa lúc đọc và lúc ghi vẫn
 // còn khe cho một request khác chen vào. Mọi lệnh ghi trạng thái đều kèm
-// `status: from` trong WHERE để chỉ request ghi trước là khớp; request sau nhận
-// P2025 — đơn vẫn tồn tại (đã check 404 trước đó), chỉ là trạng thái đã đổi.
+// `status` trong WHERE để chỉ request ghi trước là khớp; request sau nhận P2025
+// — đơn vẫn tồn tại (đã check 404 trước đó), chỉ là trạng thái đã đổi.
 function asConflict(err: unknown): never {
-  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-    throw new AppError(409, CONCURRENT_UPDATE)
+  if (isPrismaError(err, 'P2025')) {
+    throw new AppError(409, 'Đơn hàng vừa được cập nhật ở nơi khác, vui lòng tải lại')
   }
   throw err
 }
 
+// Đơn tối thiểu để huỷ: id để ghi, status làm guard, items để hoàn kho. Nhận cả
+// record thay vì ba tham số rời — không thể lỡ ghép id của đơn này với status
+// của đơn kia. Structural chứ không phải Order đầy đủ vì updateOrderStatus lấy
+// đơn qua `select` hẹp.
+type CancellableOrder = {
+  id: string
+  status: OrderStatus
+  items: Pick<OrderItem, 'variantId' | 'quantity'>[]
+}
+
 // Huỷ đơn và hoàn kho trong cùng một transaction.
 //
-// Guard `status: from` ở đây là chốt chặn hoàn kho HAI LẦN: hai request huỷ song
-// song đều thấy đơn còn huỷ được, nhưng chỉ một cái ghi được trạng thái và đi
-// tiếp xuống phần increment. Không có guard thì cả hai cùng cộng kho, tồn kho
-// phình lên so với thực tế.
-type RestorableItem = { variantId: string | null; quantity: number }
-
-async function cancelAndRestoreStock(
-  orderId: string,
-  from: OrderStatus,
-  items: RestorableItem[],
-  cancelReason?: string,
-) {
+// Guard `status` ở đây là chốt chặn hoàn kho HAI LẦN: hai request huỷ song song
+// đều thấy đơn còn huỷ được, nhưng chỉ một cái ghi được trạng thái và đi tiếp
+// xuống phần increment. Không có guard thì cả hai cùng cộng kho, tồn kho phình
+// lên so với thực tế.
+async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: string) {
   return prisma.$transaction(async (tx) => {
-    let updated
-    try {
-      updated = await tx.order.update({
-        where:   { id: orderId, status: from },
+    const updated = await tx.order
+      .update({
+        where:   { id: order.id, status: order.status },
         data:    { status: OrderStatus.CANCELLED, cancelReason },
         include: ORDER_INCLUDE,
       })
-    } catch (err) {
-      asConflict(err)
+      .catch(asConflict)
+
+    // Gộp theo số lượng rồi bắn updateMany, thay vì một update mỗi dòng.
+    // Promise.all ở đây sẽ là ảo tưởng: interactive transaction chạy trên đúng
+    // một connection nên các lệnh vẫn nối đuôi nhau — gom lại mới thật sự bớt
+    // round-trip, và đơn thường toàn quantity=1 nên còn đúng MỘT lệnh.
+    const idsByQuantity = new Map<number, string[]>()
+    for (const { variantId, quantity } of order.items) {
+      // null khi biến thể đã bị xoá (onDelete: SetNull) — không còn kho để hoàn
+      if (variantId === null) continue
+      idsByQuantity.set(quantity, [...(idsByQuantity.get(quantity) ?? []), variantId])
     }
 
-    // variantId null khi biến thể đã bị xoá (onDelete: SetNull) — không còn kho để hoàn
-    const restorable = items.filter((i) => i.variantId !== null)
-    await Promise.all(
-      restorable.map((item) =>
-        tx.productVariant.update({
-          where: { id: item.variantId! },
-          data:  { stock: { increment: item.quantity } },
-        })
-      )
-    )
+    for (const [quantity, ids] of idsByQuantity) {
+      await tx.productVariant.updateMany({
+        where: { id: { in: ids } },
+        data:  { stock: { increment: quantity } },
+      })
+    }
 
     return updated
   })
@@ -232,7 +238,7 @@ export async function cancelMyOrder(userId: string, orderId: string, reason?: st
     throw new AppError(400, 'Không thể hủy đơn hàng ở trạng thái hiện tại')
   }
 
-  return cancelAndRestoreStock(orderId, order.status, order.items, reason ?? 'Khách hàng hủy đơn')
+  return cancelAndRestoreStock(order, reason ?? 'Khách hàng hủy đơn')
 }
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
@@ -286,20 +292,18 @@ export async function updateOrderStatus(orderId: string, body: UpdateOrderStatus
   }
 
   if (body.status === OrderStatus.CANCELLED) {
-    return cancelAndRestoreStock(orderId, order.status, order.items, body.cancelReason ?? undefined)
+    return cancelAndRestoreStock(order, body.cancelReason ?? undefined)
   }
 
   // Guard status như nhánh huỷ: hai admin bấm hai nút khác nhau cùng lúc thì chỉ
   // bước ghi trước có hiệu lực, bước sau nhận 409 thay vì nhảy cóc trạng thái.
-  try {
-    return await prisma.order.update({
+  return prisma.order
+    .update({
       where:   { id: orderId, status: order.status },
       data:    { status: body.status },
       include: ORDER_INCLUDE,
     })
-  } catch (err) {
-    asConflict(err)
-  }
+    .catch(asConflict)
 }
 
 export async function updatePaymentStatus(orderId: string, body: UpdatePaymentStatusBody) {

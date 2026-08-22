@@ -42,6 +42,19 @@ export function parseIntField(
   return true
 }
 
+// Kiểm tra field id dạng chuỗi: true nếu hợp lệ, false (và đã gửi lỗi) nếu không.
+//
+// Cố tình KHÔNG kiểm tra dạng uuid: id sai dạng vẫn ra 404 ở tầng service, còn
+// ràng buộc hình thức ở đây sẽ chặn nhầm nếu sau này đổi kiểu khoá. Việc duy
+// nhất của nó là chặn undefined/null/số/object lọt xuống Prisma.
+export function checkId(res: Response, value: unknown, message: string): boolean {
+  if (!value || typeof value !== 'string') {
+    sendError(res, 400, message)
+    return false
+  }
+  return true
+}
+
 // Kiểm tra field "tên": trả về true nếu hợp lệ, false (và đã gửi lỗi) nếu không.
 // optional=true dùng cho update — chỉ validate khi field được gửi lên.
 export function checkName(

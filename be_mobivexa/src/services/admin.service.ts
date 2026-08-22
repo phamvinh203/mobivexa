@@ -41,10 +41,13 @@ export async function listUsers(query: AdminUserListQuery) {
   const { page, limit } = parsePagination(query, LIMITS.INVENTORY, LIMITS.MAX_INVENTORY)
 
   const where: Prisma.UserWhereInput = {}
-  if (query.search) {
+  // Trim trước khi lọc, giống listOrders: ô tìm kiếm chỉ có khoảng trắng phải
+  // coi như không lọc, chứ không phải lọc theo ' ' rồi ra danh sách vô nghĩa.
+  const search = query.search?.trim()
+  if (search) {
     where.OR = [
-      { email: { contains: query.search, mode: 'insensitive' } },
-      { fullName: { contains: query.search, mode: 'insensitive' } },
+      { email:    { contains: search, mode: 'insensitive' } },
+      { fullName: { contains: search, mode: 'insensitive' } },
     ]
   }
   if (query.role && VALID_ROLES.has(query.role as UserRole)) {

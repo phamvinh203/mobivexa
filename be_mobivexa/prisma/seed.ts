@@ -142,6 +142,9 @@ function makeSku(slug: string, used: Set<string>): string {
 /** Ba danh mục phụ kiện — dùng để biết file crawl đã có hàng thật hay chưa */
 const ACCESSORY_SLUGS = new Set(['bao-da-op-lung', 'sac-cap', 'tai-nghe'])
 
+/** Mỗi mẫu nhân ra bấy nhiêu sản phẩm: 10 mẫu × 3 = 30 sản phẩm mỗi danh mục */
+const ACCESSORY_COPIES_PER_TEMPLATE = 3
+
 // ─── Phụ kiện ─────────────────────────────────────────────────────────────────
 //
 // Điện thoại lấy từ file crawl, nhưng crawler chỉ quét máy nên ba danh mục phụ
@@ -278,10 +281,11 @@ function buildAccessories(
         seq++
         // Lấy hãng và tên máy từ chính danh sách máy đang bán: ốp lưng phải hợp
         // với máy có thật trong shop, và hãng thì khỏi phải bịa thêm
-        const phone = phones[(ti * copiesPerTemplate + copy) % phones.length]
+        const idx = ti * copiesPerTemplate + copy
+        const phone = phones[idx % phones.length]
         const owner =
           group.nameBy === 'brand'
-            ? brandList[(ti * copiesPerTemplate + copy) % brandList.length]
+            ? brandList[idx % brandList.length]
             : brandBySlug[phone.brandSlug]
         if (!owner) continue
 
@@ -531,14 +535,9 @@ async function main(): Promise<void> {
   // CHỈ chạy khi file crawl không có phụ kiện. Trộn hàng thật với hàng dựng tay
   // thì trong cùng một danh mục sẽ có sản phẩm ảnh thật đứng cạnh ảnh placeholder
   // xám, giá thật cạnh giá bịa — nhìn là biết dữ liệu hỏng.
-  const crawlHasAccessories = data.products.some((p) => ACCESSORY_SLUGS.has(p.categorySlug))
-  if (crawlHasAccessories) {
-    console.log(`  🎧  Phụ kiện: dùng ${data.products.filter((p) => ACCESSORY_SLUGS.has(p.categorySlug)).length} sp THẬT từ file crawl, bỏ qua phần dựng tay`)
-  }
-  process.stdout.write('  🎧  Tạo phụ kiện... ')
+  const crawlAccessoryCount = data.products.filter((p) => ACCESSORY_SLUGS.has(p.categorySlug)).length
 
-  // Mỗi mẫu nhân ra 3 sản phẩm -> 10 mẫu × 3 = 30 sản phẩm mỗi danh mục
-  const accessories = crawlHasAccessories ? [] : buildAccessories(
+  const accessories = crawlAccessoryCount > 0 ? [] : buildAccessories(
     [
       { categoryId: catCase.id,     templates: CASE_TEMPLATES,     nameBy: 'model' },
       { categoryId: catCharger.id,  templates: CHARGER_TEMPLATES,  nameBy: 'brand' },
@@ -546,28 +545,44 @@ async function main(): Promise<void> {
     ],
     data.products,
     brand,
-    3,
+    ACCESSORY_COPIES_PER_TEMPLATE,
   )
 
-  for (const a of accessories) {
-    await prisma.product.create({
-      data: {
-        name: a.name,
-        slug: a.slug,
-        description: a.description,
-        categoryId: a.categoryId,
-        brandId: a.brandId,
-        isFeatured: a.isFeatured,
-        isActive: true,
-        images: { create: a.images },
-        variants: { create: a.variants },
-        productTags: { create: a.tagSlugs.map((s) => ({ tagId: tag[s].id })) },
-        specs: { create: a.specs },
-      },
-    })
+  if (crawlAccessoryCount > 0) {
+    console.log(`  🎧  Phụ kiện: dùng ${crawlAccessoryCount} sp THẬT từ file crawl, bỏ qua phần dựng tay`)
+  } else {
+    process.stdout.write('  🎧  Tạo phụ kiện... ')
+
+    // Tạo theo lô chứ không await từng cái: mỗi sản phẩm kéo theo ảnh, variant,
+    // tag và thông số, nên tuần tự là ngần ấy transaction nối đuôi nhau.
+    // Lô 5 chứ không lớn hơn: pool của pg mặc định 10 connection, mỗi create là
+    // một transaction giữ trọn một connection — để dư một nửa cho chắc.
+    const BATCH_SIZE = 5
+    for (let i = 0; i < accessories.length; i += BATCH_SIZE) {
+      await Promise.all(
+        accessories.slice(i, i + BATCH_SIZE).map((a) =>
+          prisma.product.create({
+            data: {
+              name: a.name,
+              slug: a.slug,
+              description: a.description,
+              categoryId: a.categoryId,
+              brandId: a.brandId,
+              isFeatured: a.isFeatured,
+              isActive: true,
+              images: { create: a.images },
+              variants: { create: a.variants },
+              productTags: { create: a.tagSlugs.map((s) => ({ tagId: tag[s].id })) },
+              specs: { create: a.specs },
+            },
+          })
+        )
+      )
+    }
+
+    const accessoryVariants = accessories.reduce((n, a) => n + a.variants.length, 0)
+    console.log(`✓  (${accessories.length} sp, ${accessoryVariants} variants, 3 danh mục)`)
   }
-  const accessoryVariants = accessories.reduce((n, a) => n + a.variants.length, 0)
-  console.log(`✓  (${accessories.length} sp, ${accessoryVariants} variants, 3 danh mục)`)
 
   // ── Users ──────────────────────────────────────────────────────────────────
   process.stdout.write('  👤  Tạo người dùng... ')
@@ -690,7 +705,10 @@ async function main(): Promise<void> {
   console.log(`  │  Danh mục      : 11 (2 cha + 9 con)${' '.repeat(11)}│`)
   console.log(`  │  Tags          : ${String(tags.length).padEnd(28)}│`)
   console.log(`  │  Điện thoại    : ${String(`${createdProducts.length} (${totalImages} ảnh, ${featuredCount} nổi bật)`).padEnd(28)}│`)
-  console.log(`  │  Phụ kiện      : ${String(`${accessories.length} (30 mỗi danh mục)`).padEnd(28)}│`)
+  const accessorySummary = crawlAccessoryCount > 0
+    ? `${crawlAccessoryCount} (từ file crawl)`
+    : `${accessories.length} (dựng từ mẫu)`
+  console.log(`  │  Phụ kiện      : ${String(accessorySummary).padEnd(28)}│`)
   console.log(`  │  Người dùng    : 7  (1 admin, 1 staff, 5)${' '.repeat(5)}│`)
   console.log(`  │  Đơn hàng      : ${String(createdOrders.length).padEnd(28)}│`)
   console.log(`  │  Đánh giá      : ${String(reviewCount).padEnd(28)}│`)
