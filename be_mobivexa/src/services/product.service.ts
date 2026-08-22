@@ -12,6 +12,7 @@ import type {
   UpdateVariantBody,
   ProductListQuery,
   InventoryQuery,
+  SpecInput,
 } from '../types/product.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,13 +67,40 @@ function variantCreateData(v: VariantInput) {
   }
 }
 
+// sortOrder lấy từ vị trí trong mảng: client gửi lên theo thứ tự muốn hiển thị
+// là đủ, không phải tự đánh số rồi lo trùng hay hụt.
+function specCreateData(s: SpecInput, index: number) {
+  return { label: s.label.trim(), value: s.value.trim(), sortOrder: index }
+}
+
 const PRODUCT_DETAIL_INCLUDE = {
   category: true,
   brand: true,
   variants: { orderBy: { salePrice: 'asc' } },
   productTags: { include: { tag: true } },
   images: { orderBy: { sortOrder: 'asc' } },
+  // Chỉ chi tiết mới kèm thông số; listing không dùng đến nên không làm nặng payload
+  specs: { orderBy: { sortOrder: 'asc' } },
 } satisfies Prisma.ProductInclude
+
+// Đọc một tham số giá từ query string.
+//
+// Không parse mà đẩy thẳng xuống Prisma là ra lỗi 500: Number('abc') = NaN và
+// Number('1e999') = Infinity, cả hai đều làm Prisma Decimal ném lỗi, rồi rơi vào
+// nhánh catch-all của errorHandler. Người dùng gõ sai một tham số thì phải nhận
+// 400 kèm lý do, không phải "Lỗi server, vui lòng thử lại".
+//
+// Chuỗi rỗng (?minPrice=) coi như không lọc — giữ nguyên hành vi cũ, vì form bên
+// client hay gửi key rỗng khi người dùng chưa chọn gì.
+function parsePriceParam(raw: string | undefined, label: string): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined
+
+  const value = Number(raw)
+  if (!Number.isFinite(value)) throw new AppError(400, `${label} phải là một số`)
+  if (value < 0) throw new AppError(400, `${label} không được là số âm`)
+
+  return value
+}
 
 // ─── Public ─────────────────────────────────────────────────────────────────
 
@@ -115,10 +143,19 @@ export async function listProducts(
     else if (query.isFeatured === 'false') where.isFeatured = false
   } else {
     if (query.tag) where.productTags = { some: { tag: { slug: query.tag } } }
+
     // Lọc theo khoảng giá: sản phẩm có ít nhất 1 variant nằm trong khoảng
+    const minPrice = parsePriceParam(query.minPrice, 'Giá tối thiểu')
+    const maxPrice = parsePriceParam(query.maxPrice, 'Giá tối đa')
+    if (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice) {
+      // Khoảng ngược luôn ra 0 kết quả — báo lỗi để client sửa, thay vì để
+      // người dùng ngồi đoán vì sao không có sản phẩm nào
+      throw new AppError(400, 'Giá tối thiểu không được lớn hơn giá tối đa')
+    }
+
     const priceFilter: Prisma.DecimalFilter = {}
-    if (query.minPrice) priceFilter.gte = Number(query.minPrice)
-    if (query.maxPrice) priceFilter.lte = Number(query.maxPrice)
+    if (minPrice !== undefined) priceFilter.gte = minPrice
+    if (maxPrice !== undefined) priceFilter.lte = maxPrice
     if (priceFilter.gte !== undefined || priceFilter.lte !== undefined) {
       where.variants = { some: { salePrice: priceFilter } }
     }
@@ -198,7 +235,7 @@ export async function getFeaturedProducts(limit = 8) {
 // ─── Admin: Product ───────────────────────────────────────────────────────────
 
 export async function createProduct(body: CreateProductBody, files?: Express.Multer.File[]) {
-  const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds = [], variants } = body
+  const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds = [], variants, specs = [] } = body
 
   await Promise.all([
     assertCategoryExists(categoryId),
@@ -223,6 +260,7 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
       isActive: isActive != null ? String(isActive) !== 'false' : true,
       isFeatured: isFeatured != null ? String(isFeatured) !== 'false' : false,
       variants: { create: variants.map(variantCreateData) },
+      specs: specs.length ? { create: specs.map(specCreateData) } : undefined,
       productTags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
       images: uploadedImages.length
         ? { create: uploadedImages.map((img, i) => ({ url: img.url, publicId: img.publicId, isCover: i === 0, sortOrder: i })) }
@@ -278,10 +316,9 @@ export async function updateProduct(id: string, body: UpdateProductBody, files?:
 }
 
 export async function deleteProduct(id: string) {
-  const [images, product] = await Promise.all([
-    prisma.productImage.findMany({ where: { productId: id }, select: { publicId: true } }),
-    prisma.product.findUnique({ where: { id }, select: { slug: true } }),
-  ])
+  // Lấy publicId TRƯỚC khi xoá: ảnh bị cascade cùng sản phẩm, sau delete là mất
+  // dấu vết để gỡ file trên Cloudinary.
+  const images = await prisma.productImage.findMany({ where: { productId: id }, select: { publicId: true } })
   await prisma.product.delete({ where: { id } })
   images.forEach((img) => void destroyImage(img.publicId))
 }
@@ -399,12 +436,40 @@ export async function deleteVariant(productId: string, variantId: string) {
   await prisma.productVariant.delete({ where: { id: variantId } })
 }
 
+// ─── Admin: Product specs ────────────────────────────────────────────────────
+
+// Thay TOÀN BỘ bảng thông số của một sản phẩm.
+//
+// Không làm CRUD từng dòng như variant/ảnh: bảng thông số được sửa như một khối
+// (thêm dòng, sửa chữ, kéo đổi thứ tự) trong cùng một form. Nếu tách thành
+// create/update/delete từng dòng thì mỗi lần bấm Lưu client phải tự tính ra
+// dòng nào thêm, dòng nào xoá, dòng nào đổi sortOrder — phức tạp mà không được
+// gì. Gửi cả mảng lên là xong, thứ tự trong mảng chính là thứ tự hiển thị.
+//
+// Mảng rỗng nghĩa là xoá sạch thông số — đó là cách duy nhất để gỡ hết bảng.
+export async function replaceProductSpecs(productId: string, specs: SpecInput[]) {
+  await findProductOrThrow(productId)
+
+  // Transaction: xoá xong mà createMany hỏng thì sản phẩm mất trắng thông số cũ
+  return prisma.$transaction(async (tx) => {
+    await tx.productSpec.deleteMany({ where: { productId } })
+    if (specs.length > 0) {
+      await tx.productSpec.createMany({
+        data: specs.map((s, i) => ({ productId, ...specCreateData(s, i) })),
+      })
+    }
+    return tx.productSpec.findMany({ where: { productId }, orderBy: { sortOrder: 'asc' } })
+  })
+}
+
 // ─── Admin: Inventory report ─────────────────────────────────────────────────
 
 const DEFAULT_LOW_THRESHOLD = 5
 
-// In-memory cache cho inventory summary — tính lại sau mỗi 60 giây
-let inventorySummaryCache: { data: InventorySummary; expiresAt: number } | null = null
+// In-memory cache cho inventory summary — tính lại sau mỗi 60 giây.
+// Phải nhớ cả threshold: lowStock/inStock được đếm THEO ngưỡng, nên cache của
+// ?lowThreshold=5 mà đem trả cho ?lowThreshold=20 là ra số liệu sai.
+let inventorySummaryCache: { threshold: number; data: InventorySummary; expiresAt: number } | null = null
 const SUMMARY_CACHE_TTL_MS = 60_000
 
 interface InventorySummary {
@@ -416,7 +481,11 @@ interface InventorySummary {
 
 async function getInventorySummary(threshold: number): Promise<InventorySummary> {
   const now = Date.now()
-  if (inventorySummaryCache && now < inventorySummaryCache.expiresAt) {
+  if (
+    inventorySummaryCache &&
+    inventorySummaryCache.threshold === threshold &&
+    now < inventorySummaryCache.expiresAt
+  ) {
     return inventorySummaryCache.data
   }
 
@@ -433,7 +502,7 @@ async function getInventorySummary(threshold: number): Promise<InventorySummary>
     lowStock,
   }
 
-  inventorySummaryCache = { data, expiresAt: now + SUMMARY_CACHE_TTL_MS }
+  inventorySummaryCache = { threshold, data, expiresAt: now + SUMMARY_CACHE_TTL_MS }
   return data
 }
 

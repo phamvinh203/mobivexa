@@ -191,6 +191,7 @@ model Product {
   variants    ProductVariant[]
   productTags ProductTag[]
   images      ProductImage[]
+  specs       ProductSpec[]
   reviews     Review[]
 
   @@index([categoryId])
@@ -213,6 +214,30 @@ model ProductImage {
 
   @@index([productId, isCover])
   @@map("product_images")
+}
+
+// Thông số kỹ thuật của sản phẩm, dạng nhãn - giá trị.
+//
+// Không làm cột cố định (cpu, ram, screen...) vì mỗi danh mục có bộ thông số
+// khác nhau: điện thoại có "Camera trước", laptop có "Bàn phím", phụ kiện thì
+// gần như không có gì. Cột cố định sẽ để trống với phần lớn sản phẩm, và cứ
+// thêm một loại hàng mới là phải sửa schema + migrate lại.
+//
+// Ở mức BIẾN THỂ đã có color/storage/ram trong ProductVariant; bảng này dành cho
+// thông số dùng chung cho mọi biến thể của một sản phẩm.
+model ProductSpec {
+  id        String   @id @default(uuid())
+  productId String
+  label     String // "CPU (Bộ vi xử lý)"
+  value     String // "Intel Core Ultra 5-322 (6 nhân 6 luồng, 2.5GHz)"
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Luôn đọc theo productId rồi sắp theo sortOrder -> index gộp phục vụ trọn câu truy vấn
+  @@index([productId, sortOrder])
+  @@map("product_specs")
 }
 
 model ProductVariant {

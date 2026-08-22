@@ -17,6 +17,7 @@ import {
   addProductImages,
   deleteProductImage,
   setProductImageCover,
+  replaceProductSpecs,
   getInventory,
 } from '../services/product.service'
 
@@ -94,6 +95,13 @@ export const removeImage = asyncHandler(async (req: Request, res: Response) => {
 export const setCover = asyncHandler(async (req: Request, res: Response) => {
   const images = await setProductImageCover(req.params.id as string, req.params.imageId as string)
   sendSuccess(res, { message: 'Đã đặt làm ảnh bìa', images })
+})
+
+// ─── Admin: Product specs ─────────────────────────────────────────────────────
+
+export const replaceSpecs = asyncHandler(async (req: Request, res: Response) => {
+  const specs = await replaceProductSpecs(req.params.id as string, req.body.specs)
+  sendSuccess(res, { message: 'Cập nhật thông số kỹ thuật thành công', specs })
 })
 
 // ─── Admin: Variant ─────────────────────────────────────────────────────────

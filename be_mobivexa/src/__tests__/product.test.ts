@@ -35,6 +35,11 @@ const mockPrisma = vi.hoisted(() => ({
     deleteMany:  vi.fn(),
     createMany:  vi.fn(),
   },
+  productSpec: {
+    findMany:   vi.fn(),
+    createMany: vi.fn(),
+    deleteMany: vi.fn(),
+  },
   category: { findUnique: vi.fn() },
   brand:    { findUnique: vi.fn() },
   tag:      { count: vi.fn() },
@@ -129,6 +134,70 @@ describe('GET /api/products', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.products).toHaveLength(0)
+  })
+
+  it('200 - lọc khoảng giá đẩy đúng gte/lte xuống prisma', async () => {
+    mockPrisma.product.findMany.mockResolvedValue([BASE_PRODUCT])
+    mockPrisma.product.count.mockResolvedValue(1)
+
+    const res = await request(app).get('/api/products?minPrice=3000000&maxPrice=7000000')
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          variants: { some: { salePrice: { gte: 3000000, lte: 7000000 } } },
+        }),
+      })
+    )
+  })
+
+  it('200 - minPrice rỗng thì bỏ qua lọc giá, không lọc theo 0', async () => {
+    mockPrisma.product.findMany.mockResolvedValue([BASE_PRODUCT])
+    mockPrisma.product.count.mockResolvedValue(1)
+
+    const res = await request(app).get('/api/products?minPrice=')
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ variants: expect.anything() }),
+      })
+    )
+  })
+
+  // Các case dưới đây trước khi có validate đều rơi thẳng xuống Prisma Decimal
+  // và trả 500 "Lỗi server" — sai loại lỗi cho một tham số client gõ sai
+  it('400 - minPrice không phải số', async () => {
+    const res = await request(app).get('/api/products?minPrice=abc')
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.product.findMany).not.toHaveBeenCalled()
+  })
+
+  it('400 - minPrice tràn số (1e999 thành Infinity)', async () => {
+    const res = await request(app).get('/api/products?minPrice=1e999')
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - minPrice âm', async () => {
+    const res = await request(app).get('/api/products?minPrice=-5')
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - maxPrice không phải số', async () => {
+    const res = await request(app).get('/api/products?maxPrice=abc')
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - minPrice lớn hơn maxPrice', async () => {
+    const res = await request(app).get('/api/products?minPrice=9000000&maxPrice=1000')
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.product.findMany).not.toHaveBeenCalled()
   })
 })
 
@@ -371,6 +440,111 @@ describe('PATCH /api/admin/products/:id/featured', () => {
       .set('Authorization', ADMIN_TOKEN)
 
     expect(res.status).toBe(200)
+  })
+})
+
+// ─── Admin: Product specs ─────────────────────────────────────────────────────
+
+describe('PUT /api/admin/products/:id/specs', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const SPECS = [
+    { label: 'CPU (Bộ vi xử lý)', value: 'Apple A18 Pro' },
+    { label: 'Màn hình', value: '6.9 inch Super Retina XDR' },
+  ]
+
+  it('200 - thay cả bảng, sortOrder lấy theo thứ tự trong mảng', async () => {
+    mockPrisma.product.findUnique.mockResolvedValue({ id: 'prod-1', isActive: true, isFeatured: false })
+    mockPrisma.productSpec.findMany.mockResolvedValue(
+      SPECS.map((s, i) => ({ id: `spec-${i}`, productId: 'prod-1', ...s, sortOrder: i }))
+    )
+
+    const res = await request(app)
+      .put('/api/admin/products/prod-1/specs')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ specs: SPECS })
+
+    expect(res.status).toBe(200)
+    expect(res.body.specs).toHaveLength(2)
+    // Xoá sạch trước rồi mới ghi lại — đây là điểm mấu chốt của "thay cả bảng"
+    expect(mockPrisma.productSpec.deleteMany).toHaveBeenCalledWith({ where: { productId: 'prod-1' } })
+    expect(mockPrisma.productSpec.createMany).toHaveBeenCalledWith({
+      data: [
+        { productId: 'prod-1', label: 'CPU (Bộ vi xử lý)', value: 'Apple A18 Pro', sortOrder: 0 },
+        { productId: 'prod-1', label: 'Màn hình', value: '6.9 inch Super Retina XDR', sortOrder: 1 },
+      ],
+    })
+  })
+
+  it('200 - mảng rỗng thì xoá sạch, không gọi createMany', async () => {
+    mockPrisma.product.findUnique.mockResolvedValue({ id: 'prod-1', isActive: true, isFeatured: false })
+    mockPrisma.productSpec.findMany.mockResolvedValue([])
+
+    const res = await request(app)
+      .put('/api/admin/products/prod-1/specs')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ specs: [] })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.productSpec.deleteMany).toHaveBeenCalled()
+    expect(mockPrisma.productSpec.createMany).not.toHaveBeenCalled()
+  })
+
+  it('404 - sản phẩm không tồn tại', async () => {
+    mockPrisma.product.findUnique.mockResolvedValue(null)
+
+    const res = await request(app)
+      .put('/api/admin/products/khong-co/specs')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ specs: SPECS })
+
+    expect(res.status).toBe(404)
+    expect(mockPrisma.productSpec.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('400 - label rỗng', async () => {
+    const res = await request(app)
+      .put('/api/admin/products/prod-1/specs')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ specs: [{ label: '   ', value: 'Apple A18 Pro' }] })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.productSpec.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('400 - specs không phải mảng', async () => {
+    const res = await request(app)
+      .put('/api/admin/products/prod-1/specs')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ specs: 'CPU: Apple A18 Pro' })
+
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - vượt quá 60 dòng', async () => {
+    const tooMany = Array.from({ length: 61 }, (_, i) => ({ label: `Thông số ${i}`, value: 'x' }))
+
+    const res = await request(app)
+      .put('/api/admin/products/prod-1/specs')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ specs: tooMany })
+
+    expect(res.status).toBe(400)
+  })
+
+  it('401 - chưa đăng nhập', async () => {
+    const res = await request(app).put('/api/admin/products/prod-1/specs').send({ specs: SPECS })
+
+    expect(res.status).toBe(401)
+  })
+
+  it('403 - tài khoản khách không được sửa', async () => {
+    const res = await request(app)
+      .put('/api/admin/products/prod-1/specs')
+      .set('Authorization', USER_TOKEN)
+      .send({ specs: SPECS })
+
+    expect(res.status).toBe(403)
   })
 })
 
