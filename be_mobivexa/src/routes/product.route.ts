@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
-import { validateCreateProduct, validateUpdateProduct, validateVariant, validateUpdateStock } from '../validators/product.validator'
+import { validateCreateProduct, validateUpdateProduct, validateVariant, validateUpdateStock, validateReplaceSpecs } from '../validators/product.validator'
 import * as controller from '../controllers/product.controller'
 
 // ─── Public routes: /api/products ─────────────────────────────────────────────
@@ -27,6 +27,9 @@ adminRouter.patch('/:id/featured', controller.toggleFeatured)
 adminRouter.post('/:id/images', uploadImage.array('images', 10), controller.uploadImages)
 adminRouter.delete('/:id/images/:imageId', controller.removeImage)
 adminRouter.patch('/:id/images/:imageId/cover', controller.setCover)
+
+// Specs - thay ca bang mot lan, xem replaceProductSpecs de biet vi sao khong CRUD tung dong
+adminRouter.put('/:id/specs', validateReplaceSpecs, controller.replaceSpecs)
 
 // Variants
 adminRouter.post('/:id/variants', validateVariant, controller.createVariant)

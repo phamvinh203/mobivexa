@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto'
 import prisma from '../config/db'
-import { Prisma, OrderStatus, PaymentStatus } from '../generated/prisma/client'
+import { Prisma, OrderStatus, PaymentStatus, type OrderItem } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
 import type {
@@ -38,13 +39,75 @@ async function findOwnedOrderOrThrow(userId: string, orderId: string) {
   return order
 }
 
-// Luồng chuyển trạng thái hợp lệ — nguồn sự thật duy nhất
+// Luồng chuyển trạng thái hợp lệ — nguồn sự thật duy nhất.
+// Admin panel soi gương bảng này ở components/Order/orderStatus.ts để chỉ hiện
+// bước chuyển hợp lệ — sửa ở đây thì sửa cả bên đó, nếu không menu sẽ mời admin
+// bấm một bước rồi ăn 400.
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.PENDING]:   [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
   [OrderStatus.CONFIRMED]: [OrderStatus.SHIPPING,  OrderStatus.CANCELLED],
   [OrderStatus.SHIPPING]:  [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
   [OrderStatus.DELIVERED]: [],
   [OrderStatus.CANCELLED]: [],
+}
+
+// Trạng thái đơn được đọc ở ngoài transaction, nên giữa lúc đọc và lúc ghi vẫn
+// còn khe cho một request khác chen vào. Mọi lệnh ghi trạng thái đều kèm
+// `status` trong WHERE để chỉ request ghi trước là khớp; request sau nhận P2025
+// — đơn vẫn tồn tại (đã check 404 trước đó), chỉ là trạng thái đã đổi.
+function asConflict(err: unknown): never {
+  if (isPrismaError(err, 'P2025')) {
+    throw new AppError(409, 'Đơn hàng vừa được cập nhật ở nơi khác, vui lòng tải lại')
+  }
+  throw err
+}
+
+// Đơn tối thiểu để huỷ: id để ghi, status làm guard, items để hoàn kho. Nhận cả
+// record thay vì ba tham số rời — không thể lỡ ghép id của đơn này với status
+// của đơn kia. Structural chứ không phải Order đầy đủ vì updateOrderStatus lấy
+// đơn qua `select` hẹp.
+type CancellableOrder = {
+  id: string
+  status: OrderStatus
+  items: Pick<OrderItem, 'variantId' | 'quantity'>[]
+}
+
+// Huỷ đơn và hoàn kho trong cùng một transaction.
+//
+// Guard `status` ở đây là chốt chặn hoàn kho HAI LẦN: hai request huỷ song song
+// đều thấy đơn còn huỷ được, nhưng chỉ một cái ghi được trạng thái và đi tiếp
+// xuống phần increment. Không có guard thì cả hai cùng cộng kho, tồn kho phình
+// lên so với thực tế.
+async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: string) {
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.order
+      .update({
+        where:   { id: order.id, status: order.status },
+        data:    { status: OrderStatus.CANCELLED, cancelReason },
+        include: ORDER_INCLUDE,
+      })
+      .catch(asConflict)
+
+    // Gộp theo số lượng rồi bắn updateMany, thay vì một update mỗi dòng.
+    // Promise.all ở đây sẽ là ảo tưởng: interactive transaction chạy trên đúng
+    // một connection nên các lệnh vẫn nối đuôi nhau — gom lại mới thật sự bớt
+    // round-trip, và đơn thường toàn quantity=1 nên còn đúng MỘT lệnh.
+    const idsByQuantity = new Map<number, string[]>()
+    for (const { variantId, quantity } of order.items) {
+      // null khi biến thể đã bị xoá (onDelete: SetNull) — không còn kho để hoàn
+      if (variantId === null) continue
+      idsByQuantity.set(quantity, [...(idsByQuantity.get(quantity) ?? []), variantId])
+    }
+
+    for (const [quantity, ids] of idsByQuantity) {
+      await tx.productVariant.updateMany({
+        where: { id: { in: ids } },
+        data:  { stock: { increment: quantity } },
+      })
+    }
+
+    return updated
+  })
 }
 
 // ─── Tạo đơn hàng ─────────────────────────────────────────────────────────────
@@ -75,7 +138,7 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   })
 
   const variantMap = new Map(variants.map((v) => [v.id, v]))
-  for (const { variantId, quantity } of resolvedItems) {
+  for (const { variantId } of resolvedItems) {
     const v = variantMap.get(variantId)
     if (!v)          throw new AppError(400, `Sản phẩm không tồn tại: ${variantId}`)
     if (!v.isActive) throw new AppError(400, `Sản phẩm đã ngừng bán: ${v.sku}`)
@@ -175,25 +238,7 @@ export async function cancelMyOrder(userId: string, orderId: string, reason?: st
     throw new AppError(400, 'Không thể hủy đơn hàng ở trạng thái hiện tại')
   }
 
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.order.update({
-      where: { id: orderId },
-      data:  { status: OrderStatus.CANCELLED, cancelReason: reason ?? 'Khách hàng hủy đơn' },
-      include: ORDER_INCLUDE,
-    })
-
-    // Restore stock for each item
-    await Promise.all(
-      order.items.map((item) =>
-        tx.productVariant.update({
-          where: { id: item.variantId! },
-          data:  { stock: { increment: item.quantity } },
-        })
-      )
-    )
-
-    return updated
-  })
+  return cancelAndRestoreStock(order, reason ?? 'Khách hàng hủy đơn')
 }
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
@@ -202,6 +247,13 @@ export async function listOrders(query: AdminOrderListQuery) {
   const { page, limit } = parsePagination(query)
 
   const where: Prisma.OrderWhereInput = {}
+
+  // Mã đơn dạng ORD-20260817-A1B2C3 — admin thường chỉ nhớ đuôi hoặc ngày, nên
+  // khớp một phần (contains) thay vì bằng tuyệt đối. Không dùng full-text như
+  // tìm tên sản phẩm vì mã không phải là từ, tokenizer sẽ không tách ra được.
+  const search = query.search?.trim()
+  if (search)              where.orderCode     = { contains: search, mode: 'insensitive' }
+
   if (query.status)        where.status        = query.status
   if (query.userId)        where.userId        = query.userId
   if (query.paymentMethod) where.paymentMethod = query.paymentMethod
@@ -239,30 +291,19 @@ export async function updateOrderStatus(orderId: string, body: UpdateOrderStatus
     throw new AppError(400, `Không thể chuyển từ "${order.status}" sang "${body.status}"`)
   }
 
-  const data: Prisma.OrderUpdateInput = {
-    status:       body.status,
-    cancelReason: body.status === OrderStatus.CANCELLED ? (body.cancelReason ?? undefined) : undefined,
+  if (body.status === OrderStatus.CANCELLED) {
+    return cancelAndRestoreStock(order, body.cancelReason ?? undefined)
   }
 
-  if (body.status !== OrderStatus.CANCELLED) {
-    return prisma.order.update({ where: { id: orderId }, data, include: ORDER_INCLUDE })
-  }
-
-  return prisma.$transaction(async (tx) => {
-    const updated = await tx.order.update({ where: { id: orderId }, data, include: ORDER_INCLUDE })
-
-    // Restore stock when admin cancels
-    await Promise.all(
-      order.items.map((item) =>
-        tx.productVariant.update({
-          where: { id: item.variantId! },
-          data:  { stock: { increment: item.quantity } },
-        })
-      )
-    )
-
-    return updated
-  })
+  // Guard status như nhánh huỷ: hai admin bấm hai nút khác nhau cùng lúc thì chỉ
+  // bước ghi trước có hiệu lực, bước sau nhận 409 thay vì nhảy cóc trạng thái.
+  return prisma.order
+    .update({
+      where:   { id: orderId, status: order.status },
+      data:    { status: body.status },
+      include: ORDER_INCLUDE,
+    })
+    .catch(asConflict)
 }
 
 export async function updatePaymentStatus(orderId: string, body: UpdatePaymentStatusBody) {

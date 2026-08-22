@@ -18,6 +18,7 @@ import {
   reviewAdminRoutes,
 } from './review.route'
 import { bannerRoutes, bannerAdminRoutes } from './banner.route'
+import { favoriteRoutes } from './favorite.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -32,6 +33,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/products/:slug/reviews`, reviewPublicRoutes)
   app.use(`${v}/tags`, tagRoutes)
   app.use(`${v}/cart`, cartRoutes)
+  app.use(`${v}/favorites`, favoriteRoutes)
   app.use(`${v}/orders`, orderRoutes)
   app.use(`${v}`, paymentRoutes)
 

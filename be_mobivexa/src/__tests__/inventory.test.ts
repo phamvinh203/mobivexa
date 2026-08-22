@@ -12,11 +12,6 @@ const mockPrisma = vi.hoisted(() => ({
 }))
 
 vi.mock('../config/db',    () => ({ default: mockPrisma }))
-vi.mock('../utils/cache',  () => ({
-  cacheGet:  vi.fn().mockResolvedValue(null),
-  cacheSet:  vi.fn().mockResolvedValue(undefined),
-  cacheBust: vi.fn().mockResolvedValue(undefined),
-}))
 
 import { createApp } from '../app'
 import { signAccessToken } from '../utils/token_manager'

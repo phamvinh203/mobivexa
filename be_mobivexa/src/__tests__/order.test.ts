@@ -4,7 +4,7 @@ import request from 'supertest'
 const mockPrisma = vi.hoisted(() => ({
   address:        { findFirst: vi.fn() },
   cart:           { findUnique: vi.fn() },
-  productVariant: { findMany: vi.fn(), update: vi.fn() },
+  productVariant: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   order: {
     create:     vi.fn(),
     findFirst:  vi.fn(),
@@ -20,12 +20,19 @@ const mockPrisma = vi.hoisted(() => ({
 vi.mock('../config/db', () => ({ default: mockPrisma }))
 
 import { createApp } from '../app'
+import { Prisma } from '../generated/prisma/client'
 import { signAccessToken } from '../utils/token_manager'
 
 const app = createApp()
 
 const USER_TOKEN  = `Bearer ${signAccessToken({ userId: 'user-1',  email: 'user@test.com',  role: 'CUSTOMER' })}`
 const ADMIN_TOKEN = `Bearer ${signAccessToken({ userId: 'admin-1', email: 'admin@test.com', role: 'ADMIN' })}`
+
+const conflictError = () =>
+  new Prisma.PrismaClientKnownRequestError('Record not found', {
+    code: 'P2025',
+    clientVersion: 'test',
+  })
 
 const BASE_VARIANT = {
   id:        'var-1',
@@ -80,12 +87,7 @@ describe('POST /api/orders', () => {
     mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
     mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
     mockPrisma.order.create.mockResolvedValue(BASE_ORDER)
-    mockPrisma.productVariant.update.mockResolvedValue({})
-    // updateMany được gọi trong transaction
-    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
-
-    // mock updateMany via productVariant (trong tx = mockPrisma)
-    ;(mockPrisma.productVariant as any).updateMany = vi.fn().mockResolvedValue({ count: 1 })
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .post('/api/orders')
@@ -195,7 +197,7 @@ describe('PATCH /api/orders/:id/cancel', () => {
   it('200 - hủy đơn hàng PENDING thành công', async () => {
     mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
     mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
-    mockPrisma.productVariant.update.mockResolvedValue({})
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .patch('/api/orders/order-1/cancel')
@@ -217,6 +219,22 @@ describe('PATCH /api/orders/:id/cancel', () => {
     expect(res.status).toBe(400)
     expect(res.body.message).toMatch(/không thể hủy/i)
   })
+
+  // Guard `status` trong WHERE là thứ chặn hoàn kho hai lần khi hai request huỷ
+  // chạy song song: request thua cuộc không khớp WHERE nên ăn P2025 và dừng lại
+  // TRƯỚC bước increment.
+  it('409 - đơn vừa bị đổi trạng thái ở nơi khác, không hoàn kho', async () => {
+    mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockRejectedValue(conflictError())
+
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({})
+
+    expect(res.status).toBe(409)
+    expect(mockPrisma.productVariant.updateMany).not.toHaveBeenCalled()
+  })
 })
 
 // ─── Admin: GET /api/admin/orders ─────────────────────────────────────────────
@@ -232,6 +250,63 @@ describe('GET /api/admin/orders', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.orders).toHaveLength(1)
+  })
+
+  it('200 - lọc theo mã đơn, khớp một phần và bỏ qua hoa thường', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([BASE_ORDER])
+    mockPrisma.order.count.mockResolvedValue(1)
+
+    const res = await request(app)
+      .get('/api/admin/orders')
+      .query({ search: 'aabbcc' })
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ orderCode: { contains: 'aabbcc', mode: 'insensitive' } }),
+      })
+    )
+  })
+
+  it('200 - search chỉ có khoảng trắng thì không lọc mã đơn', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([BASE_ORDER])
+    mockPrisma.order.count.mockResolvedValue(1)
+
+    const res = await request(app)
+      .get('/api/admin/orders')
+      .query({ search: '   ' })
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.order.findMany.mock.calls[0][0].where).not.toHaveProperty('orderCode')
+  })
+
+  it('200 - lọc ngày trần được nới ra trọn hai đầu ngày', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([BASE_ORDER])
+    mockPrisma.order.count.mockResolvedValue(1)
+
+    await request(app)
+      .get('/api/admin/orders')
+      .query({ from: '2026-08-01', to: '2026-08-17' })
+      .set('Authorization', ADMIN_TOKEN)
+
+    const { createdAt } = mockPrisma.order.findMany.mock.calls[0][0].where
+    expect(createdAt.gte).toEqual(new Date('2026-08-01T00:00:00.000'))
+    expect(createdAt.lte).toEqual(new Date('2026-08-17T23:59:59.999'))
+  })
+
+  it('200 - mốc đã kèm giờ thì giữ nguyên, không bị nới', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([BASE_ORDER])
+    mockPrisma.order.count.mockResolvedValue(1)
+
+    await request(app)
+      .get('/api/admin/orders')
+      .query({ to: '2026-08-17T09:30:00.000Z' })
+      .set('Authorization', ADMIN_TOKEN)
+
+    const { createdAt } = mockPrisma.order.findMany.mock.calls[0][0].where
+    expect(createdAt.lte).toEqual(new Date('2026-08-17T09:30:00.000Z'))
   })
 
   it('401 - không có token', async () => {
@@ -292,6 +367,18 @@ describe('PATCH /api/admin/orders/:id/status', () => {
       .send({ status: 'CONFIRMED' })
 
     expect(res.status).toBe(404)
+  })
+
+  it('409 - admin khác vừa đổi trạng thái đơn này', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockRejectedValue(conflictError())
+
+    const res = await request(app)
+      .patch('/api/admin/orders/order-1/status')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ status: 'CONFIRMED' })
+
+    expect(res.status).toBe(409)
   })
 })
 

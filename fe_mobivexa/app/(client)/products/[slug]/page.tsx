@@ -8,6 +8,7 @@ import { activeVariants, coverImageUrl, priceRange } from '@/features/products/u
 import { ApiError } from '@/lib/api/http'
 import { formatVND } from '@/lib/utils/format'
 import { htmlToLines } from '@/lib/utils/html'
+import { Breadcrumb } from '@/components/layout/breadcrumb'
 import { ProductCard } from '@/components/product/product-card'
 import type { Product } from '@/features/products/types'
 import type { ProductReview, ReviewSummary } from '@/features/reviews/types'
@@ -96,39 +97,16 @@ export default async function ProductDetailPage({
   return (
     <div className="bg-[#f2f5f6] pb-10">
       <div className="mx-auto max-w-[1280px] px-6 py-6">
-        {/* ── Breadcrumb ─────────────────────────────────────────────────── */}
-        <nav aria-label="Breadcrumb" className="mb-5">
-          <ol className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
-            <li>
-              <Link href="/" className="hover:text-[var(--color-primary)]">
-                Trang chủ
-              </Link>
-            </li>
-            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-            <li>
-              <Link href="/products" className="hover:text-[var(--color-primary)]">
-                Sản phẩm
-              </Link>
-            </li>
-            {product.category && (
-              <>
-                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-                <li>
-                  <Link
-                    href={`/categories/${product.category.slug}`}
-                    className="hover:text-[var(--color-primary)]"
-                  >
-                    {product.category.name}
-                  </Link>
-                </li>
-              </>
-            )}
-            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-            <li aria-current="page" className="truncate font-medium text-gray-700">
-              {product.name}
-            </li>
-          </ol>
-        </nav>
+        <Breadcrumb
+          items={[
+            { label: 'Trang chủ', href: '/' },
+            { label: 'Sản phẩm', href: '/products' },
+            ...(product.category
+              ? [{ label: product.category.name, href: `/categories/${product.category.slug}` }]
+              : []),
+            { label: product.name },
+          ]}
+        />
 
         <div className="flex flex-col gap-6">
           {/* ── Gallery + mua hàng ───────────────────────────────────────── */}

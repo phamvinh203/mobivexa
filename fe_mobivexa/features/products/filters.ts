@@ -1,9 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// State của trang /products nằm hết trên URL (searchParams) — link chia sẻ được,
-// back/forward hoạt động đúng, và Server Component render sẵn kết quả.
+// State của trang duyệt sản phẩm nằm hết trên URL (searchParams) — link chia sẻ
+// được, back/forward hoạt động đúng, và Server Component render sẵn kết quả.
 // Module này là nguồn chân lý duy nhất cho việc đọc/ghi query string, dùng chung
-// cho cả page (server) lẫn sidebar (client).
+// cho /products, /categories/[slug] và /brands/[slug] (server lẫn client).
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Đường dẫn gốc của trang đang duyệt — quyết định link filter trỏ về đâu. */
+export const PRODUCTS_BASE = '/products'
+
+/** Facet bị khoá bởi chính route (vd /categories/iphone khoá category).
+ *  Trang đó ẩn facet này khỏi sidebar và không cho gỡ nó ra khỏi filter. */
+export type LockedFacet = 'category' | 'brand'
 
 /** Sort backend thực sự hỗ trợ — khớp resolveSort() trong product.service.ts.
  *  KHÔNG có sắp xếp theo giá: giá nằm ở bảng variant nên Prisma orderBy hiện
@@ -79,17 +86,23 @@ export function parseFilters(
  * Dựng href mới từ filter hiện tại + phần thay đổi.
  * Mọi thay đổi filter đều reset về trang 1 (trừ khi patch chỉ định page) —
  * đang ở trang 5 mà đổi hãng thì nhảy về trang 5 của kết quả mới là vô nghĩa.
+ *
+ * `basePath` cho phép trang danh mục/thương hiệu giữ người dùng ở lại route của
+ * mình thay vì văng về /products. `locked` là facet do route quyết định — nó nằm
+ * trong path rồi nên không lặp lại trong query string.
  */
 export function buildHref(
   filters: ProductFilters,
   patch: Partial<ProductFilters> = {},
+  basePath: string = PRODUCTS_BASE,
+  locked?: LockedFacet,
 ): string {
   const next: ProductFilters = { ...filters, ...patch }
   const params = new URLSearchParams()
 
   if (next.search) params.set('search', next.search)
-  if (next.category) params.set('category', next.category)
-  if (next.brand) params.set('brand', next.brand)
+  if (locked !== 'category' && next.category) params.set('category', next.category)
+  if (locked !== 'brand' && next.brand) params.set('brand', next.brand)
   if (next.tag) params.set('tag', next.tag)
   if (next.minPrice !== undefined) params.set('minPrice', String(next.minPrice))
   if (next.maxPrice !== undefined) params.set('maxPrice', String(next.maxPrice))
@@ -100,15 +113,18 @@ export function buildHref(
   if (page > 1) params.set('page', String(page))
 
   const qs = params.toString()
-  return qs ? `/products?${qs}` : '/products'
+  return qs ? `${basePath}?${qs}` : basePath
 }
 
-/** Có filter nào đang bật không (không tính sort/page). */
-export function hasActiveFilters(filters: ProductFilters): boolean {
+/** Có filter nào đang bật không (không tính sort/page, và bỏ qua facet bị khoá). */
+export function hasActiveFilters(
+  filters: ProductFilters,
+  locked?: LockedFacet,
+): boolean {
   return Boolean(
     filters.search ||
-      filters.category ||
-      filters.brand ||
+      (locked !== 'category' && filters.category) ||
+      (locked !== 'brand' && filters.brand) ||
       filters.tag ||
       filters.minPrice !== undefined ||
       filters.maxPrice !== undefined ||

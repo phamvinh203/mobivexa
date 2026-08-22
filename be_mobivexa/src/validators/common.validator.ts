@@ -23,6 +23,38 @@ export function parseJsonField(res: Response, body: Record<string, unknown>, key
   return true
 }
 
+// Parse 1 field số nguyên tại chỗ — anh em của parseJsonField cho scalar.
+// Multipart/form-data gửi mọi field dạng chuỗi, nên "5" phải được ghi đè thành 5
+// trước khi xuống Prisma (cột Int). Validate mà không ghi lại thì tầng dưới vẫn
+// nhận chuỗi và Prisma ném "Expected Int, provided String".
+export function parseIntField(
+  res: Response,
+  body: Record<string, unknown>,
+  key: string,
+  { min, max, message }: { min: number; max: number; message: string },
+): boolean {
+  const value = Number(body[key])
+  if (!Number.isInteger(value) || value < min || value > max) {
+    sendError(res, 400, message)
+    return false
+  }
+  body[key] = value
+  return true
+}
+
+// Kiểm tra field id dạng chuỗi: true nếu hợp lệ, false (và đã gửi lỗi) nếu không.
+//
+// Cố tình KHÔNG kiểm tra dạng uuid: id sai dạng vẫn ra 404 ở tầng service, còn
+// ràng buộc hình thức ở đây sẽ chặn nhầm nếu sau này đổi kiểu khoá. Việc duy
+// nhất của nó là chặn undefined/null/số/object lọt xuống Prisma.
+export function checkId(res: Response, value: unknown, message: string): boolean {
+  if (!value || typeof value !== 'string') {
+    sendError(res, 400, message)
+    return false
+  }
+  return true
+}
+
 // Kiểm tra field "tên": trả về true nếu hợp lệ, false (và đã gửi lỗi) nếu không.
 // optional=true dùng cho update — chỉ validate khi field được gửi lên.
 export function checkName(

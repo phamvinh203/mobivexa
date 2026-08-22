@@ -77,6 +77,7 @@ model User {
   orders        Order[]
   reviews       Review[]
   reviewHelpful ReviewHelpful[]
+  favorites     Favorite[]
 
   @@index([role])
   @@index([isActive])
@@ -191,7 +192,9 @@ model Product {
   variants    ProductVariant[]
   productTags ProductTag[]
   images      ProductImage[]
+  specs       ProductSpec[]
   reviews     Review[]
+  favorites   Favorite[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -213,6 +216,30 @@ model ProductImage {
 
   @@index([productId, isCover])
   @@map("product_images")
+}
+
+// Thông số kỹ thuật của sản phẩm, dạng nhãn - giá trị.
+//
+// Không làm cột cố định (cpu, ram, screen...) vì mỗi danh mục có bộ thông số
+// khác nhau: điện thoại có "Camera trước", laptop có "Bàn phím", phụ kiện thì
+// gần như không có gì. Cột cố định sẽ để trống với phần lớn sản phẩm, và cứ
+// thêm một loại hàng mới là phải sửa schema + migrate lại.
+//
+// Ở mức BIẾN THỂ đã có color/storage/ram trong ProductVariant; bảng này dành cho
+// thông số dùng chung cho mọi biến thể của một sản phẩm.
+model ProductSpec {
+  id        String   @id @default(uuid())
+  productId String
+  label     String // "CPU (Bộ vi xử lý)"
+  value     String // "Intel Core Ultra 5-322 (6 nhân 6 luồng, 2.5GHz)"
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Luôn đọc theo productId rồi sắp theo sortOrder -> index gộp phục vụ trọn câu truy vấn
+  @@index([productId, sortOrder])
+  @@map("product_specs")
 }
 
 model ProductVariant {
@@ -438,6 +465,28 @@ model ReviewHelpful {
 
   @@id([userId, reviewId])
   @@map("review_helpful")
+}
+
+// Sản phẩm yêu thích của khách. Gắn ở mức Product chứ không phải variant: khách
+// bấm tim trên card sản phẩm ngoài trang listing, lúc đó chưa chọn màu/dung lượng.
+//
+// Composite PK thay cho cột id + unique riêng: khoá chính đã là (userId, productId)
+// nên thích trùng bị chặn ngay ở DB — service chỉ cần bắt P2002, không phải đọc
+// thêm một vòng để dò trùng. (Nó vẫn đọc product một lần, nhưng để chặn sản phẩm
+// đã ngừng bán — việc khác.)
+model Favorite {
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([userId, productId])
+  // Danh sách yêu thích luôn đọc theo user rồi sắp mới nhất trước — index gộp
+  // phục vụ trọn câu truy vấn, không phải sort lại sau khi lọc.
+  @@index([userId, createdAt])
+  @@map("favorites")
 }
 
 model Banner {

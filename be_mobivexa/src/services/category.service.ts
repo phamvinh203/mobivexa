@@ -22,10 +22,19 @@ async function assertParentExists(parentId: string, selfId?: string) {
 
 // ─── Public ─────────────────────────────────────────────────────────────────
 
-// Danh sách category (mặc định chỉ lấy active cho client; admin truyền includeInactive=true)
+// Danh sách category (mặc định chỉ lấy active cho client; admin truyền includeInactive=true).
+// Bản admin kèm _count children/products để UI khoá sẵn nút xoá cho danh mục còn ràng buộc,
+// thay vì để người dùng bấm xoá rồi mới nhận 409 từ deleteCategory.
 export function getCategories(includeInactive = false) {
+  if (includeInactive) {
+    return prisma.category.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: { _count: { select: { children: true, products: true } } },
+    })
+  }
+
   return prisma.category.findMany({
-    where: includeInactive ? {} : { isActive: true },
+    where: { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   })
 }

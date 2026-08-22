@@ -1,5 +1,6 @@
 import prisma from '../config/db'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import { Prisma, PaymentStatus, OrderStatus, PaymentMethod, SePayTxStatus } from '../generated/prisma/client'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { ORDER_CODE_RE } from '../utils/order_code'
@@ -202,7 +203,7 @@ async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
     return await resolveAndRecord(tx)
   } catch (err) {
     // Hai webhook trùng bắn song song lọt qua findUnique ở trên → unique index chặn
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+    if (isPrismaError(err, 'P2002')) {
       return { handled: false, duplicate: true }
     }
     throw err
