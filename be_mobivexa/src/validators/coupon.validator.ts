@@ -3,8 +3,11 @@ import { sendError } from '../helpers/response'
 import { CouponType } from '../generated/prisma/client'
 import { checkId, checkQuantity } from './common.validator'
 
-const MAX_CODE_LENGTH = 32
-const CODE_RE = new RegExp(`^[A-Z0-9_-]{3,${MAX_CODE_LENGTH}}$`)
+// Export để validateCreateOrder dùng đúng bộ luật này, không dựng literal thứ hai.
+// Trần độ dài và hình thức mã phải là MỘT nguồn sự thật: ba cổng (tạo mã, preview,
+// đặt hàng) mà mỗi cổng một con số thì mã lọt được cổng này lại chết ở cổng kia.
+export const MAX_CODE_LENGTH = 32
+export const CODE_RE = new RegExp(`^[A-Z0-9_-]{3,${MAX_CODE_LENGTH}}$`)
 
 // Các cột schema khai NOT NULL, kèm nhãn tiếng Việt để dựng thông báo lỗi.
 // Cột nullable (description, maxDiscount, usageLimit) CỐ Ý không có mặt: gửi null

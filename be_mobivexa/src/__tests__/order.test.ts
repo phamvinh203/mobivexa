@@ -520,6 +520,44 @@ describe('POST /api/orders - có mã giảm giá', () => {
     expect(res.status).toBe(409)
     expect(res.body.message).toBe('Bạn đã sử dụng mã này rồi')
   })
+
+  const postCoupon = (couponCode: unknown) =>
+    request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({
+        addressId: 'addr-1',
+        items: [{ variantId: 'var-1', quantity: 1 }],
+        couponCode,
+      })
+
+  // Payload rác phải ra 400 ở cổng validator, không phải 500 ở normalizeCode:
+  // couponCode: 123 là truthy nên đi trọn tới raw.trim() và nổ TypeError.
+  it('400 - couponCode không phải chuỗi', async () => {
+    const res = await postCoupon(123)
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.findUnique).not.toHaveBeenCalled()
+  })
+
+  // Chặn ĐỘ DÀI ngay tại cổng, cùng trần 32 với validatePreviewCoupon: mã vài
+  // megabyte là lỗi của client, không được phép thành một lượt truy vấn Prisma.
+  it('400 - couponCode dài quá trần, không chạm tới DB', async () => {
+    const res = await postCoupon('A'.repeat(33))
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.findUnique).not.toHaveBeenCalled()
+  })
+
+  // Cổng chỉ kiểm tra khi couponCode TRUTHY — đúng nhánh mà createOrder sẽ chạy.
+  // Form luôn gửi kèm field thì ô trống ra chuỗi rỗng; bắt lỗi nó là khoá luôn
+  // đường đặt hàng của khách không dùng mã.
+  it('201 - couponCode rỗng được coi như không dùng mã', async () => {
+    const res = await postCoupon('')
+
+    expect(res.status).toBe(201)
+    expect(mockPrisma.coupon.findUnique).not.toHaveBeenCalled()
+  })
 })
 
 // ─── Huỷ đơn có mã ────────────────────────────────────────────────────────────

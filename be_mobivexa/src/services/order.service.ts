@@ -5,8 +5,7 @@ import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
-import { computeDiscount, checkCouponUsable } from '../utils/discount'
-import { normalizeCode } from './coupon.service'
+import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
 import type {
   CreateOrderBody,
   OrderItemInput,
@@ -195,29 +194,14 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
       prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
     ])
 
-    const check = checkCouponUsable(
-      found && {
-        isActive:      found.isActive,
-        startsAt:      found.startsAt,
-        endsAt:        found.endsAt,
-        usageLimit:    found.usageLimit,
-        usedCount:     found.usedCount,
-        minOrderValue: Number(found.minOrderValue),
-      },
-      usage !== null,
-      subtotal,
-    )
+    // toCheckInput/toRule dùng CHUNG với previewCoupon, không chép lại: preview và
+    // đặt hàng phải ra cùng một con số cho cùng một giỏ, đúng lý do resolveItems
+    // được export.
+    const check = checkCouponUsable(found && toCheckInput(found), usage !== null, subtotal)
     if (!check.ok) throw new AppError(400, check.reason)
 
     coupon = found
-    discount = computeDiscount(
-      {
-        type:        found!.type,
-        value:       Number(found!.value),
-        maxDiscount: found!.maxDiscount === null ? null : Number(found!.maxDiscount),
-      },
-      subtotal,
-    )
+    discount = computeDiscount(toRule(found!), subtotal)
   }
 
   const total = subtotal + shippingFee - discount

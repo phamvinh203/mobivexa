@@ -3,16 +3,17 @@ import { Prisma, CouponType } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
-import { computeDiscount, checkCouponUsable } from '../utils/discount'
+import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
 import { resolveItems } from './order.service'
 import type { CreateCouponBody, UpdateCouponBody, AdminCouponListQuery } from '../types/coupon.type'
 import type { OrderItemInput } from '../types/order.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Chuẩn hoá cả lúc ghi lẫn lúc tra. Nhờ vậy @unique trên `code` có tác dụng như
-// so sánh không phân biệt hoa thường, mà không cần index biểu thức.
-export const normalizeCode = (raw: string) => raw.trim().toUpperCase()
+// normalizeCode nay sống ở utils/discount, cạnh những hàm luật thuần nó phục vụ,
+// để order.service dùng được mà không phải import ngược service này. Giữ lối vào
+// cũ ở đây cho nơi nào đang import từ coupon.service.
+export { normalizeCode }
 
 async function findCouponOrThrow(id: string) {
   const coupon = await prisma.coupon.findUnique({ where: { id } })
@@ -167,34 +168,6 @@ export async function deleteCoupon(id: string) {
 }
 
 // ─── Customer ─────────────────────────────────────────────────────────────────
-
-// Đổi Decimal của Prisma thành number cho tầng luật thuần.
-type CouponRow = {
-  type: CouponType
-  value: Prisma.Decimal
-  maxDiscount: Prisma.Decimal | null
-  isActive: boolean
-  startsAt: Date
-  endsAt: Date
-  usageLimit: number | null
-  usedCount: number
-  minOrderValue: Prisma.Decimal
-}
-
-const toRule = (c: CouponRow) => ({
-  type:        c.type,
-  value:       Number(c.value),
-  maxDiscount: c.maxDiscount === null ? null : Number(c.maxDiscount),
-})
-
-const toCheckInput = (c: CouponRow) => ({
-  isActive:      c.isActive,
-  startsAt:      c.startsAt,
-  endsAt:        c.endsAt,
-  usageLimit:    c.usageLimit,
-  usedCount:     c.usedCount,
-  minOrderValue: Number(c.minOrderValue),
-})
 
 // Trả về CẢ subtotal lẫn cờ "có món không mua được", không phải mỗi con số:
 // preview phải từ chối được cả giỏ, mà chỉ nhìn subtotal thì không phân biệt nổi
