@@ -77,8 +77,14 @@ export async function updateBrand(id: string, body: UpdateBrandBody, file?: Expr
     await assertNameAvailable(trimmedName, id)
     data.name = trimmedName
   }
-  if (slug !== undefined) data.slug = await generateUniqueSlug(slug, slugTaken(findBySlug, id))
-  if (description !== undefined) data.description = description
+  // Slug rỗng = yêu cầu sinh lại từ tên, đúng như placeholder ở form đang hứa.
+  // Không có nhánh này thì generateUniqueSlug('') sẽ tạo ra slug rỗng.
+  if (slug !== undefined) {
+    const base = slug.trim() || name?.trim() || brand.name
+    data.slug = await generateUniqueSlug(base, slugTaken(findBySlug, id))
+  }
+  // Chuỗi rỗng nghĩa là admin đã xoá trắng ô mô tả → lưu NULL thay vì ''.
+  if (description !== undefined) data.description = description || null
   if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
 
   if (file) {

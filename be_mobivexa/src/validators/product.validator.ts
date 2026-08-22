@@ -8,9 +8,24 @@ function checkVariant(v: unknown): string | null {
   const { sku, originalPrice, salePrice } = v as Record<string, unknown>
 
   if (!sku || String(sku).trim().length === 0) return 'SKU không được để trống'
-  if (typeof originalPrice !== 'number' || originalPrice < 0) return 'Giá gốc không hợp lệ'
+  // Giá gốc 0 nghĩa là phiên bản lên storefront với giá 0đ — chặn ngay từ đây.
+  // Giá bán 0 thì hợp lệ: đó là quy ước "không có giá khuyến mãi".
+  if (typeof originalPrice !== 'number' || originalPrice <= 0) return 'Giá gốc phải lớn hơn 0'
   if (typeof salePrice !== 'number' || salePrice < 0) return 'Giá bán không hợp lệ'
   if (salePrice > originalPrice) return 'Giá bán không được lớn hơn giá gốc'
+  return null
+}
+
+/** PUT variant là cập nhật từng phần nên chỉ kiểm tra field thực sự được gửi lên.
+ *  Đối chiếu chéo giá bán với giá gốc phải làm ở service, nơi đọc được giá đang lưu. */
+export function checkVariantPatch(v: unknown): string | null {
+  if (!v || typeof v !== 'object') return 'Phiên bản sản phẩm không hợp lệ'
+  const { sku, originalPrice, salePrice, stock } = v as Record<string, unknown>
+
+  if (sku !== undefined && String(sku).trim().length === 0) return 'SKU không được để trống'
+  if (originalPrice !== undefined && (typeof originalPrice !== 'number' || originalPrice <= 0)) return 'Giá gốc phải lớn hơn 0'
+  if (salePrice !== undefined && (typeof salePrice !== 'number' || salePrice < 0)) return 'Giá bán không hợp lệ'
+  if (stock !== undefined && (!Number.isInteger(stock) || (stock as number) < 0)) return 'Tồn kho phải là số nguyên không âm'
   return null
 }
 
@@ -108,11 +123,28 @@ export function validateVariant(req: Request, res: Response, next: NextFunction)
   next()
 }
 
+export function validateUpdateVariant(req: Request, res: Response, next: NextFunction): void {
+  const err = checkVariantPatch(req.body)
+  if (err) {
+    sendError(res, 400, err)
+    return
+  }
+  next()
+}
+
 export function validateUpdateStock(req: Request, res: Response, next: NextFunction): void {
   const stock = Number(req.body.stock)
   if (!Number.isInteger(stock) || stock < 0) {
     sendError(res, 400, 'Tồn kho phải là số nguyên không âm')
     return
+  }
+  // expectedStock là tuỳ chọn — client gửi kèm để phát hiện tồn kho đã đổi từ lúc mở form.
+  if (req.body.expectedStock !== undefined) {
+    const expected = Number(req.body.expectedStock)
+    if (!Number.isInteger(expected) || expected < 0) {
+      sendError(res, 400, 'Tồn kho đối chiếu không hợp lệ')
+      return
+    }
   }
   next()
 }
