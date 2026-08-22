@@ -18,7 +18,7 @@ function refreshExpiry(): Date {
 }
 
 export async function registerService(body: RegisterBody) {
-  const { email, fullName, password, phone } = body
+  const { email, fullName, password } = body
 
   const exists = await prisma.user.findUnique({ where: { email } })
   if (exists) throw new AppError(409, 'Email đã được sử dụng')
@@ -26,7 +26,7 @@ export async function registerService(body: RegisterBody) {
   const passwordHash = await hashPassword(password)
 
   return prisma.user.create({
-    data: { email, fullName, passwordHash, phone },
+    data: { email, fullName, passwordHash },
     select: { id: true, email: true, fullName: true, role: true, createdAt: true },
   })
 }

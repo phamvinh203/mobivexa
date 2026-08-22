@@ -21,9 +21,18 @@ async function assertNameAvailable(name: string, excludeId?: string) {
 
 // ─── Public ─────────────────────────────────────────────────────────────────
 
+// Bản admin kèm _count products để UI khoá sẵn nút xoá cho thương hiệu còn sản phẩm,
+// thay vì để người dùng bấm xoá rồi mới nhận 409 từ deleteBrand.
 export function getBrands(includeInactive = false) {
+  if (includeInactive) {
+    return prisma.brand.findMany({
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { products: true } } },
+    })
+  }
+
   return prisma.brand.findMany({
-    where: includeInactive ? {} : { isActive: true },
+    where: { isActive: true },
     orderBy: { name: 'asc' },
   })
 }

@@ -1,17 +1,13 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
+import { parseIntField } from './common.validator'
 import { ReviewStatus } from '../generated/prisma/client'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function validateRating(res: Response, rating: unknown): boolean {
-  const r = Number(rating)
-  if (!Number.isInteger(r) || r < 1 || r > 5) {
-    sendError(res, 400, 'Đánh giá phải từ 1 đến 5 sao')
-    return false
-  }
-  return true
-}
+// Cả hai route đánh giá đều nhận multipart/form-data (vì có upload ảnh) nên
+// rating tới đây là chuỗi — parseIntField ghi số đã parse ngược lại vào body.
+const RATING_FIELD = { min: 1, max: 5, message: 'Đánh giá phải từ 1 đến 5 sao' }
 
 function validateContent(
   res: Response,
@@ -39,8 +35,8 @@ function validateContent(
 // ─── Validators ───────────────────────────────────────────────────────────────
 
 export function validateCreateReview(req: Request, res: Response, next: NextFunction): void {
-  if (!validateRating(res, req.body.rating))                              return
-  if (!validateContent(res, req.body.content, { required: true }))        return
+  if (!parseIntField(res, req.body, 'rating', RATING_FIELD))       return
+  if (!validateContent(res, req.body.content, { required: true })) return
   next()
 }
 
@@ -51,8 +47,8 @@ export function validateUpdateReview(req: Request, res: Response, next: NextFunc
     sendError(res, 400, 'Không có gì để cập nhật')
     return
   }
-  if (rating  !== undefined && !validateRating(res, rating))   return
-  if (content !== undefined && !validateContent(res, content)) return
+  if (rating  !== undefined && !parseIntField(res, req.body, 'rating', RATING_FIELD)) return
+  if (content !== undefined && !validateContent(res, content))                        return
   next()
 }
 
