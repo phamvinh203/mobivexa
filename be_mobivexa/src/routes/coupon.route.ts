@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
+import { couponPreviewLimiter } from '../middlewares/rate_limit.middleware'
 import { validateCreateCoupon, validateUpdateCoupon, validatePreviewCoupon } from '../validators/coupon.validator'
 import * as controller from '../controllers/coupon.controller'
 
@@ -9,7 +10,7 @@ const publicRouter: Router = Router()
 publicRouter.use(authenticate)
 
 publicRouter.get('/',         controller.listMine)
-publicRouter.post('/preview', validatePreviewCoupon, controller.preview)
+publicRouter.post('/preview', couponPreviewLimiter, validatePreviewCoupon, controller.preview)
 
 // ─── Admin routes: /api/admin/coupons ─────────────────────────────────────────
 const adminRouter: Router = Router()

@@ -521,7 +521,10 @@ model Coupon {
 
   usages        CouponUsage[]
 
-  // Truy vấn "mã đang chạy" lọc đúng ba cột này
+  // Truy vấn "mã đang chạy": btree seek bằng isActive rồi quét range trên
+  // startsAt — tới cột thứ ba thì hết seek được, endsAt chỉ còn lọc trên đúng
+  // những dòng đã quét ra. Vẫn đáng để cả ba cột: nhánh cây hẹp hơn nhiều so với
+  // quét bảng, và endsAt nằm trong index nên không phải chạm heap.
   @@index([isActive, startsAt, endsAt])
   @@map("coupons")
 }
