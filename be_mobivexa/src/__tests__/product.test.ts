@@ -586,6 +586,18 @@ describe('POST /api/admin/products/:id/variants', () => {
     expect(res.status).toBe(400)
   })
 
+  // VND không có đơn vị nhỏ hơn đồng. Giá lẻ làm subtotal lẻ, và subtotal lẻ
+  // khiến mã giảm phủ 100% để lại vài hào — đơn kẹt UNPAID vì VietQR không xin
+  // được số đó còn SePay không khớp nổi.
+  it('400 - giá không phải số nguyên', async () => {
+    const res = await request(app)
+      .post('/api/admin/products/prod-1/variants')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ sku: 'SKU-NEW', originalPrice: 10000000, salePrice: 9000000.5 })
+
+    expect(res.status).toBe(400)
+  })
+
   it('401 - không có token', async () => {
     const res = await request(app).post('/api/admin/products/prod-1/variants').send(VALID_VARIANT_BODY)
     expect(res.status).toBe(401)

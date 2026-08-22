@@ -137,6 +137,18 @@ describe('POST /api/orders', () => {
     expect(res.body.message).toMatch(/giỏ hàng trống/i)
   })
 
+  // Phần tử null làm `item.variantId` ném TypeError trong middleware đồng bộ,
+  // Express biến thành 500. Input sai hình dạng phải ra 400 — preview đã chặn
+  // đúng ca này từ trước, đây là gỡ nốt phía đặt hàng.
+  it('400 - items chứa phần tử null, không phải 500', async () => {
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', items: [null] })
+
+    expect(res.status).toBe(400)
+  })
+
   it('401 - không có token', async () => {
     const res = await request(app).post('/api/orders').send({ addressId: 'addr-1' })
     expect(res.status).toBe(401)
@@ -309,6 +321,19 @@ describe('GET /api/admin/orders', () => {
 
     const { createdAt } = mockPrisma.order.findMany.mock.calls[0][0].where
     expect(createdAt.lte).toEqual(new Date('2026-08-17T09:30:00.000Z'))
+  })
+
+  // Express 5 trả MẢNG khi query lặp key, nên `.trim()` ném TypeError → 500.
+  // Người dùng bấm hai lần hay bookmark hỏng không đáng bị coi là lỗi server.
+  it('200 - search lặp key vẫn chạy, không phải 500', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([])
+    mockPrisma.order.count.mockResolvedValue(0)
+
+    const res = await request(app)
+      .get('/api/admin/orders?search=ORD-1&search=ORD-2')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
   })
 
   it('401 - không có token', async () => {

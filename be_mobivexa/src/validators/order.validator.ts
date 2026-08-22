@@ -47,7 +47,11 @@ export function validateCreateOrder(req: Request, res: Response, next: NextFunct
       return
     }
     for (const item of items) {
-      if (!checkId(res, item.variantId, 'variantId không hợp lệ')) return
+      // Optional chaining chứ không phải item.variantId: phần tử null/số trong
+      // mảng làm truy cập thuộc tính ném TypeError ngay trong middleware đồng bộ,
+      // và Express đổi nó thành 500. Cùng payload đó phải ra 400 như mọi input
+      // sai hình dạng khác — validatePreviewCoupon đã làm vậy từ trước.
+      if (!checkId(res, item?.variantId, 'variantId không hợp lệ')) return
       if (!checkQuantity(res, Number(item.quantity))) return
     }
   }

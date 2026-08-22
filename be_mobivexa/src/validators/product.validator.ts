@@ -10,8 +10,12 @@ function checkVariant(v: unknown): string | null {
   if (!sku || String(sku).trim().length === 0) return 'SKU không được để trống'
   // Giá gốc 0 nghĩa là phiên bản lên storefront với giá 0đ — chặn ngay từ đây.
   // Giá bán 0 thì hợp lệ: đó là quy ước "không có giá khuyến mãi".
-  if (typeof originalPrice !== 'number' || originalPrice <= 0) return 'Giá gốc phải lớn hơn 0'
-  if (typeof salePrice !== 'number' || salePrice < 0) return 'Giá bán không hợp lệ'
+  // Number.isInteger chứ không phải typeof 'number': VND không có đơn vị nhỏ hơn
+  // đồng, mà giá lẻ thì lan ra tận đơn hàng — subtotal lẻ khiến mã giảm phủ 100%
+  // để lại vài hào, và đơn đó kẹt UNPAID vì VietQR không xin được số lẻ còn SePay
+  // không khớp nổi. Chặn từ gốc rẻ hơn làm tròn ở mọi chỗ tiêu thụ.
+  if (typeof originalPrice !== 'number' || !Number.isInteger(originalPrice) || originalPrice <= 0) return 'Giá gốc phải là số nguyên lớn hơn 0'
+  if (typeof salePrice !== 'number' || !Number.isInteger(salePrice) || salePrice < 0) return 'Giá bán phải là số nguyên không âm'
   if (salePrice > originalPrice) return 'Giá bán không được lớn hơn giá gốc'
   return null
 }
@@ -23,8 +27,8 @@ export function checkVariantPatch(v: unknown): string | null {
   const { sku, originalPrice, salePrice, stock } = v as Record<string, unknown>
 
   if (sku !== undefined && String(sku).trim().length === 0) return 'SKU không được để trống'
-  if (originalPrice !== undefined && (typeof originalPrice !== 'number' || originalPrice <= 0)) return 'Giá gốc phải lớn hơn 0'
-  if (salePrice !== undefined && (typeof salePrice !== 'number' || salePrice < 0)) return 'Giá bán không hợp lệ'
+  if (originalPrice !== undefined && (typeof originalPrice !== 'number' || !Number.isInteger(originalPrice) || originalPrice <= 0)) return 'Giá gốc phải là số nguyên lớn hơn 0'
+  if (salePrice !== undefined && (typeof salePrice !== 'number' || !Number.isInteger(salePrice) || salePrice < 0)) return 'Giá bán phải là số nguyên không âm'
   if (stock !== undefined && (!Number.isInteger(stock) || (stock as number) < 0)) return 'Tồn kho phải là số nguyên không âm'
   return null
 }

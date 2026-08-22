@@ -7,6 +7,7 @@ import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput
 import { resolveItems } from './order.service'
 import type { CreateCouponBody, UpdateCouponBody, AdminCouponListQuery } from '../types/coupon.type'
 import type { OrderItemInput } from '../types/order.type'
+import { parseSearch } from '../utils/search'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export async function listCoupons(query: AdminCouponListQuery) {
 
   // Code luôn viết hoa trong DB nên chuẩn hoá đầu vào rồi so thẳng, không cần
   // mode: 'insensitive' (vốn kéo theo ILIKE và không dùng được index).
-  const search = query.search?.trim()
+  const search = parseSearch(query.search)
   if (search) where.code = { contains: normalizeCode(search) }
 
   if (query.isActive === 'true')  where.isActive = true

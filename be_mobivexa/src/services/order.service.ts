@@ -5,6 +5,7 @@ import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
+import { parseSearch } from '../utils/search'
 import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
 import type {
   CreateOrderBody,
@@ -335,7 +336,7 @@ export async function listOrders(query: AdminOrderListQuery) {
   // Mã đơn dạng ORD-20260817-A1B2C3 — admin thường chỉ nhớ đuôi hoặc ngày, nên
   // khớp một phần (contains) thay vì bằng tuyệt đối. Không dùng full-text như
   // tìm tên sản phẩm vì mã không phải là từ, tokenizer sẽ không tách ra được.
-  const search = query.search?.trim()
+  const search = parseSearch(query.search)
   if (search)              where.orderCode     = { contains: search, mode: 'insensitive' }
 
   if (query.status)        where.status        = query.status
