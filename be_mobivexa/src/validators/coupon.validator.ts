@@ -105,18 +105,42 @@ function validateBody(req: Request, res: Response, partial: boolean): boolean {
     b.usageLimit = limit
   }
 
-  if (!partial || has('startsAt') || has('endsAt')) {
-    const starts = new Date(b.startsAt)
-    const ends   = new Date(b.endsAt)
+  // description và isActive từng lọt lưới: REQUIRED_LABELS chặn được null nhưng
+  // không ai soi KIỂU, mà couponData ghi thẳng chúng xuống. {"isActive":"false"}
+  // hay {"description":123} đi trọn tới Prisma rồi nổ PrismaClientValidationError
+  // thành 500 — lỗi của client mà báo như hệ thống hỏng.
+  //
+  // Dùng has() (bỏ qua null) chứ không `!partial || ...`: cả hai đều KHÔNG bắt
+  // buộc lúc tạo — description nullable, isActive có @default(true) trong schema.
+  if (has('description') && typeof b.description !== 'string') {
+    sendError(res, 400, 'Mô tả mã giảm giá phải là chuỗi ký tự')
+    return false
+  }
 
-    if (Number.isNaN(starts.getTime()) || Number.isNaN(ends.getTime())) {
-      sendError(res, 400, 'Thời gian áp dụng không hợp lệ')
-      return false
-    }
-    if (ends <= starts) {
-      sendError(res, 400, 'Thời gian kết thúc phải sau thời gian bắt đầu')
-      return false
-    }
+  if (has('isActive') && typeof b.isActive !== 'boolean') {
+    sendError(res, 400, 'Trạng thái phải là true hoặc false')
+    return false
+  }
+
+  // Hai mốc thời gian được kiểm RIÊNG, mỗi mốc chỉ khi có gửi lên. Gộp chung một
+  // cổng như trước là body vá lẻ một mốc ăn 400 oan: PUT {endsAt} — gia hạn một
+  // đợt khuyến mãi đang chạy, thao tác sửa mã thường gặp nhất — cho ra
+  // new Date(undefined) = Invalid Date ở mốc VẮNG MẶT, rồi báo "Thời gian áp dụng
+  // không hợp lệ" về một cái ngày admin gửi lên hoàn toàn đúng.
+  const starts = !partial || has('startsAt') ? new Date(b.startsAt) : null
+  const ends   = !partial || has('endsAt')   ? new Date(b.endsAt)   : null
+
+  if ((starts && Number.isNaN(starts.getTime())) || (ends && Number.isNaN(ends.getTime()))) {
+    sendError(res, 400, 'Thời gian áp dụng không hợp lệ')
+    return false
+  }
+
+  // Chỉ so được khi CÓ ĐỦ cặp ngay trong body. Body vá lẻ thì nửa còn lại của cặp
+  // nằm dưới DB mà middleware không đọc được — luật thứ tự cho ca đó nằm ở
+  // updateCoupon (coupon.service.ts), nơi bản ghi đã có sẵn trong tay.
+  if (starts && ends && ends <= starts) {
+    sendError(res, 400, 'Thời gian kết thúc phải sau thời gian bắt đầu')
+    return false
   }
 
   return true

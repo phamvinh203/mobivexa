@@ -288,6 +288,72 @@ describe('PUT /api/admin/coupons/:id', () => {
     expect(res.status).toBe(200)
     expect(mockPrisma.coupon.update.mock.calls[0][0].data.maxDiscount).toBe(null)
   })
+
+  // Gia hạn một đợt khuyến mãi đang chạy là thao tác sửa mã thường gặp nhất, mà
+  // cổng cũ gộp hai mốc thời gian làm một nên body vá lẻ ăn 400 oan: mốc VẮNG MẶT
+  // thành new Date(undefined) = Invalid Date, rồi lỗi lại đổ cho cái ngày admin
+  // gửi lên vốn hoàn toàn hợp lệ.
+  it('200 - gia hạn bằng endsAt lẻ, không cần gửi kèm startsAt', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.coupon.update.mockResolvedValue(BASE_COUPON)
+
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ endsAt: '2027-01-01T00:00:00.000Z' })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.coupon.update).toHaveBeenCalled()
+  })
+
+  // Mặt còn lại: nới cổng ra không được làm mất luật thứ tự. Validator không đọc
+  // được DB nên chỉ so được khi body có ĐỦ cặp — ca vá lẻ này do updateCoupon chốt,
+  // đối chiếu với endsAt đang lưu.
+  it('400 - startsAt lẻ vượt qua endsAt đang lưu', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ startsAt: '2026-10-01T00:00:00.000Z' })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toBe('Thời gian kết thúc phải sau thời gian bắt đầu')
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  it('400 - ngày rác vẫn bị chặn ngay ở validator', async () => {
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ endsAt: 'ngày mai' })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  // REQUIRED_LABELS chặn được null nhưng không soi KIỂU, mà couponData ghi thẳng
+  // xuống — chuỗi "false" rơi vào cột Boolean cho PrismaClientValidationError,
+  // tức lỗi client báo thành 500.
+  it('400 - isActive dạng chuỗi, không phải 500', async () => {
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ isActive: 'false' })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  it('400 - description không phải chuỗi, không phải 500', async () => {
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ description: 123 })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
 })
 
 // ─── PATCH /api/admin/coupons/:id/status ──────────────────────────────────────
@@ -380,6 +446,43 @@ describe('GET /api/coupons', () => {
     const res = await request(app).get('/api/coupons').set('Authorization', USER_TOKEN)
 
     expect(res.body.coupons[0].used).toBe(true)
+  })
+
+  // usedCount/usageLimit là bộ đếm quy đổi của đợt khuyến mãi. Trả nguyên row
+  // Prisma là mọi khách đăng nhập đọc được tiến độ mọi mã đang chạy.
+  it('200 - không lộ bộ đếm lượt dùng ra cho khách', async () => {
+    mockPrisma.coupon.findMany.mockResolvedValue([BASE_COUPON])
+    mockPrisma.couponUsage.findMany.mockResolvedValue([])
+
+    const res = await request(app).get('/api/coupons').set('Authorization', USER_TOKEN)
+
+    expect(res.body.coupons[0]).not.toHaveProperty('usedCount')
+    expect(res.body.coupons[0]).not.toHaveProperty('usageLimit')
+    expect(res.body.coupons[0].code).toBe('SALE10')
+  })
+
+  // Mock tiền bằng Prisma.Decimal THẬT, không phải number: đó mới là thứ Prisma
+  // trả về ở production, và Decimal serialize qua JSON thành CHUỖI ("10") trong
+  // khi preview trả number. FE format cả hai bằng cùng một helper thì một trong
+  // hai hiển thị sai mà không có lỗi nào báo.
+  it('200 - tiền ra khỏi endpoint dạng number, không phải chuỗi', async () => {
+    mockPrisma.coupon.findMany.mockResolvedValue([
+      {
+        ...BASE_COUPON,
+        value:         new Prisma.Decimal('10.00'),
+        maxDiscount:   new Prisma.Decimal('200000.00'),
+        minOrderValue: new Prisma.Decimal('500000.00'),
+      },
+    ])
+    mockPrisma.couponUsage.findMany.mockResolvedValue([])
+
+    const res = await request(app).get('/api/coupons').set('Authorization', USER_TOKEN)
+
+    const coupon = res.body.coupons[0]
+    expect(typeof coupon.value).toBe('number')
+    expect(typeof coupon.maxDiscount).toBe('number')
+    expect(typeof coupon.minOrderValue).toBe('number')
+    expect(coupon.maxDiscount).toBe(200_000)
   })
 
   it('401 - không có token', async () => {

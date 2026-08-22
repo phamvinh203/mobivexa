@@ -10,10 +10,39 @@ import type { OrderItemInput } from '../types/order.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// normalizeCode nay sống ở utils/discount, cạnh những hàm luật thuần nó phục vụ,
-// để order.service dùng được mà không phải import ngược service này. Giữ lối vào
-// cũ ở đây cho nơi nào đang import từ coupon.service.
-export { normalizeCode }
+// Decimal không serialize thành number qua JSON nên phải convert tay — cùng lối
+// với serializeTx (payment.service.ts). Bỏ qua thì `value`/`maxDiscount`/
+// `minOrderValue` ra dây CHUỖI ("200000") trong khi preview trả về number, và FE
+// đưa cả hai vào cùng một hàm format tiền: một trong hai hiển thị sai mà không có
+// lỗi nào báo. Chỉ đụng các endpoint mã giảm giá — shape của Order vẫn giữ
+// nguyên, đổi nó là đổi hợp đồng của cả luồng đơn hàng và thanh toán.
+const serializeCoupon = <
+  T extends {
+    value: Prisma.Decimal
+    maxDiscount: Prisma.Decimal | null
+    minOrderValue: Prisma.Decimal
+  },
+>(c: T) => ({
+  ...c,
+  value:         Number(c.value),
+  maxDiscount:   c.maxDiscount === null ? null : Number(c.maxDiscount),
+  minOrderValue: Number(c.minOrderValue),
+})
+
+// Đúng những cột khách cần để CHỌN một mã, không hơn. Trả nguyên row Prisma là
+// mọi khách đăng nhập đọc được usedCount/usageLimit — bộ đếm quy đổi trực tiếp
+// của mọi đợt khuyến mãi đang chạy — cùng createdAt/updatedAt vốn chẳng giúp gì
+// cho việc chọn mã. startsAt cũng bỏ: query đã lọc mã đang chạy nên nó luôn ở quá khứ.
+const CUSTOMER_COUPON_SELECT = {
+  id:            true,
+  code:          true,
+  description:   true,
+  type:          true,
+  value:         true,
+  maxDiscount:   true,
+  minOrderValue: true,
+  endsAt:        true,
+} satisfies Prisma.CouponSelect
 
 async function findCouponOrThrow(id: string) {
   const coupon = await prisma.coupon.findUnique({ where: { id } })
@@ -96,7 +125,7 @@ export async function listCoupons(query: AdminCouponListQuery) {
     prisma.coupon.count({ where }),
   ])
 
-  return { coupons, pagination: paginationMeta(page, limit, total) }
+  return { coupons: coupons.map(serializeCoupon), pagination: paginationMeta(page, limit, total) }
 }
 
 export async function getCouponById(id: string) {
@@ -105,14 +134,15 @@ export async function getCouponById(id: string) {
     include: { _count: { select: { usages: true } } },
   })
   if (!coupon) throw new AppError(404, 'Mã giảm giá không tồn tại')
-  return coupon
+  return serializeCoupon(coupon)
 }
 
 export async function createCoupon(body: CreateCouponBody) {
   try {
-    return await prisma.coupon.create({
+    const coupon = await prisma.coupon.create({
       data: couponData(body) as Prisma.CouponUncheckedCreateInput,
     })
+    return serializeCoupon(coupon)
   } catch (err) {
     if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Mã giảm giá đã tồn tại')
     throw err
@@ -140,8 +170,21 @@ export async function updateCoupon(id: string, body: UpdateCouponBody) {
     throw new AppError(400, 'Mã giảm số tiền cố định không có trần giảm')
   }
 
+  // Luật thứ ba cùng khuôn: cặp thời gian HIỆU LỰC là giá trị gửi lên, thiếu thì
+  // lấy giá trị đang lưu. Validator chỉ so được khi body có đủ CẢ HAI mốc, nên
+  // PUT {startsAt} lẻ đẩy mốc bắt đầu vượt qua endsAt đang lưu là lọt — mã sống
+  // với khoảng thời gian rỗng, không ai dùng được mà cũng chẳng ai hiểu vì sao.
+  // Dùng ĐÚNG thông báo của validator để client không phân biệt được hai cổng.
+  const startsAt = body.startsAt != null ? new Date(body.startsAt) : current.startsAt
+  const endsAt   = body.endsAt   != null ? new Date(body.endsAt)   : current.endsAt
+
+  if (endsAt <= startsAt) {
+    throw new AppError(400, 'Thời gian kết thúc phải sau thời gian bắt đầu')
+  }
+
   try {
-    return await prisma.coupon.update({ where: { id }, data: couponData(body) })
+    const coupon = await prisma.coupon.update({ where: { id }, data: couponData(body) })
+    return serializeCoupon(coupon)
   } catch (err) {
     if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Mã giảm giá đã tồn tại')
     throw err
@@ -150,7 +193,8 @@ export async function updateCoupon(id: string, body: UpdateCouponBody) {
 
 export async function toggleCouponStatus(id: string) {
   const { isActive } = await findCouponOrThrow(id)
-  return prisma.coupon.update({ where: { id }, data: { isActive: !isActive } })
+  const coupon = await prisma.coupon.update({ where: { id }, data: { isActive: !isActive } })
+  return serializeCoupon(coupon)
 }
 
 export async function deleteCoupon(id: string) {
@@ -232,6 +276,13 @@ async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<Car
 export async function listActiveCoupons(userId: string) {
   const now = new Date()
 
+  // Không phân trang, và không cần: đây là danh sách mã ĐANG CHẠY của một cửa
+  // hàng — vài chục là nhiều — nên payload chỉ vài KB, cùng lý do listFavoriteIds
+  // trả trọn mảng. Thêm nữa FE hiện toàn bộ mã trong một sheet để khách chọn, cắt
+  // một trang là giấu mất mã tốt nhất mà khách không biết đường bấm xem tiếp.
+  //
+  // usageLimit/usedCount lấy kèm CHỈ để lọc mã đã hết lượt ngay dưới đây (Prisma
+  // không so được hai cột trong `where`), rồi bị bóc ra ở .map — không ra tới client.
   const coupons = await prisma.coupon.findMany({
     where: {
       isActive: true,
@@ -239,6 +290,7 @@ export async function listActiveCoupons(userId: string) {
       endsAt:   { gte: now },
     },
     orderBy: { endsAt: 'asc' },
+    select:  { ...CUSTOMER_COUPON_SELECT, usageLimit: true, usedCount: true },
   })
 
   // Một lượt truy vấn cho toàn bộ mã, không phải mỗi mã một lượt.
@@ -253,7 +305,10 @@ export async function listActiveCoupons(userId: string) {
   return {
     coupons: coupons
       .filter((c) => c.usageLimit === null || c.usedCount < c.usageLimit)
-      .map((c) => ({ ...c, used: usedIds.has(c.id) })),
+      .map(({ usageLimit, usedCount, ...coupon }) => ({
+        ...serializeCoupon(coupon),
+        used: usedIds.has(coupon.id),
+      })),
   }
 }
 
