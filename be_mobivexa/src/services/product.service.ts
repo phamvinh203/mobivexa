@@ -168,6 +168,10 @@ export async function listProducts(
       orderBy: resolveSort(query.sort),
       skip: (page - 1) * limit,
       take: limit,
+      // Bảng danh sách không hiển thị mô tả, mà cột này chứa HTML của RichTextEditor
+      // — ảnh dán vào được nhúng thẳng dạng base64, nên mỗi dòng có thể vài MB.
+      // Chỉ endpoint chi tiết mới cần tới nó.
+      ...(admin && { omit: { description: true } }),
       include: {
         category: { select: { id: true, name: true, slug: true } },
         brand: { select: { id: true, name: true, slug: true } },
