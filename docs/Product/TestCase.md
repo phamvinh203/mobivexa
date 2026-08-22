@@ -1,841 +1,420 @@
 # Test Case Document
-## Module: Product (Sản phẩm)
+## Module: Product
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Tham chiếu:** [SRS.md](./SRS.md) | [APISpec.md](./APISpec.md)  
-> **Test Framework:** Vitest + Supertest  
-> **Môi trường:** Test DB (NODE_ENV=test)
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22  
+> **Framework:** Vitest + Supertest
 
 ---
 
-## Tổng quan Test Suite
+## Tổng quan
 
-| Nhóm | Số TC | Phủ |
-|---|---|---|
-| GET /products (Public) | 6 | Danh sách sản phẩm công khai |
-| GET /products/:slug (Public) | 4 | Chi tiết sản phẩm |
-| GET /products/featured (Public) | 3 | Sản phẩm nổi bật |
-| GET /admin/products (Admin) | 5 | Admin danh sách tất cả |
-| GET /admin/products/:id (Admin) | 3 | Admin chi tiết theo ID |
-| POST /admin/products (Admin) | 8 | Tạo sản phẩm |
-| PUT /admin/products/:id (Admin) | 6 | Cập nhật sản phẩm |
-| DELETE /admin/products/:id (Admin) | 3 | Xóa sản phẩm |
-| PATCH /admin/products/:id/status (Admin) | 3 | Toggle hiển thị |
-| PATCH /admin/products/:id/featured (Admin) | 3 | Toggle nổi bật |
-| POST /admin/products/:id/images (Admin) | 4 | Thêm ảnh |
-| DELETE /admin/products/:id/images/:imageId (Admin) | 4 | Xóa ảnh |
-| PATCH /admin/products/:id/images/:imageId/cover (Admin) | 3 | Đặt ảnh bìa |
-| POST /admin/products/:id/variants (Admin) | 5 | Thêm variant |
-| PUT /admin/products/:id/variants/:variantId (Admin) | 4 | Cập nhật variant |
-| DELETE /admin/products/:id/variants/:variantId (Admin) | 4 | Xóa variant |
-| PATCH /admin/products/:id/variants/:variantId/stock (Admin) | 3 | Patch stock |
-| GET /admin/inventory (Admin) | 5 | Báo cáo tồn kho |
-| **Tổng cộng** | **82** | |
+| Nhóm | Số TC |
+|---|---|
+| Listing public | 7 |
+| Chi tiết public | 3 |
+| Tạo sản phẩm | 8 |
+| Cập nhật sản phẩm | 5 |
+| Xóa sản phẩm | 2 |
+| Toggle status/featured | 2 |
+| Quản lý ảnh | 6 |
+| Quản lý specs | 4 |
+| Quản lý variant | 7 |
+| Tồn kho | 3 |
+| Inventory report | 3 |
+| **Tổng** | **50** |
 
 ---
 
-## TC-PUB: Public Endpoints
+## TC-LIST: Listing public
 
-### TC-PUB-01: Danh sách sản phẩm - Happy Path
+### TC-LIST-01: Listing cơ bản — chỉ isActive
 
-**ID:** TC-PUB-01  
-**Level:** Smoke
-
-**Input:** `GET /api/products?page=1&limit=12`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: `{ products: [], pagination: { page: 1, limit: 12, total: N, totalPages: M } }`
-- `products` array không chứa `isActive = false`
-- Mỗi product có `coverImage` và ít nhất 1 `variant` active
+**Expected:**
+- `200`
+- Tất cả `products[].isActive = true`
+- Chỉ variant `isActive = true` trong mỗi sản phẩm
+- Không có `description` trong response
 
 ---
 
-### TC-PUB-02: Danh sách sản phẩm - Filter by Category
+### TC-LIST-02: Lọc theo category slug
 
-**Input:** `GET /api/products?category=dien-thoai`
-
-**Expected Output:**
-- HTTP: `200`
-- Tất cả products có `category.slug = 'dien-thoai'`
+**Input:** `?category=dien-thoai`  
+**Expected:** Tất cả products thuộc category slug `dien-thoai`
 
 ---
 
-### TC-PUB-03: Danh sách sản phẩm - Filter by Price Range
+### TC-LIST-03: Lọc giá hợp lệ
 
-**Input:** `GET /api/products?minPrice=10000000&maxPrice=20000000`
-
-**Expected Output:**
-- HTTP: `200`
-- Tất cả products có ít nhất 1 variant với `salePrice` trong khoảng [10M, 20M]
+**Input:** `?minPrice=10000000&maxPrice=30000000`  
+**Expected:** Products có ít nhất 1 variant active với `salePrice` trong khoảng
 
 ---
 
-### TC-PUB-04: Danh sách sản phẩm - Full-text Search
+### TC-LIST-04: minPrice > maxPrice → 400
 
-**Input:** `GET /api/products?search=iphone`
-
-**Expected Output:**
-- HTTP: `200`
-- Tất cả products có `name` khớp với query "iphone" (FTS)
+**Input:** `?minPrice=30000000&maxPrice=10000000`  
+**Expected:** `400`
 
 ---
 
-### TC-PUB-05: Danh sách sản phẩm - Sort
+### TC-LIST-05: minPrice không phải số → 400
 
-**Input:** `GET /api/products?sort=name_asc`
-
-**Expected Output:**
-- HTTP: `200`
-- Products sorted by `name` A-Z
+**Input:** `?minPrice=abc`  
+**Expected:** `400`
 
 ---
 
-### TC-PUB-06: Danh sách sản phẩm - Limit exceeded
+### TC-LIST-06: Search FTS
 
-**Input:** `GET /api/products?limit=100`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Số item/trang tối đa là 50`
+**Input:** `?search=iphone`  
+**Expected:** Products có `name` chứa "iphone" (case-insensitive, GIN index)
 
 ---
 
-### TC-PUB-07: Chi tiết sản phẩm - Happy Path
+### TC-LIST-07: Search không tìm thấy — trả rỗng
 
-**Input:** `GET /api/products/iphone-15-pro-max`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Product object với đầy đủ variants, images, tags, category, brand
+**Input:** `?search=xyzxyz_không_tồn_tại`  
+**Expected:** `200 { products: [], pagination: { total: 0 } }`
 
 ---
 
-### TC-PUB-08: Chi tiết sản phẩm - Not Found
+## TC-DETAIL: Chi tiết public
 
-**Input:** `GET /api/products/slug-khong-ton-tai`
+### TC-DETAIL-01: Xem chi tiết hợp lệ
 
-**Expected Output:**
-- HTTP: `404`
-- Message: `Sản phẩm không tồn tại`
-
----
-
-### TC-PUB-09: Chi tiết sản phẩm - Inactive Product
-
-**Precondition:** Product với slug `test-inactive` có `isActive = false`
-
-**Input:** `GET /api/products/test-inactive`
-
-**Expected Output:**
-- HTTP: `404`
-- Message: `Sản phẩm không tồn tại`
+**Expected:**
+- `200`
+- `description` có trong response
+- `specs` sắp xếp theo `sortOrder`
+- `images` sắp xếp theo `sortOrder`
 
 ---
 
-### TC-PUB-10: Sản phẩm nổi bật - Happy Path
+### TC-DETAIL-02: Slug không tồn tại → 404
 
-**Input:** `GET /api/products/featured?limit=8`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Array products với `isActive = true AND isFeatured = true`
-- Sorted by `createdAt DESC`
-- Max 8 products
+**Input:** slug ngẫu nhiên  
+**Expected:** `404`
 
 ---
 
-### TC-PUB-11: Sản phẩm nổi bật - No featured products
+### TC-DETAIL-03: Product isActive=false → 404
 
-**Precondition:** Không có product nào với `isFeatured = true`
-
-**Input:** `GET /api/products/featured`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: `[]` (empty array)
-
----
-
-### TC-PUB-12: Sản phẩm nổi bật - Limit exceeded
-
-**Input:** `GET /api/products/featured?limit=50`
-
-**Expected Output:**
-- HTTP: `200`
-- Trả về tối đa 20 products (internal cap)
-
----
-
-## TC-ADMIN: Admin Endpoints
-
-### TC-ADMIN-01: Admin danh sách - Happy Path (Auth)
-
-**Input:** `GET /api/admin/products` với JWT token (STAFF+)
-
-**Expected Output:**
-- HTTP: `200`
-- Body: `{ products: [], pagination: {} }`
-- Trả về tất cả products (kể cả `isActive = false`)
-
----
-
-### TC-ADMIN-02: Admin danh sách - Unauthorized (No Token)
-
-**Input:** `GET /api/admin/products` (không có JWT token)
-
-**Expected Output:**
-- HTTP: `401`
-- Message: `Không có token xác thực`
-
----
-
-### TC-ADMIN-03: Admin danh sách - Forbidden (Wrong Role)
-
-**Input:** `GET /api/admin/products` với JWT token (CUSTOMER)
-
-**Expected Output:**
-- HTTP: `403`
-- Message: `Bạn không có quyền thực hiện thao tác này`
-
----
-
-### TC-ADMIN-04: Admin danh sách - Filter by isActive
-
-**Input:** `GET /api/admin/products?isActive=false`
-
-**Expected Output:**
-- HTTP: `200`
-- Tất cả products với `isActive = false`
-
----
-
-### TC-ADMIN-05: Admin chi tiết theo ID - Happy Path
-
-**Input:** `GET /api/admin/products/{existing_id}`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Product object đầy đủ (kể cả inactive)
-
----
-
-### TC-ADMIN-06: Admin chi tiết theo ID - Not Found
-
-**Input:** `GET /api/admin/products/non-existing-id`
-
-**Expected Output:**
-- HTTP: `404`
-- Message: `Sản phẩm không tồn tại`
-
----
-
-### TC-ADMIN-07: Admin chi tiết theo ID - Unauthorized
-
-**Input:** `GET /api/admin/products/{id}` (không có JWT token)
-
-**Expected Output:**
-- HTTP: `401`
+**Precondition:** Sản phẩm đang có `isActive = false`  
+**Expected:** `404`
 
 ---
 
 ## TC-CREATE: Tạo sản phẩm
 
-### TC-CREATE-01: Tạo sản phẩm - Happy Path
+### TC-CREATE-01: Tạo thành công với ảnh và specs
 
-**Input:** `POST /api/admin/products` với form-data:
-- `name`: "iPhone 15 Test"
-- `categoryId`: valid category ID
-- `brandId`: valid brand ID
-- `variants`: JSON array with 1 variant (valid SKU, prices)
-- `images`: 1 file JPG
-
-**Expected Output:**
-- HTTP: `201`
-- Body: Product object với đầy đủ variants, images, tags
-- `slug` được auto-generated
-- `isActive = true`, `isFeatured = false`
-- Ảnh đầu tiên có `isCover = true`
+**Input:** multipart/form-data đầy đủ  
+**Expected:**
+- `201`
+- `product.slug` khác rỗng
+- Ảnh đầu tiên `isCover = true`
+- `variants.length >= 1`
 
 ---
 
-### TC-CREATE-02: Tạo sản phẩm - Name too short
+### TC-CREATE-02: Tạo không có slug — tự sinh từ name
 
-**Input:** `name`: "A"
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Tên sản phẩm phải có ít nhất 2 ký tự`
+**Input:** Không có `slug` field  
+**Expected:** `product.slug` được sinh từ `name`
 
 ---
 
-### TC-CREATE-03: Tạo sản phẩm - Missing Category
+### TC-CREATE-03: SKU trùng trong payload → 409
 
-**Input:** Không gửi `categoryId`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Vui lòng chọn danh mục`
+**Input:** variants chứa 2 item cùng SKU  
+**Expected:** `409 SKU bị trùng trong danh sách phiên bản`
 
 ---
 
-### TC-CREATE-04: Tạo sản phẩm - Missing Brand
+### TC-CREATE-04: SKU đã tồn tại trong DB → 409
 
-**Input:** Không gửi `brandId`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Vui lòng chọn thương hiệu`
+**Precondition:** SKU đã được dùng bởi sản phẩm khác  
+**Expected:** `409 SKU đã tồn tại: ...`
 
 ---
 
-### TC-CREATE-05: Tạo sản phẩm - No Variants
+### TC-CREATE-05: Category không tồn tại → 400
 
-**Input:** `variants`: `[]`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Sản phẩm phải có ít nhất một phiên bản`
+**Expected:** `400 Danh mục không tồn tại`
 
 ---
 
-### TC-CREATE-06: Tạo sản phẩm - SKU Duplicate in Payload
+### TC-CREATE-06: Brand không tồn tại → 400
 
-**Input:** `variants`: JSON array với 2 variants có cùng SKU
-
-**Expected Output:**
-- HTTP: `409`
-- Message: `SKU bị trùng trong danh sách phiên bản`
+**Expected:** `400 Thương hiệu không tồn tại`
 
 ---
 
-### TC-CREATE-07: Tạo sản phẩm - SKU Exists in DB
+### TC-CREATE-07: originalPrice <= 0 → 400 (validator)
 
-**Precondition:** Variant với SKU `TEST-001` đã tồn tại trong DB
-
-**Input:** `variants`: JSON array với SKU `TEST-001`
-
-**Expected Output:**
-- HTTP: `409`
-- Message: `SKU đã tồn tại: TEST-001`
+**Input:** `originalPrice: 0`  
+**Expected:** `400 Giá gốc phải là số nguyên lớn hơn 0`
 
 ---
 
-### TC-CREATE-08: Tạo sản phẩm - salePrice > originalPrice
+### TC-CREATE-08: salePrice > originalPrice → 400 (validator)
 
-**Input:** `variants`: JSON array với `originalPrice: 1000000`, `salePrice: 1500000`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Giá bán không được lớn hơn giá gốc`
+**Input:** `originalPrice: 100, salePrice: 200`  
+**Expected:** `400 Giá bán không được lớn hơn giá gốc`
 
 ---
 
 ## TC-UPDATE: Cập nhật sản phẩm
 
-### TC-UPDATE-01: Cập nhật sản phẩm - Happy Path (Partial)
+### TC-UPDATE-01: Cập nhật name + tags
 
-**Precondition:** Product với ID `prod_123` tồn tại
-
-**Input:** `PUT /api/admin/products/prod_123` với form-data:
-- `name`: "iPhone 15 Updated"
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Product object với `name` updated
-- Các fields khác không đổi
+**Input:** `{ name: "Tên mới", tagIds: ["uuid1"] }`  
+**Expected:** `200`; tags cũ bị xóa, tag mới được gắn; `product.name = "Tên mới"`
 
 ---
 
-### TC-UPDATE-02: Cập nhật sản phẩm - Add Images
+### TC-UPDATE-02: Slug rỗng → sinh lại từ name hiện tại
 
-**Input:** `PUT /api/admin/products/prod_123` với `images`: 2 files
-
-**Expected Output:**
-- HTTP: `200`
-- 2 ảnh mới được thêm vào sau ảnh hiện có
-- `sortOrder` tiếp nối từ existing count
+**Input:** `{ slug: "" }`  
+**Expected:** `slug` được sinh lại từ `product.name` hiện tại
 
 ---
 
-### TC-UPDATE-03: Cập nhật sản phẩm - Replace Tags
+### TC-UPDATE-03: Product không tồn tại → 404
 
-**Input:** `PUT /api/admin/products/prod_123` với `tagIds`: JSON array ["tag1", "tag2"]
-
-**Expected Output:**
-- HTTP: `200`
-- Tags cũ bị xóa, tags mới được tạo
-- Transaction atomic
+**Input:** ID ngẫu nhiên  
+**Expected:** `404`
 
 ---
 
-### TC-UPDATE-04: Cập nhật sản phẩm - Not Found
+### TC-UPDATE-04: Thêm ảnh qua PUT — ảnh cũ giữ nguyên
 
-**Input:** `PUT /api/admin/products/non-existing-id`
-
-**Expected Output:**
-- HTTP: `404`
-- Message: `Sản phẩm không tồn tại`
+**Input:** PUT với files mới  
+**Expected:** ảnh cũ vẫn còn; ảnh mới có `isCover = false`; `sortOrder = existingCount + i`
 
 ---
 
-### TC-UPDATE-05: Cập nhật sản phẩm - Invalid Category
+### TC-UPDATE-05: categoryId không tồn tại → 400
 
-**Input:** `categoryId`: non-existing ID
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Danh mục không tồn tại`
-
----
-
-### TC-UPDATE-06: Cập nhật sản phẩm - Unauthorized
-
-**Input:** `PUT /api/admin/products/prod_123` (không có JWT token)
-
-**Expected Output:**
-- HTTP: `401`
+**Input:** `{ categoryId: "uuid-không-có" }`  
+**Expected:** `400`
 
 ---
 
 ## TC-DELETE: Xóa sản phẩm
 
-### TC-DELETE-01: Xóa sản phẩm - Happy Path
+### TC-DELETE-01: Xóa thành công — cascade
 
-**Precondition:** Product với ID `prod_123` tồn tại, có 2 variants và 3 images
-
-**Input:** `DELETE /api/admin/products/prod_123`
-
-**Expected Output:**
-- HTTP: `200`
-- Message: `Xóa sản phẩm thành công`
-- DB: Product, variants, images, tags bị xóa (cascade)
-- Cloudinary: 3 images bị xóa (background)
+**Expected:** `200`; product không còn trong DB; variants, images, specs cũng bị xóa (cascade)
 
 ---
 
-### TC-DELETE-02: Xóa sản phẩm - Not Found
+### TC-DELETE-02: Ảnh Cloudinary được gọi destroyImage async
 
-**Input:** `DELETE /api/admin/products/non-existing-id`
-
-**Expected Output:**
-- HTTP: `404`
+**Expected:** `destroyImage` được gọi với publicId của từng ảnh (mock Cloudinary)
 
 ---
 
-### TC-DELETE-03: Xóa sản phẩm - Unauthorized
+## TC-TOGGLE: Toggle status/featured
 
-**Input:** `DELETE /api/admin/products/prod_123` (không có JWT token)
+### TC-TOGGLE-01: toggleStatus flip isActive
 
-**Expected Output:**
-- HTTP: `401`
-
----
-
-## TC-STATUS: Toggle hiển thị
-
-### TC-STATUS-01: Toggle hiển thị - Happy Path
-
-**Precondition:** Product với `isActive = true`
-
-**Input:** `PATCH /api/admin/products/prod_123/status` với `{ "isActive": false }`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Product object với `isActive = false`
+**Precondition:** `isActive = true`  
+**Expected:** `200`; `isActive = false` trong DB
 
 ---
 
-### TC-STATUS-02: Toggle hiển thị - Not Found
+### TC-TOGGLE-02: toggleFeatured flip isFeatured
 
-**Input:** `PATCH /api/admin/products/non-existing-id/status`
-
-**Expected Output:**
-- HTTP: `404`
+**Precondition:** `isFeatured = false`  
+**Expected:** `200`; `isFeatured = true` trong DB
 
 ---
 
-### TC-STATUS-03: Toggle hiển thị - Unauthorized
+## TC-IMG: Quản lý ảnh
 
-**Input:** `PATCH /api/admin/products/prod_123/status` (không có JWT token)
+### TC-IMG-01: Thêm ảnh khi chưa có ảnh nào — ảnh đầu là cover
 
-**Expected Output:**
-- HTTP: `401`
-
----
-
-## TC-FEATURED: Toggle nổi bật
-
-### TC-FEATURED-01: Toggle nổi bật - Happy Path
-
-**Input:** `PATCH /api/admin/products/prod_123/featured` với `{ "isFeatured": true }`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Product object với `isFeatured = true`
+**Precondition:** Product chưa có ảnh nào  
+**Expected:** ảnh đầu `isCover = true`
 
 ---
 
-### TC-FEATURED-02: Toggle nổi bật - Not Found
+### TC-IMG-02: Thêm ảnh khi đã có — không thay cover
 
-**Input:** `PATCH /api/admin/products/non-existing-id/featured`
-
-**Expected Output:**
-- HTTP: `404`
+**Precondition:** Đã có ảnh cover  
+**Expected:** ảnh mới `isCover = false`; `sortOrder = existingCount + i`
 
 ---
 
-### TC-FEATURED-03: Toggle nổi bật - Unauthorized
+### TC-IMG-03: Xóa ảnh cover → auto-set cover tiếp theo
 
-**Input:** `PATCH /api/admin/products/prod_123/featured` (không có JWT token)
-
-**Expected Output:**
-- HTTP: `401`
+**Precondition:** 2 ảnh; ảnh đầu là cover  
+**Expected:** Ảnh thứ 2 trở thành cover sau khi xóa ảnh đầu
 
 ---
 
-## TC-IMAGE: Quản lý ảnh
+### TC-IMG-04: Xóa ảnh cuối cùng — không auto-set cover
 
-### TC-IMAGE-01: Thêm ảnh - Happy Path
-
-**Input:** `POST /api/admin/products/prod_123/images` với `images`: 3 files
-
-**Expected Output:**
-- HTTP: `201`
-- Body: Array 3 images
-- `sortOrder` = existingCount + index
-- Nếu product chưa có ảnh → ảnh đầu tiên `isCover = true`
+**Precondition:** 1 ảnh (isCover=true)  
+**Expected:** `200`; không có ảnh nào còn trong DB
 
 ---
 
-### TC-IMAGE-02: Thêm ảnh - Too Many Files
+### TC-IMG-05: Xóa ảnh sai productId → 404
 
-**Input:** `POST /api/admin/products/prod_123/images` với 11 files
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Tối đa 10 ảnh mỗi lần upload`
+**Input:** imageId của product khác  
+**Expected:** `404`
 
 ---
 
-### TC-IMAGE-03: Xóa ảnh - Happy Path
+### TC-IMG-06: Set cover — transaction clear + set
 
-**Input:** `DELETE /api/admin/products/prod_123/images/img_123`
-
-**Expected Output:**
-- HTTP: `200`
-- Message: `Xóa ảnh thành công`
-- Nếu ảnh là `isCover` → ảnh kế tiếp thành bìa mới
+**Expected:** Chỉ đúng 1 ảnh có `isCover = true`; các ảnh còn lại `isCover = false`
 
 ---
 
-### TC-IMAGE-04: Xóa ảnh - Not Found
+## TC-SPEC: Quản lý specs
 
-**Input:** `DELETE /api/admin/products/prod_123/images/non-existing-img`
+### TC-SPEC-01: Thay thế toàn bộ specs
 
-**Expected Output:**
-- HTTP: `404`
-
----
-
-### TC-IMAGE-05: Đặt ảnh bìa - Happy Path
-
-**Input:** `PATCH /api/admin/products/prod_123/images/img_123/cover`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Array images với img_123 có `isCover = true`
-- Các ảnh khác có `isCover = false`
+**Input:** `{ specs: [{label: "CPU", value: "A17 Pro"}, {label: "RAM", value: "8GB"}] }`  
+**Expected:** `200`; specs cũ bị xóa; 2 specs mới với `sortOrder = 0, 1`
 
 ---
 
-### TC-IMAGE-06: Đặt ảnh bìa - Not Found
+### TC-SPEC-02: Mảng rỗng — xóa sạch specs
 
-**Input:** `PATCH /api/admin/products/prod_123/images/non-existing-img/cover`
+**Input:** `{ specs: [] }`  
+**Expected:** `200 []`; không còn spec nào trong DB
 
-**Expected Output:**
-- HTTP: `404`
+---
+
+### TC-SPEC-03: Label rỗng → 400
+
+**Input:** `{ specs: [{ label: "", value: "test" }] }`  
+**Expected:** `400`
+
+---
+
+### TC-SPEC-04: Vượt 60 dòng → 400
+
+**Input:** Array 61 phần tử  
+**Expected:** `400 Tối đa 60 dòng thông số`
 
 ---
 
 ## TC-VARIANT: Quản lý variant
 
-### TC-VARIANT-01: Thêm variant - Happy Path
+### TC-VARIANT-01: Thêm variant thành công
 
-**Input:** `POST /api/admin/products/prod_123/variants` với:
-```json
-{
-  "sku": "NEW-VARIANT-001",
-  "color": "Đen",
-  "storage": "128GB",
-  "originalPrice": 20000000,
-  "salePrice": 18000000,
-  "stock": 10
-}
-```
-
-**Expected Output:**
-- HTTP: `201`
-- Body: Variant object với `isActive = true`
+**Expected:** `201`; SKU unique; `stock = 0` nếu không truyền
 
 ---
 
-### TC-VARIANT-02: Thêm variant - SKU Exists
+### TC-VARIANT-02: Thêm variant SKU trùng → 409
 
-**Precondition:** SKU `EXISTING-SKU` đã tồn tại trong DB
-
-**Input:** `POST /api/admin/products/prod_123/variants` với `{ "sku": "EXISTING-SKU", ... }`
-
-**Expected Output:**
-- HTTP: `409`
-- Message: `SKU đã tồn tại`
+**Expected:** `409`
 
 ---
 
-### TC-VARIANT-03: Cập nhật variant - Happy Path
+### TC-VARIANT-03: Cập nhật partial — chỉ salePrice
 
-**Input:** `PUT /api/admin/products/prod_123/variants/var_123` với `{ "stock": 50 }`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Variant object với `stock = 50`
+**Input:** `{ salePrice: 25000000 }`  
+**Precondition:** `originalPrice = 30000000`  
+**Expected:** `200`; `salePrice = 25000000`; `originalPrice` không đổi
 
 ---
 
-### TC-VARIANT-04: Cập nhật variant - Change SKU
+### TC-VARIANT-04: Update salePrice > originalPrice hiện tại → 400
 
-**Input:** `PUT /api/admin/products/prod_123/variants/var_123` với `{ "sku": "NEW-SKU-001" }`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Variant object với `sku` updated
-- Check SKU unique (bỏ qua chính nó)
+**Precondition:** `originalPrice = 20000000`  
+**Input:** `{ salePrice: 25000000 }` (không gửi originalPrice)  
+**Expected:** `400 Giá bán không được lớn hơn giá gốc`
 
 ---
 
-### TC-VARIANT-05: Xóa variant - Happy Path
+### TC-VARIANT-05: Xóa variant — còn >= 2 variant
 
-**Precondition:** Product có ≥ 2 variants
-
-**Input:** `DELETE /api/admin/products/prod_123/variants/var_123`
-
-**Expected Output:**
-- HTTP: `200`
-- Message: `Xóa phiên bản thành công`
+**Expected:** `200`; variant không còn trong DB
 
 ---
 
-### TC-VARIANT-06: Xóa variant - Last Variant
+### TC-VARIANT-06: Xóa variant cuối → 409
 
-**Precondition:** Product chỉ có 1 variant
-
-**Input:** `DELETE /api/admin/products/prod_123/variants/var_123`
-
-**Expected Output:**
-- HTTP: `409`
-- Message: `Không thể xóa phiên bản cuối cùng của sản phẩm`
+**Precondition:** Chỉ còn 1 variant  
+**Expected:** `409 Sản phẩm phải có ít nhất một phiên bản`
 
 ---
 
-### TC-VARIANT-07: Patch stock - Happy Path
+### TC-VARIANT-07: Variant sai productId → 404
 
-**Input:** `PATCH /api/admin/products/prod_123/variants/var_123/stock` với `{ "stock": 100 }`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Variant object với `stock = 100`
+**Input:** variantId của product khác  
+**Expected:** `404`
 
 ---
 
-### TC-VARIANT-08: Patch stock - Invalid Value
+## TC-STOCK: Tồn kho
 
-**Input:** `PATCH /api/admin/products/prod_123/variants/var_123/stock` với `{ "stock": -5 }`
+### TC-STOCK-01: Cập nhật stock thành công (không có expectedStock)
 
-**Expected Output:**
-- HTTP: `400`
-- Message: `Tồn kho phải là số nguyên không âm`
+**Input:** `{ stock: 50 }`  
+**Expected:** `200`; `variant.stock = 50`
+
+---
+
+### TC-STOCK-02: Optimistic lock — expectedStock khớp
+
+**Input:** `{ stock: 50, expectedStock: 15 }` khi DB có `stock = 15`  
+**Expected:** `200`
+
+---
+
+### TC-STOCK-03: Optimistic lock — expectedStock không khớp → 409
+
+**Input:** `{ stock: 50, expectedStock: 15 }` khi DB có `stock = 20`  
+**Expected:** `409 Tồn kho đã thay đổi (hiện tại 20)`
 
 ---
 
 ## TC-INVENTORY: Báo cáo tồn kho
 
-### TC-INVENTORY-01: Báo cáo tồn kho - Happy Path
+### TC-INV-01: Filter out_of_stock
 
-**Input:** `GET /api/admin/inventory`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: `{ variants: [], summary: {}, pagination: {} }`
-- `summary`包含: `totalVariants`, `totalStock`, `outOfStock`, `lowStock`, `inStock`
-- Variants sorted by `stock ASC` (hết hàng lên đầu)
+**Input:** `?stockStatus=out_of_stock`  
+**Expected:** Tất cả variants trả về có `stock = 0`
 
 ---
 
-### TC-INVENTORY-02: Báo cáo tồn kho - Filter Out of Stock
+### TC-INV-02: Summary cache 60 giây
 
-**Input:** `GET /api/admin/inventory?stockStatus=out_of_stock`
-
-**Expected Output:**
-- HTTP: `200`
-- Chỉ variants với `stock = 0`
+**Precondition:** Gọi inventory lần 1; update stock DB; gọi lần 2 trong 60s  
+**Expected:** Summary của lần 2 giống lần 1 (cache chưa hết hạn)
 
 ---
 
-### TC-INVENTORY-03: Báo cáo tồn kho - Filter Low Stock
+### TC-INV-03: Summary cache phân biệt theo lowThreshold
 
-**Input:** `GET /api/admin/inventory?stockStatus=low_stock&lowThreshold=10`
-
-**Expected Output:**
-- HTTP: `200`
-- Chỉ variants với `0 < stock ≤ 10`
-
----
-
-### TC-INVENTORY-04: Báo cáo tồn kho - Search Product
-
-**Input:** `GET /api/admin/inventory?search=iphone`
-
-**Expected Output:**
-- HTTP: `200`
-- Variants của products có name khớp "iphone" (FTS)
-
----
-
-### TC-INVENTORY-05: Báo cáo tồn kho - Summary Cache
-
-**Precondition:** Gọi lần 1 → summary được cache
-
-**Input:** `GET /api/admin/inventory` (lần 2 trong 60s)
-
-**Expected Output:**
-- HTTP: `200`
-- Summary từ cache (không tính lại từ DB)
-
----
-
-## TC-CACHE: Cache Bust
-
-### TC-CACHE-01: Cache Bust - Tạo sản phẩm
-
-**Precondition:** `GET /api/products` đã cache
-
-**Input:** `POST /api/admin/products` (tạo product thành công)
-
-**Expected Output:**
-- Redis: `products:list:*` keys bị xóa
-- Redis: `products:featured:*` keys bị xóa
-- `GET /api/products` lần sau → fresh data
-
----
-
-### TC-CACHE-02: Cache Bust - Cập nhật tồn kho
-
-**Precondition:** `GET /api/products` và `GET /api/products/:slug` đã cache
-
-**Input:** `PATCH /api/admin/products/:id/variants/:variantId/stock` (update stock)
-
-**Expected Output:**
-- Redis: `products:list:*` và `products:slug:{slug}` bị xóa
-- Public API thấy fresh stock
-
----
-
-### TC-CACHE-03: Cache Hit - Public API
-
-**Precondition:** Gọi `GET /api/products` lần 1 → cache
-
-**Input:** `GET /api/products` (lần 2 trong 5 phút)
-
-**Expected Output:**
-- HTTP: `200`
-- Response từ cache (không query DB)
-- Response time nhanh hơn
+**Input:** Gọi `?lowThreshold=5` rồi `?lowThreshold=20`  
+**Expected:** 2 lần trả `lowStock` khác nhau (không dùng chung cache)
 
 ---
 
 ## Checklist Coverage
 
-| Tiêu chí | Trạng thái |
+| Tiêu chí | TC |
 |---|---|
-| Happy path tất cả endpoints | ✅ |
-| Validation errors (400) | ✅ |
-| Not found (404) | ✅ |
-| Unauthorized (401) | ✅ |
-| Forbidden (403) | ✅ |
-| Conflict (409) - SKU trùng | ✅ |
-| Ràng buộc nghiệp vụ (xóa variant cuối) | ✅ |
-| Cache hit/miss | ✅ |
-| Cache bust sau thay đổi | ✅ |
-| Cascade delete (product → variants/images) | ✅ |
-| Transaction atomic (replace tags) | ✅ |
-| DB state verification sau mỗi action | ✅ |
-| Cloudinary upload/delete | ✅ (mock test) |
-
----
-
-## Test Data Setup
-
-**Seed Data:**
-
-```typescript
-// Category
-const category = await db.category.create({
-  data: { name: "Điện thoại", slug: "dien-thoai" }
-});
-
-// Brand
-const brand = await db.brand.create({
-  data: { name: "Apple", slug: "apple" }
-});
-
-// Tag
-const tag = await db.tag.create({
-  data: { name: "Hàng mới", slug: "hang-moi" }
-});
-
-// Product
-const product = await db.product.create({
-  data: {
-    name: "iPhone 15 Test",
-    slug: "iphone-15-test",
-    categoryId: category.id,
-    brandId: brand.id,
-    isActive: true,
-    isFeatured: true,
-    variants: {
-      create: [
-        {
-          sku: "IP15-TEST-001",
-          color: "Đen",
-          storage: "128GB",
-          originalPrice: 20000000,
-          salePrice: 18000000,
-          stock: 10
-        }
-      ]
-    },
-    images: {
-      create: [
-        {
-          url: "https://res.cloudinary.com/test/image.jpg",
-          publicId: "products/test/cover",
-          isCover: true,
-          sortOrder: 0
-        }
-      ]
-    },
-    productTags: {
-      create: [{ tagId: tag.id }]
-    }
-  }
-});
-```
-
----
-
-> **Document Status:** Draft  
-> **Last Updated:** 2026-06-19  
-> **Total Test Cases:** 82  
-> **Next Review:** After test implementation
+| Public chỉ thấy isActive=true | TC-LIST-01, TC-DETAIL-03 |
+| description bị omit trong listing | TC-LIST-01 |
+| Giá phải là integer VND | TC-CREATE-07, TC-CREATE-08 |
+| SKU unique toàn hệ thống | TC-CREATE-03, TC-CREATE-04 |
+| Slug tự sinh | TC-CREATE-02 |
+| isCover logic khi thêm/xóa ảnh | TC-IMG-01, TC-IMG-03, TC-IMG-04 |
+| replaceSpecs là replace-all | TC-SPEC-01, TC-SPEC-02 |
+| Không thể xóa variant cuối | TC-VARIANT-06 |
+| Optimistic lock tồn kho | TC-STOCK-02, TC-STOCK-03 |
+| updateVariant cross-validate giá sau merge | TC-VARIANT-04 |
+| Inventory summary cache theo threshold | TC-INV-02, TC-INV-03 |
+| destroyImage fire-and-forget | TC-DELETE-02 |

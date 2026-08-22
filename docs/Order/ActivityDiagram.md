@@ -1,234 +1,98 @@
-# Activity Diagram — Luồng xử lý
-## Module: Order (Đơn hàng)
+# Activity Diagram
+## Module: Order
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Ghi chú:** Sử dụng cú pháp Mermaid — render trên GitHub, GitLab, Obsidian, VSCode
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22
 
 ---
 
-## AD-01: Đặt hàng từ giỏ hàng
+## AD-01: Tạo đơn hàng
 
 ```mermaid
 flowchart TD
-    A([Start: Customer gửi POST /api/orders]) --> B[Middleware authenticate CUSTOMER+]
-    B -->|Auth fail| E1[/Trả về 401/]
-    B -->|Auth pass| C[Validate addressId bắt buộc]
-    C -->|Thiếu| E2[/Trả về 400 - Vui lòng chọn địa chỉ/]
-    C -->|Có| D{Có gửi items?}
-    D -->|Không| E[Get CartItems của user]
-    D -->|Có| F[Resolve items từ body]
-    E --> E1{Giỏ trống?}
-    E1 -->|Trống| E3[/Trả về 400 - Giỏ hàng trống/]
-    E1 -->|Không trống| G[Get variants từ CartItems]
-    F --> G
-    G --> H[Validate variants tồn tại + active]
-    H -->|Không tồn tại/inactive| E4[/Trả về 400 - Sản phẩm không tồn tại/]
-    H -->|Tồn tại| I[Tính toán unitPrice, subtotal, total]
-    I --> J[Sinh orderCode: ORD-YYYYMMDD-XXXXXX]
-    J --> K[Begin DB Transaction]
-    K --> L[Tạo Order + OrderItems - snapshot]
-    L --> M[Atomic decrement stock WHERE stock >= quantity]
-    M -->|count = 0| N[Rollback transaction]
-    N --> E5[/Trả về 400 - Sản phẩm không đủ hàng/]
-    M -->|count > 0| O{Đặt từ giỏ?}
-    O -->|Có| P[Xóa CartItems]
-    O -->|Không| Q[Commit transaction]
-    P --> Q
-    Q --> R[/Trả về 201 + order object/]
-    E1 --> Z([End])
-    E2 --> Z
-    E3 --> Z
-    E4 --> Z
-    E5 --> Z
-    R --> Z
+    Start([POST /api/orders]) --> Auth{Đã đăng nhập?}
+    Auth -- Không --> E401[401]
+    Auth -- Có --> Validate[validateCreateOrder\naddressId, paymentMethod, couponCode, items]
+    Validate --> ValidOK{Hợp lệ?}
+    ValidOK -- Không --> E400[400]
+    ValidOK -- Có --> Parallel1[Song song:\nTìm address by id+userId\nresolveItems - giỏ hoặc items param]
+    Parallel1 --> AddrOK{Address tồn tại?}
+    AddrOK -- Không --> E404[404]
+    AddrOK -- Có --> ItemsOK{Items rỗng?}
+    ItemsOK -- Có --> E400b[400 Giỏ hàng trống]
+    ItemsOK -- Không --> FetchVariants[Fetch variants\nValidate isActive]
+    FetchVariants --> ActiveOK{Tất cả active?}
+    ActiveOK -- Không --> E400c[400 Sản phẩm ngừng bán]
+    ActiveOK -- Có --> CalcSubtotal[Tính subtotal\nshippingFee=0]
+    CalcSubtotal --> HasCoupon{Có couponCode?}
+    HasCoupon -- Có --> CheckCoupon[checkCouponUsable\ncomputeDiscount]
+    CheckCoupon --> CouponOK{Hợp lệ?}
+    CouponOK -- Không --> E400d[400 reason]
+    CouponOK -- Có --> CalcTotal[total = subtotal + fee - discount]
+    HasCoupon -- Không --> CalcTotal
+    CalcTotal --> IsZero{total === 0?}
+    IsZero -- Có --> SetPaid[paymentStatus=PAID\npaidAt=now]
+    IsZero -- Không --> NoSetPaid[paymentStatus=UNPAID]
+    SetPaid & NoSetPaid --> TX[BEGIN TRANSACTION]
+    TX --> CreateOrder[order.create + items.create]
+    CreateOrder --> DecrStock[updateMany WHERE stock >= qty\nfor each variant]
+    DecrStock --> StockOK{count > 0?}
+    StockOK -- Không --> Rollback1[ROLLBACK\n400 không đủ hàng]
+    StockOK -- Có --> HasCouponTX{Có coupon?}
+    HasCouponTX -- Có --> IncrUsed[updateMany usedCount += 1\nWHERE usedCount < usageLimit]
+    IncrUsed --> UsedOK{count > 0 hoặc\nkhông có limit?}
+    UsedOK -- Không --> Rollback2[ROLLBACK\n409 mã hết lượt]
+    UsedOK -- Có --> CreateUsage[couponUsage.create\nP2002 → ROLLBACK 409]
+    HasCouponTX -- Không --> FromCart{Đặt từ giỏ?}
+    CreateUsage --> FromCart
+    FromCart -- Có --> ClearCart[cartItem.deleteMany]
+    FromCart -- Không --> Commit[COMMIT]
+    ClearCart --> Commit
+    Commit --> R201[201 order + items]
 ```
 
 ---
 
-## AD-02: Hủy đơn hàng (Customer)
+## AD-02: Hủy đơn (cancelAndRestoreStock)
 
 ```mermaid
 flowchart TD
-    A([Start: Customer gửi PATCH /api/orders/:id/cancel]) --> B[Middleware authenticate CUSTOMER+]
-    B -->|Auth fail| E1[/Trả về 401/]
-    B -->|Auth pass| C[Query WHERE id AND userId]
-    C -->|Không tìm thấy| E2[/Trả về 404 - Đơn hàng không tồn tại/]
-    C -->|Tìm thấy| D[Validate trạng thái cho phép CANCELLED]
-    D -->|Không cho phép| E3[/Trả về 400 - Không thể hủy đơn ở trạng thái hiện tại/]
-    D -->|Cho phép| E[Begin DB Transaction]
-    E --> F[Update status = CANCELLED, cancelReason]
-    F --> G[Hoàn trả stock cho từng item increment]
-    G --> H[Commit transaction]
-    H --> I[/Trả về 200 + order object/]
-    E1 --> Z([End])
-    E2 --> Z
-    E3 --> Z
-    I --> Z
+    Start([cancelAndRestoreStock order, reason]) --> TX[BEGIN TRANSACTION]
+    TX --> UpdateStatus[order.update\nWHERE id=order.id\nAND status=order.status\n→ CANCELLED]
+    UpdateStatus --> P2025{P2025?}
+    P2025 -- Có --> E409[ROLLBACK\n409 Đơn vừa được cập nhật]
+    P2025 -- Không --> BatchItems[Group items by quantity\nSkip variantId=null]
+    BatchItems --> RestoreStock[updateMany stock += qty\ncho mỗi batch]
+    RestoreStock --> FindUsage[Tìm CouponUsage by orderId]
+    FindUsage --> HasUsage{Tồn tại?}
+    HasUsage -- Có --> DelUsage[Xóa CouponUsage]
+    DelUsage --> DecrUsed[coupon.updateMany\nusedCount -= 1\nWHERE usedCount > 0]
+    HasUsage -- Không --> Commit[COMMIT]
+    DecrUsed --> Commit
+    Commit --> R200[200 order CANCELLED]
 ```
 
 ---
 
-## AD-03: Admin cập nhật trạng thái đơn hàng
+## AD-03: Admin chuyển trạng thái
 
 ```mermaid
 flowchart TD
-    A([Start: Admin gửi PATCH /api/admin/orders/:id/status]) --> B[Middleware authenticate + authorize STAFF+]
-    B -->|Auth fail| E1[/Trả về 401/403/]
-    B -->|Auth pass| C[Validate status là OrderStatus hợp lệ]
-    C -->|Sai| E2[/Trả về 400 - Trạng thái không hợp lệ/]
-    C -->|Đúng| D{status = CANCELLED?}
-    D -->|Có| E[Validate cancelReason bắt buộc]
-    D -->|Không| F[Find order by ID]
-    E -->|Thiếu| E3[/Trả về 400 - Vui lòng nhập lý do hủy/]
-    E -->|Có| F
-    F -->|Không tìm thấy| E4[/Trả về 404/]
-    F -->|Tìm thấy| G[Validate transition theo VALID_TRANSITIONS]
-    G -->|Không hợp lệ| E5[/Trả về 400 - Không thể chuyển từ.../]
-    G -->|Hợp lệ| H{status = CANCELLED?}
-    H -->|Có| I[Begin DB Transaction]
-    H -->|Không| J[Update status thẳng]
-    I --> K[Update status + cancelReason]
-    K --> L[Hoàn trả stock cho từng item]
-    L --> M[Commit transaction]
-    M --> N[/Trả về 200 + order/]
-    J --> N
-    E1 --> Z([End])
-    E2 --> Z
-    E3 --> Z
-    E4 --> Z
-    E5 --> Z
-    N --> Z
+    Start([PATCH /admin/orders/:id/status]) --> Auth{STAFF+?}
+    Auth -- Không --> E401_403[401/403]
+    Auth -- Có --> Validate[validateUpdateStatus\nstatus enum\nif CANCELLED → cancelReason required]
+    Validate --> ValOK{Hợp lệ?}
+    ValOK -- Không --> E400[400]
+    ValOK -- Có --> FindOrder[Tìm order\nselect id, status, items]
+    FindOrder --> Exist{Tồn tại?}
+    Exist -- Không --> E404[404]
+    Exist -- Có --> CheckTransition{VALID_TRANSITIONS\ncurrentStatus\nchứa targetStatus?}
+    CheckTransition -- Không --> E400b[400 Transition không hợp lệ]
+    CheckTransition -- Có --> IsCancelled{targetStatus\n=== CANCELLED?}
+    IsCancelled -- Có --> Cancel[cancelAndRestoreStock]
+    IsCancelled -- Không --> Guard[order.update\nWHERE id AND status=currentStatus]
+    Guard --> P2025{P2025?}
+    P2025 -- Có --> E409[409 Concurrency conflict]
+    P2025 -- Không --> R200[200 order updated]
+    Cancel --> R200b[200 order CANCELLED]
 ```
-
----
-
-## AD-04: Admin cập nhật thanh toán
-
-```mermaid
-flowchart TD
-    A([Start: Admin gửi PATCH /api/admin/orders/:id/payment]) --> B[Middleware authenticate + authorize STAFF+]
-    B -->|Auth fail| E1[/Trả về 401/403/]
-    B -->|Auth pass| C[Validate paymentStatus hợp lệ]
-    C -->|Sai| E2[/Trả về 400 - Trạng thái thanh toán không hợp lệ/]
-    C -->|Đúng| D[Find order lean check]
-    D -->|Không tìm thấy| E3[/Trả về 404/]
-    D -->|Tìm thấy| E[Update paymentStatus]
-    E --> F{paymentStatus = PAID?}
-    F -->|Có| G[Set paidAt = NOW]
-    F -->|Không| H[/Trả về 200 + order/]
-    G --> H
-    E1 --> Z([End])
-    E2 --> Z
-    E3 --> Z
-    H --> Z
-```
-
----
-
-## AD-05: Xem danh sách đơn của tôi
-
-```mermaid
-flowchart TD
-    A([Start: Customer gửi GET /api/orders]) --> B[Middleware authenticate CUSTOMER+]
-    B -->|Auth fail| E1[/Trả về 401/]
-    B -->|Auth pass| C[Get userId từ JWT]
-    C --> D[Query WHERE userId = req.user.userId]
-    D --> E{Có filter status?}
-    E -->|Có| F[Apply filter status]
-    E -->|Không| G[Skip filter]
-    F --> H[Sort by createdAt DESC]
-    G --> H
-    H --> I[Paginate results]
-    I --> J[/Trả về 200 + orders + pagination/]
-    E1 --> Z([End])
-    J --> Z
-```
-
----
-
-## AD-06: Xem chi tiết đơn hàng của tôi
-
-```mermaid
-flowchart TD
-    A([Start: Customer gửi GET /api/orders/:id]) --> B[Middleware authenticate CUSTOMER+]
-    B -->|Auth fail| E1[/Trả về 401/]
-    B -->|Auth pass| C[Query WHERE id AND userId]
-    C -->|Không tìm thấy| E2[/Trả về 404 - Đơn hàng không tồn tại/]
-    C -->|Tìm thấy| D[Include OrderItems, User, Address]
-    D --> E[/Trả về 200 + order full detail/]
-    E1 --> Z([End])
-    E2 --> Z
-    E --> Z
-```
-
----
-
-## AD-07: Admin xem danh sách tất cả đơn
-
-```mermaid
-flowchart TD
-    A([Start: Admin gửi GET /api/admin/orders]) --> B[Middleware authenticate + authorize STAFF+]
-    B -->|Auth fail| E1[/Trả về 401/403/]
-    B -->|Auth pass| C[Build where clause từ filters]
-    C --> D[Include User + _count.items]
-    D --> E[Sort by createdAt DESC]
-    E --> F[Paginate results]
-    F --> G[/Trả về 200 + orders + pagination/]
-    E1 --> Z([End])
-    G --> Z
-```
-
----
-
-## AD-08: Admin xem chi tiết đơn hàng bất kỳ
-
-```mermaid
-flowchart TD
-    A([Start: Admin gửi GET /api/admin/orders/:id]) --> B[Middleware authenticate + authorize STAFF+]
-    B -->|Auth fail| E1[/Trả về 401/403/]
-    B -->|Auth pass| C[Find order by ID]
-    C -->|Không tìm thấy| E2[/Trả về 404/]
-    C -->|Tìm thấy| D[Include đầy đủ OrderItems, User, Address]
-    D --> E[/Trả về 200 + order full detail/]
-    E1 --> Z([End])
-    E2 --> Z
-    E --> Z
-```
-
----
-
-## AD-09: State Machine - Trạng thái đơn hàng
-
-```mermaid
-flowchart TD
-    A([PENDING]) --> B{VALID_TRANSITIONS}
-    B -->|CONFIRMED| C([CONFIRMED])
-    B -->|CANCELLED| D([CANCELLED])
-    
-    C --> E{VALID_TRANSITIONS}
-    E -->|SHIPPING| F([SHIPPING])
-    E -->|CANCELLED| D
-    
-    F --> G{VALID_TRANSITIONS}
-    G -->|DELIVERED| H([DELIVERED])
-    G -->|CANCELLED| D
-    
-    H --> I([Kết thúc])
-    D --> I
-    
-    style A fill:#e1f5ff
-    style C fill:#fff4e1
-    style F fill:#ffe1f5
-    style H fill:#e1ffe1
-    style D fill:#ffe1e1
-    style I fill:#f0f0f0
-```
-
----
-
-> **Document Status:** Draft  
-> **Last Updated:** 2026-06-19  
-> **Total Diagrams:** 9  
-> **Next Review:** After implementation complete

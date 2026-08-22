@@ -1,125 +1,66 @@
 # Test Case Document
-## Module: Authentication
+## Module: Auth
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Tham chiếu:** [SRS.md](./SRS.md) | [APISpec.md](./APISpec.md)  
-> **Test Framework:** Vitest + Supertest  
-> **Môi trường:** Test DB (NODE_ENV=test) — rate limit bị skip
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22  
+> **Framework:** Vitest + Supertest
 
 ---
 
-## Tổng quan Test Suite
+## Tổng quan
 
-| Nhóm | Số TC | Phủ |
-|---|---|---|
-| POST /auth/register | 8 | Đăng ký |
-| POST /auth/login | 7 | Đăng nhập |
-| POST /auth/refresh | 6 | Refresh Token |
-| POST /auth/forgot-password | 4 | Quên mật khẩu |
-| POST /auth/reset-password | 6 | Đặt lại mật khẩu |
-| POST /auth/logout | 3 | Đăng xuất |
-| Middleware authenticate | 4 | Xác thực request |
-| **Tổng cộng** | **38** | |
+| Nhóm | Số TC |
+|---|---|
+| Đăng ký | 5 |
+| Đăng nhập | 6 |
+| Refresh Token | 5 |
+| Quên mật khẩu | 3 |
+| Đặt lại mật khẩu | 5 |
+| Đăng xuất | 3 |
+| authenticate Middleware | 3 |
+| **Tổng** | **30** |
 
 ---
 
-## TC-REG: Đăng ký tài khoản
+## TC-REG: Đăng ký
 
 ### TC-REG-01: Đăng ký thành công
 
-| Thuộc tính | Giá trị |
-|---|---|
-| **ID** | TC-REG-01 |
-| **Mức độ** | Cao |
-| **Loại** | Happy Path |
-
-**Input:**
-```json
-{
-  "email":    "newuser@example.com",
-  "fullName": "Nguyễn Văn Test",
-  "password": "password123",
-  "phone":    "0901234567"
-}
-```
-
-**Expected Output:**
-- HTTP Status: `201`
-- Body chứa `id`, `email`, `fullName`, `role = "CUSTOMER"`, `createdAt`
-- Body **không chứa** `password`, `passwordHash`, `resetPasswordToken`
+**Input:** `{ email: "new@test.com", fullName: "Test User", password: "pass1234" }`  
+**Expected:**
+- `200`
+- Response không chứa `passwordHash`
+- `role = CUSTOMER`, `isActive = true`
+- User tồn tại trong DB
 
 ---
 
-### TC-REG-02: Email đã tồn tại
+### TC-REG-02: Email đã tồn tại → 409
 
-| Thuộc tính | Giá trị |
-|---|---|
-| **ID** | TC-REG-02 |
-| **Mức độ** | Cao |
-| **Loại** | Negative |
-
-**Precondition:** User với email `existing@example.com` đã tồn tại trong DB.
-
-**Input:**
-```json
-{ "email": "existing@example.com", "fullName": "Test", "password": "password123" }
-```
-
-**Expected Output:**
-- HTTP Status: `409`
-- Message: `"Email đã được sử dụng"`
+**Precondition:** Email đã có trong DB  
+**Input:** Cùng email  
+**Expected:** `409 Email đã được sử dụng`
 
 ---
 
-### TC-REG-03: Email sai định dạng
+### TC-REG-03: Email sai format → 400
 
-| ID | Input | Expected Status | Expected Message |
-|---|---|---|---|
-| TC-REG-03a | `"email": "notanemail"` | 400 | `Email không hợp lệ` |
-| TC-REG-03b | `"email": ""` | 400 | `Email không hợp lệ` |
-| TC-REG-03c | `"email": "no@"` | 400 | `Email không hợp lệ` |
+**Input:** `email: "notanemail"`  
+**Expected:** `400`
 
 ---
 
-### TC-REG-04: fullName không hợp lệ
+### TC-REG-04: fullName quá ngắn → 400
 
-| ID | Input | Expected Status | Expected Message |
-|---|---|---|---|
-| TC-REG-04a | `"fullName": "A"` | 400 | `Họ tên phải có ít nhất 2 ký tự` |
-| TC-REG-04b | `"fullName": ""` | 400 | `Họ tên phải có ít nhất 2 ký tự` |
-| TC-REG-04c | Thiếu `fullName` | 400 | `Họ tên phải có ít nhất 2 ký tự` |
+**Input:** `fullName: "A"` (1 ký tự)  
+**Expected:** `400`
 
 ---
 
-### TC-REG-05: Password quá ngắn
+### TC-REG-05: Password quá ngắn → 400
 
-| ID | Input | Expected Status | Expected Message |
-|---|---|---|---|
-| TC-REG-05a | `"password": "1234567"` (7 ký tự) | 400 | `Mật khẩu phải có ít nhất 8 ký tự` |
-| TC-REG-05b | `"password": ""` | 400 | `Mật khẩu phải có ít nhất 8 ký tự` |
-
----
-
-### TC-REG-06: Đăng ký không có phone (optional field)
-
-**Input:** `{ "email": "nophone@example.com", "fullName": "No Phone", "password": "password123" }`
-
-**Expected:** `201` — phone có thể null, không ảnh hưởng.
-
----
-
-### TC-REG-07: Password được hash (không lưu plain text)
-
-**Precondition:** Đăng ký thành công.  
-**Verify:** Truy vấn DB: `user.passwordHash` không bằng `"password123"` và `passwordHash.startsWith("$2b$")`.
-
----
-
-### TC-REG-08: Role mặc định là CUSTOMER
-
-**Verify:** Response chứa `"role": "CUSTOMER"` sau đăng ký.
+**Input:** `password: "1234567"` (7 ký tự)  
+**Expected:** `400`
 
 ---
 
@@ -127,103 +68,88 @@
 
 ### TC-LOGIN-01: Đăng nhập thành công
 
-**Input:** `{ "email": "test@example.com", "password": "password123" }`  
+**Input:** email + password đúng  
 **Expected:**
-- HTTP: `200`
-- Body chứa `accessToken`, `refreshToken`, `user`
-- `user` không chứa `passwordHash`
-- `accessToken` là JWT hợp lệ với payload `{ userId, email, role }`
+- `200`
+- `accessToken`, `refreshToken` trong response
+- `user` không có `passwordHash`, `resetPasswordToken`, `resetPasswordExpires`
+- RefreshToken được tạo trong DB
 
 ---
 
-### TC-LOGIN-02: Sai password
+### TC-LOGIN-02: Email không tồn tại → 401
 
-**Input:** `{ "email": "test@example.com", "password": "wrongpassword" }`  
-**Expected:** `401`, message: `"Email hoặc mật khẩu không đúng"`
-
----
-
-### TC-LOGIN-03: Email không tồn tại
-
-**Input:** `{ "email": "notfound@example.com", "password": "anypassword" }`  
-**Expected:** `401`, message: `"Email hoặc mật khẩu không đúng"`  
-**Verify:** Message giống TC-LOGIN-02 — không phân biệt sai email hay sai password.
+**Input:** email chưa đăng ký  
+**Expected:** `401` — cùng message với TC-LOGIN-03
 
 ---
 
-### TC-LOGIN-04: Tài khoản bị khóa
+### TC-LOGIN-03: Password sai → 401
 
-**Precondition:** User có `isActive = false`.  
-**Expected:** `403`, message: `"Tài khoản đã bị khóa"`
-
----
-
-### TC-LOGIN-05: Thiếu email
-
-**Input:** `{ "password": "password123" }`  
-**Expected:** `400`, message: `"Email không hợp lệ"`
+**Precondition:** Email tồn tại  
+**Input:** Sai password  
+**Expected:** `401` — cùng message với TC-LOGIN-02
 
 ---
 
-### TC-LOGIN-06: Thiếu password
+### TC-LOGIN-04: Tài khoản bị khóa → 403
 
-**Input:** `{ "email": "test@example.com" }`  
-**Expected:** `400`, message: `"Vui lòng nhập mật khẩu"`
-
----
-
-### TC-LOGIN-07: Refresh Token được lưu vào DB sau đăng nhập
-
-**Verify:** Sau đăng nhập thành công, truy vấn DB: tìm thấy bản ghi `RefreshToken` với `token = refreshToken` và `isRevoked = false`.
+**Precondition:** `user.isActive = false`  
+**Expected:** `403 Tài khoản bị vô hiệu hóa`
 
 ---
 
-## TC-REFRESH: Làm mới phiên đăng nhập
+### TC-LOGIN-05: User OAuth không có password → 401
 
-### TC-REFRESH-01: Refresh thành công
+**Precondition:** User tồn tại nhưng `passwordHash = null`  
+**Expected:** `401` (cùng message)
 
-**Precondition:** Đã đăng nhập, có `refreshToken` hợp lệ.  
-**Input:** `{ "refreshToken": "<valid_token>" }`  
+---
+
+### TC-LOGIN-06: Password thiếu → 400
+
+**Input:** `{ email: "test@test.com" }` (thiếu password)  
+**Expected:** `400`
+
+---
+
+## TC-REFRESH: Refresh Token
+
+### TC-REFRESH-01: Rotation thành công
+
+**Precondition:** Có refresh token hợp lệ  
 **Expected:**
-- HTTP: `200`
-- Body chứa `accessToken` mới và `refreshToken` mới
-- Token mới **khác** token cũ
+- `200 { accessToken, refreshToken }`
+- Token cũ: `isRevoked = true` trong DB
+- Token mới tạo trong DB
 
 ---
 
-### TC-REFRESH-02: Token cũ bị revoke sau refresh (Rotation)
+### TC-REFRESH-02: JWT invalid → 401
 
-**Precondition:** Đã refresh thành công một lần.  
-**Action:** Gọi lại refresh với token cũ (đã dùng).  
-**Expected:** `401`, message: `"Refresh token không hợp lệ"`
-
----
-
-### TC-REFRESH-03: Token đã bị revoke thủ công
-
-**Precondition:** DB: `isRevoked = true` cho token.  
+**Input:** `refreshToken: "invalid.jwt.token"`  
 **Expected:** `401`
 
 ---
 
-### TC-REFRESH-04: Token hết hạn theo DB
+### TC-REFRESH-03: Token đã revoke → 401
 
-**Precondition:** DB: `expiresAt` đã qua.  
+**Precondition:** Token đã bị revoke (`isRevoked = true`)  
 **Expected:** `401`
 
 ---
 
-### TC-REFRESH-05: Token giả (sai chữ ký JWT)
+### TC-REFRESH-04: Token đã hết hạn DB → 401
 
-**Input:** `{ "refreshToken": "fake.token.here" }`  
-**Expected:** `401`, message: `"Refresh token không hợp lệ hoặc đã hết hạn"`
+**Precondition:** `expiresAt < now` trong DB (dù JWT còn hạn)  
+**Expected:** `401`
 
 ---
 
-### TC-REFRESH-06: Thiếu refreshToken trong body
+### TC-REFRESH-05: refreshToken thiếu → 400
 
-**Input:** `{}`  
-**Expected:** `400`, message: `"Thiếu refresh token"`
+**Input:** `{}` (không có trường refreshToken)  
+**Expected:** `400`
 
 ---
 
@@ -231,157 +157,129 @@
 
 ### TC-FORGOT-01: Email tồn tại — gửi OTP
 
-**Precondition:** User với email tồn tại trong DB.  
-**Input:** `{ "email": "test@example.com" }`  
+**Precondition:** Email có trong DB  
 **Expected:**
-- HTTP: `200`
-- DB: `resetPasswordToken` không null, `resetPasswordExpires = now + 15 phút`
-- Email được gửi (mock mail service)
+- `200`
+- `user.resetPasswordToken` được cập nhật trong DB (dạng hash)
+- `user.resetPasswordExpires ≈ now + 15 phút`
+- Email được gửi (mock sendResetPasswordEmail)
 
 ---
 
-### TC-FORGOT-02: Email không tồn tại — vẫn trả 200
+### TC-FORGOT-02: Email không tồn tại — vẫn 200
 
-**Input:** `{ "email": "notfound@example.com" }`  
-**Expected:**
-- HTTP: `200` (giống TC-FORGOT-01)
-- DB: Không có gì thay đổi
-- Email: Không gửi
+**Input:** Email chưa đăng ký  
+**Expected:** `200` (không tiết lộ)
 
 ---
 
-### TC-FORGOT-03: Email sai định dạng
+### TC-FORGOT-03: Email sai format → 400
 
-**Input:** `{ "email": "notanemail" }`  
+**Input:** `email: "notvalid"`  
 **Expected:** `400`
-
----
-
-### TC-FORGOT-04: OTP được hash trước khi lưu DB
-
-**Verify:** `user.resetPasswordToken !== otp_gốc` và là SHA-256 hash (64 ký tự hex).
 
 ---
 
 ## TC-RESET: Đặt lại mật khẩu
 
-### TC-RESET-01: Đặt lại thành công
+### TC-RESET-01: Reset thành công
 
-**Precondition:** Đã gọi forgot-password, lấy được OTP từ email (hoặc DB test).  
-**Input:** `{ "otp": "382941", "newPassword": "newpassword123" }`  
+**Precondition:** OTP hợp lệ, còn trong 15 phút  
+**Input:** `{ otp: "123456", newPassword: "newPass123" }`  
 **Expected:**
-- HTTP: `200`
-- DB: `passwordHash` mới (bcrypt)
-- DB: `resetPasswordToken = null`, `resetPasswordExpires = null`
-- DB: Toàn bộ `RefreshToken` của user: `isRevoked = true`
+- `200`
+- `user.passwordHash` thay đổi trong DB
+- `user.resetPasswordToken = null`, `resetPasswordExpires = null`
+- Tất cả refresh token của user bị revoke
 
 ---
 
-### TC-RESET-02: OTP sai
+### TC-RESET-02: OTP sai → 400
 
-**Input:** `{ "otp": "000000", "newPassword": "newpassword123" }`  
-**Expected:** `400`, message: `"Token không hợp lệ hoặc đã hết hạn"`
-
----
-
-### TC-RESET-03: OTP hết hạn
-
-**Precondition:** DB: `resetPasswordExpires` đã qua.  
-**Expected:** `400`, message: `"Token không hợp lệ hoặc đã hết hạn"`
+**Input:** OTP không khớp với hash trong DB  
+**Expected:** `400 Token không hợp lệ hoặc đã hết hạn`
 
 ---
 
-### TC-RESET-04: OTP không đúng 6 chữ số
+### TC-RESET-03: OTP hết hạn → 400
 
-| ID | Input otp | Expected |
-|---|---|---|
-| TC-RESET-04a | `"12345"` (5 chữ số) | `400` OTP phải là 6 chữ số |
-| TC-RESET-04b | `"1234567"` (7 chữ số) | `400` |
-| TC-RESET-04c | `"abc123"` (có chữ) | `400` |
+**Precondition:** `resetPasswordExpires < now`  
+**Expected:** `400`
 
 ---
 
-### TC-RESET-05: Password mới quá ngắn
+### TC-RESET-04: OTP không đúng 6 số → 400 (validator)
 
-**Input:** `{ "otp": "382941", "newPassword": "short" }`  
-**Expected:** `400`, message: `"Mật khẩu mới phải có ít nhất 8 ký tự"`
+**Input:** `otp: "12345"` (5 số)  
+**Expected:** `400`
 
 ---
 
-### TC-RESET-06: Toàn bộ session bị revoke sau reset
+### TC-RESET-05: newPassword < 8 ký tự → 400
 
-**Precondition:** User đang có 2 RefreshToken active.  
-**Action:** Reset password thành công.  
-**Verify:** Cả 2 RefreshToken có `isRevoked = true`.
+**Input:** `newPassword: "short"`  
+**Expected:** `400`
 
 ---
 
 ## TC-LOGOUT: Đăng xuất
 
-### TC-LOGOUT-01: Đăng xuất thành công
+### TC-LOGOUT-01: Logout thành công
 
-**Input:** `{ "refreshToken": "<valid_token>" }`  
+**Precondition:** Có refresh token hợp lệ  
 **Expected:**
-- HTTP: `200`
-- DB: `isRevoked = true` cho token này
+- `200`
+- `refreshToken.isRevoked = true` trong DB
 
 ---
 
-### TC-LOGOUT-02: Đăng xuất với token đã revoke (idempotent)
+### TC-LOGOUT-02: Idempotent — revoke lần 2 vẫn 200
 
-**Precondition:** Token đã `isRevoked = true`.  
-**Expected:** `200` (không lỗi — updateMany chỉ update 0 rows)
-
----
-
-### TC-LOGOUT-03: Thiếu refreshToken
-
-**Input:** `{}`  
-**Expected:** `400`, message: `"Thiếu refresh token"`
+**Precondition:** Token đã bị revoke  
+**Expected:** `200` (updateMany count=0, không lỗi)
 
 ---
 
-## TC-AUTH: Middleware Authenticate
+### TC-LOGOUT-03: refreshToken thiếu → 400
 
-### TC-AUTH-01: Không có header Authorization
-
-**Request:** `GET /api/users/me` — không có header  
-**Expected:** `401`, message: `"Không có token xác thực"`
+**Input:** `{}` (không có trường)  
+**Expected:** `400`
 
 ---
 
-### TC-AUTH-02: Access Token hết hạn
+## TC-MW: authenticate Middleware
 
-**Request:** `GET /api/users/me` với token đã hết hạn  
-**Expected:** `401`, message: `"Token không hợp lệ hoặc đã hết hạn"`
+### TC-MW-01: Token hợp lệ → req.user gắn
 
----
-
-### TC-AUTH-03: Access Token hợp lệ
-
-**Request:** `GET /api/users/me` với access token vừa đăng nhập  
-**Expected:** `200` + profile data
+**Input:** Header `Authorization: Bearer <validToken>`  
+**Expected:**
+- Handler nhận được `req.user.userId`, `req.user.email`, `req.user.role`
 
 ---
 
-### TC-AUTH-04: Role không đủ quyền
+### TC-MW-02: Không có header → 401
 
-**Request:** `GET /api/admin/users` với Access Token của CUSTOMER  
-**Expected:** `403`, message: `"Bạn không có quyền thực hiện thao tác này"`
+**Input:** Request không có `Authorization`  
+**Expected:** `401 Không có token xác thực`
+
+---
+
+### TC-MW-03: Token expired → 401
+
+**Input:** JWT đã hết hạn  
+**Expected:** `401 Token không hợp lệ hoặc đã hết hạn`
 
 ---
 
 ## Checklist Coverage
 
-| Tiêu chí | Trạng thái |
+| Tiêu chí | TC |
 |---|---|
-| Happy path tất cả 6 endpoints | ✅ |
-| Validate đầu vào thiếu/sai | ✅ |
-| Email không tiết lộ tồn tại (forgot) | ✅ |
-| Password không xuất hiện trong response | ✅ |
-| Refresh Token Rotation (token cũ bị revoke) | ✅ |
-| Session revoke sau reset password | ✅ |
-| Rate limiting | ⚠️ Skip trong test (NODE_ENV=test) |
-| Middleware authenticate | ✅ |
-| Middleware authorize (role check) | ✅ |
-| DB state verification sau mỗi action | ✅ |
+| Không tiết lộ field sai khi login | TC-LOGIN-02, TC-LOGIN-03 |
+| Không tiết lộ email khi forgotPassword | TC-FORGOT-02 |
+| OTP lưu dạng hash (không plain text) | TC-FORGOT-01, TC-RESET-01 |
+| Refresh token rotation atomic | TC-REFRESH-01 |
+| Reset password revoke toàn bộ session | TC-RESET-01 |
+| Logout idempotent | TC-LOGOUT-02 |
+| isActive check trước verify password | TC-LOGIN-04 |
+| passwordHash null (OAuth user) | TC-LOGIN-05 |

@@ -1,137 +1,117 @@
 # ERD — Entity Relationship Diagram
-## Module: Authentication
+## Module: Auth
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Nguồn:** `src/generated/prisma/` — Prisma schema
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22
 
 ---
 
-## 1. Sơ đồ ERD (Mermaid)
+## 1. Sơ đồ ERD
 
 ```mermaid
 erDiagram
     USER {
-        string   id                    PK  "cuid()"
-        string   email                 UK  "unique, not null"
-        string   fullName                  "not null"
-        string   passwordHash              "bcrypt hash, not null"
-        string   phone                     "nullable"
-        UserRole role                      "CUSTOMER | STAFF | ADMIN, default CUSTOMER"
-        boolean  isActive                  "default true"
+        string   id                    PK
+        string   email                 UK
+        string   phone                 UK  "nullable"
+        string   passwordHash              "nullable (null nếu OAuth)"
+        string   fullName
         string   avatarUrl                 "nullable"
         string   avatarPublicId            "nullable"
-        string   resetPasswordToken        "nullable — SHA-256 hash của OTP"
-        DateTime resetPasswordExpires      "nullable — OTP expiry"
-        DateTime createdAt                 "auto"
-        DateTime updatedAt                 "auto"
+        string   role                      "CUSTOMER|STAFF|ADMIN default CUSTOMER"
+        boolean  isActive                  "default true"
+        boolean  emailVerified             "default false — chưa dùng"
+        string   resetPasswordToken        "nullable — SHA-256 hash"
+        datetime resetPasswordExpires      "nullable"
+        datetime createdAt
+        datetime updatedAt
     }
 
     REFRESH_TOKEN {
-        string   id         PK  "cuid()"
-        string   token      UK  "JWT string — unique"
-        string   userId         "FK → User"
-        DateTime expiresAt      "now + 7 ngày"
-        boolean  isRevoked      "default false"
-        DateTime createdAt      "auto"
+        string   id         PK
+        string   token      UK
+        string   userId
+        datetime expiresAt
+        datetime createdAt
+        boolean  isRevoked  "default false"
     }
 
-    USER ||--o{ REFRESH_TOKEN : "có nhiều (1:N)"
+    OAUTH_ACCOUNT {
+        string   id          PK
+        string   userId
+        string   provider    "google|facebook..."
+        string   providerId
+        string   email       "nullable"
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    USER            ||--o{ REFRESH_TOKEN  : "sở hữu (1:N Cascade)"
+    USER            ||--o{ OAUTH_ACCOUNT  : "liên kết OAuth (1:N Cascade)"
 ```
 
 ---
 
-## 2. Mô tả chi tiết các Entity
+## 2. Mô tả model
 
-### 2.1 Entity: User
+### User
 
-| Trường | Kiểu DB | Nullable | Mô tả |
-|---|---|---|---|
-| `id` | `VARCHAR` (cuid) | No | Primary Key, tự sinh |
-| `email` | `VARCHAR` | No | Unique — định danh đăng nhập |
-| `fullName` | `VARCHAR` | No | Tên hiển thị |
-| `passwordHash` | `TEXT` | No | bcrypt hash, cost=12 |
-| `phone` | `VARCHAR` | Yes | Tùy chọn khi đăng ký |
-| `role` | `ENUM` | No | `CUSTOMER` / `STAFF` / `ADMIN` — default `CUSTOMER` |
-| `isActive` | `BOOLEAN` | No | `true` = hoạt động; `false` = bị khóa — default `true` |
-| `avatarUrl` | `TEXT` | Yes | URL ảnh đại diện (Cloudinary) — không thuộc auth nhưng cùng bảng |
-| `avatarPublicId` | `VARCHAR` | Yes | Cloudinary public_id — không thuộc auth |
-| `resetPasswordToken` | `TEXT` | Yes | SHA-256(OTP) — null sau khi reset thành công |
-| `resetPasswordExpires` | `TIMESTAMPTZ` | Yes | OTP hết hạn — null sau khi reset thành công |
-| `createdAt` | `TIMESTAMPTZ` | No | Tự gán khi insert |
-| `updatedAt` | `TIMESTAMPTZ` | No | Tự cập nhật khi update |
-
-**Indexes:**
-- `PRIMARY KEY (id)`
-- `UNIQUE (email)`
-
----
-
-### 2.2 Entity: RefreshToken
-
-| Trường | Kiểu DB | Nullable | Mô tả |
-|---|---|---|---|
-| `id` | `VARCHAR` (cuid) | No | Primary Key |
-| `token` | `TEXT` | No | Chuỗi JWT đầy đủ — unique |
-| `userId` | `VARCHAR` | No | FK → `User.id`, cascade delete |
-| `expiresAt` | `TIMESTAMPTZ` | No | Thời điểm hết hạn = now + 7 ngày |
-| `isRevoked` | `BOOLEAN` | No | `false` = hợp lệ; `true` = đã thu hồi — default `false` |
-| `createdAt` | `TIMESTAMPTZ` | No | Tự gán khi insert |
-
-**Indexes:**
-- `PRIMARY KEY (id)`
-- `UNIQUE (token)`
-- `INDEX (userId)` — tra cứu nhanh theo user
-
-**Cascade:**
-- Khi xóa `User` → toàn bộ `RefreshToken` của user bị xóa theo (cascade delete)
-
----
-
-## 3. Quan hệ giữa các Entity
-
-| Từ | Đến | Kiểu quan hệ | Mô tả |
-|---|---|---|---|
-| `User` | `RefreshToken` | 1 : N | 1 user có thể có nhiều phiên đăng nhập (nhiều devices/tabs) |
-
----
-
-## 4. Enum: UserRole
-
-```sql
-CREATE TYPE "UserRole" AS ENUM ('CUSTOMER', 'STAFF', 'ADMIN');
-```
-
-| Giá trị | Mô tả |
+| Cột | Ghi chú |
 |---|---|
-| `CUSTOMER` | Khách hàng mua hàng — role mặc định khi đăng ký |
-| `STAFF` | Nhân viên quản trị nội dung và đơn hàng |
-| `ADMIN` | Quản trị viên toàn quyền |
+| `email` | UNIQUE; dùng để login |
+| `phone` | UNIQUE; nullable; chưa dùng trong auth flow |
+| `passwordHash` | nullable — null nếu user chỉ đăng nhập OAuth |
+| `role` | `CUSTOMER` (default), `STAFF`, `ADMIN` |
+| `isActive` | `false` → 403 khi login |
+| `emailVerified` | field tồn tại nhưng chưa có flow xác thực email |
+| `resetPasswordToken` | SHA-256 hash của OTP 6 số; null sau khi reset thành công |
+| `resetPasswordExpires` | `now + 15 phút`; null sau khi reset thành công |
+
+Index: `@@index([role])`, `@@index([isActive])`, `@@index([createdAt])`
 
 ---
 
-## 5. Dữ liệu nhạy cảm và bảo vệ
+### RefreshToken
 
-| Trường | Cách bảo vệ |
+| Cột | Ghi chú |
 |---|---|
-| `passwordHash` | bcrypt hash — không bao giờ select trong response |
-| `resetPasswordToken` | SHA-256 hash — không trả về client |
-| `resetPasswordExpires` | Không trả về client |
-| `token` (RefreshToken) | JWT có chữ ký — cần secret để verify |
+| `token` | UNIQUE; giá trị JWT |
+| `userId` | FK → User; `onDelete: Cascade` |
+| `expiresAt` | `now + REFRESH_TOKEN_EXPIRES_MS` (7 ngày) |
+| `isRevoked` | Tắt token: logout / rotation / reset password |
 
-**Response an toàn:** `registerService` và `loginService` dùng `select` hoặc destructure để loại bỏ `passwordHash`, `resetPasswordToken`, `resetPasswordExpires` trước khi trả về client.
+**Lưu ý cleanup:**
+- Xóa khi `expiresAt < now` (đã hết hạn)
+- Xóa khi `isRevoked = true AND createdAt < now - 7 ngày`
+
+Index: `@@index([userId])`, `@@index([expiresAt])`
 
 ---
 
-## 6. Chiến lược vệ sinh dữ liệu (Data Cleanup)
+### OAuthAccount
 
-Hàm `cleanupExpiredTokens()` chạy định kỳ (cron job) để xóa:
+| Cột | Ghi chú |
+|---|---|
+| `provider` | `"google"`, `"facebook"`, ... |
+| `providerId` | ID từ provider |
+| `userId` | FK → User; `onDelete: Cascade` |
 
-```sql
-DELETE FROM "RefreshToken"
-WHERE expiresAt < NOW()
-   OR (isRevoked = true AND createdAt < NOW() - INTERVAL '7 days')
+> Model tồn tại trong schema nhưng **chưa có routes** trong codebase hiện tại.
+
+---
+
+## 3. Token Flow
+
 ```
+Login / Register
+    └─► User record
+    └─► RefreshToken (token, userId, expiresAt, isRevoked=false)
 
-Mục đích: giữ bảng `RefreshToken` gọn nhẹ, tránh tích lũy hàng nghìn bản ghi cũ.
+Refresh
+    └─► RefreshToken cũ: isRevoked = true
+    └─► RefreshToken mới: create
+
+Logout / Reset Password
+    └─► RefreshToken.updateMany SET isRevoked=true WHERE userId (reset)
+    └─► RefreshToken.updateMany SET isRevoked=true WHERE token (logout)
+```

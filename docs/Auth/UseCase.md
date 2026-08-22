@@ -1,265 +1,157 @@
 # Use Case Document
-## Module: Authentication
+## Module: Auth
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Tham chiếu:** [BRD.md](./BRD.md) | [SRS.md](./SRS.md)
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22
 
 ---
 
-## 1. Actors
+## Actors
 
-| Actor | Mô tả | Role |
-|---|---|---|
-| **Guest** | Người dùng chưa đăng nhập | — |
-| **Customer** | Khách hàng đã đăng nhập | `CUSTOMER` |
-| **Staff** | Nhân viên đã đăng nhập | `STAFF` |
-| **Admin** | Quản trị viên đã đăng nhập | `ADMIN` |
-| **Email Server** | Hệ thống gửi email (SMTP) | Hệ thống ngoài |
-| **Auth System** | Module xác thực (backend) | Hệ thống nội bộ |
-
----
-
-## 2. Danh sách Use Case
-
-| ID | Tên Use Case | Actor chính | Độ ưu tiên |
-|---|---|---|---|
-| UC-01 | Đăng ký tài khoản | Guest | Cao |
-| UC-02 | Đăng nhập | Guest | Cao |
-| UC-03 | Làm mới phiên đăng nhập | Customer / Staff / Admin | Cao |
-| UC-04 | Quên mật khẩu — yêu cầu OTP | Guest | Trung bình |
-| UC-05 | Đặt lại mật khẩu bằng OTP | Guest | Trung bình |
-| UC-06 | Đăng xuất | Customer / Staff / Admin | Trung bình |
-| UC-07 | Truy cập tài nguyên bảo vệ | Customer / Staff / Admin | Cao |
-
----
-
-## 3. Chi tiết Use Case
-
----
-
-### UC-01: Đăng ký tài khoản
-
-| Thuộc tính | Nội dung |
+| Actor | Mô tả |
 |---|---|
-| **Actor** | Guest |
-| **Mục tiêu** | Tạo tài khoản mới để mua hàng |
-| **Tiền điều kiện** | Guest chưa có tài khoản với email này |
-| **Hậu điều kiện** | Tài khoản được tạo, role = CUSTOMER, isActive = true |
-| **Trigger** | Guest nhấn "Đăng ký" và điền form |
-
-**Luồng chính (Happy Path):**
-
-1. Guest nhập `email`, `fullName`, `password` (và tùy chọn `phone`)
-2. Hệ thống kiểm tra định dạng email hợp lệ
-3. Hệ thống kiểm tra `fullName` ≥ 2 ký tự
-4. Hệ thống kiểm tra `password` ≥ 8 ký tự
-5. Hệ thống kiểm tra email chưa tồn tại trong DB
-6. Hệ thống hash password với bcrypt (cost=12)
-7. Hệ thống tạo bản ghi User
-8. Hệ thống trả về `201` + thông tin user (không có password)
-
-**Luồng thay thế:**
-
-| Bước | Điều kiện | Xử lý |
-|---|---|---|
-| 2 | Email sai định dạng | Trả `400` — `Email không hợp lệ` |
-| 3 | fullName < 2 ký tự | Trả `400` — `Họ tên phải có ít nhất 2 ký tự` |
-| 4 | password < 8 ký tự | Trả `400` — `Mật khẩu phải có ít nhất 8 ký tự` |
-| 5 | Email đã tồn tại | Trả `409` — `Email đã được sử dụng` |
-| Bất kỳ | Vượt rate limit (10 req/15 phút) | Trả `429` |
+| **Guest** | Người dùng chưa đăng nhập |
+| **Authenticated User** | Người dùng có access token hợp lệ (Customer / Staff / Admin) |
+| **System** | Cron job dọn token |
 
 ---
 
-### UC-02: Đăng nhập
+## UC-01: Đăng ký tài khoản
 
-| Thuộc tính | Nội dung |
-|---|---|
-| **Actor** | Guest |
-| **Mục tiêu** | Xác thực danh tính và nhận token truy cập |
-| **Tiền điều kiện** | Đã có tài khoản, tài khoản đang active |
-| **Hậu điều kiện** | Client nhận được `accessToken` (15 phút) + `refreshToken` (7 ngày) |
-| **Trigger** | Guest nhập email + mật khẩu và nhấn "Đăng nhập" |
+**Actor:** Guest  
+**Precondition:** Email chưa tồn tại trong hệ thống
 
-**Luồng chính (Happy Path):**
+**Main Flow:**
+1. Guest gửi `POST /auth/register` với `email`, `fullName`, `password`
+2. Hệ thống validate: email format, fullName >= 2 ký tự, password >= 8 ký tự
+3. Hệ thống kiểm tra email chưa tồn tại
+4. Hệ thống hash password bằng bcrypt
+5. Hệ thống tạo user với `role = CUSTOMER`, `isActive = true`
+6. Hệ thống trả thông tin user (không có passwordHash)
 
-1. Guest nhập `email` và `password`
-2. Hệ thống validate định dạng
+**Alternative Flow:**
+- 2a. Validation lỗi → 400
+- 3a. Email đã tồn tại → 409 "Email đã được sử dụng"
+
+---
+
+## UC-02: Đăng nhập
+
+**Actor:** Guest  
+**Precondition:** Tài khoản đã đăng ký
+
+**Main Flow:**
+1. Guest gửi `POST /auth/login` với `email`, `password`
+2. Hệ thống validate email + password truthy
 3. Hệ thống tìm user theo email
-4. Hệ thống kiểm tra `isActive = true`
-5. Hệ thống so khớp password với bcrypt hash
-6. Hệ thống sinh Access Token (payload: userId, email, role; TTL: 15 phút)
-7. Hệ thống sinh Refresh Token (payload: userId, email, role; TTL: 7 ngày)
-8. Hệ thống lưu Refresh Token vào DB với `expiresAt = now + 7 ngày`
-9. Hệ thống trả về `200` + `{ accessToken, refreshToken, user }`
+4. Hệ thống xác minh password
+5. Hệ thống tạo `accessToken` + `refreshToken`
+6. Hệ thống lưu `refreshToken` vào DB với `expiresAt = now + 7 ngày`
+7. Hệ thống trả `{ accessToken, refreshToken, user }`
 
-**Luồng thay thế:**
-
-| Bước | Điều kiện | Xử lý |
-|---|---|---|
-| 2 | Email sai định dạng | Trả `400` |
-| 3 | Email không tồn tại | Trả `401` — `Email hoặc mật khẩu không đúng` (**không phân biệt**) |
-| 4 | isActive = false | Trả `403` — `Tài khoản đã bị khóa` |
-| 5 | Password sai | Trả `401` — `Email hoặc mật khẩu không đúng` |
+**Alternative Flow:**
+- 3a. Email không tồn tại → 401 (cùng message với sai password)
+- 3b. `user.passwordHash` là null (tài khoản OAuth) → 401
+- 4a. Password sai → 401 "Email hoặc mật khẩu không đúng"
+- 4b. `user.isActive = false` → 403 "Tài khoản bị vô hiệu hóa"
 
 ---
 
-### UC-03: Làm mới phiên đăng nhập
+## UC-03: Refresh Access Token
 
-| Thuộc tính | Nội dung |
-|---|---|
-| **Actor** | Customer / Staff / Admin (đã đăng nhập trước đó) |
-| **Mục tiêu** | Lấy Access Token mới khi token cũ hết hạn, không cần đăng nhập lại |
-| **Tiền điều kiện** | Client đang giữ Refresh Token hợp lệ, chưa bị revoke |
-| **Hậu điều kiện** | Client có Access Token mới + Refresh Token mới; token cũ bị thu hồi |
-| **Trigger** | API call trả về 401 (Access Token hết hạn) — client tự động gọi refresh |
+**Actor:** Authenticated User (hoặc Guest với refresh token cũ)  
+**Precondition:** Có refresh token (chưa hết hạn, chưa revoke)
 
-**Luồng chính (Happy Path):**
+**Main Flow:**
+1. Client gửi `POST /auth/refresh` với `refreshToken`
+2. Hệ thống verify JWT của refresh token
+3. Hệ thống tìm token trong DB, kiểm tra `isRevoked = false` và `expiresAt > now`
+4. Hệ thống tạo access token + refresh token mới
+5. Trong **transaction**: revoke token cũ + tạo token mới trong DB
+6. Hệ thống trả `{ accessToken, refreshToken }`
 
-1. Client gửi `refreshToken` hiện tại
-2. Hệ thống verify chữ ký JWT
-3. Hệ thống tra DB: tìm token, kiểm tra `isRevoked = false` và `expiresAt > now`
-4. Hệ thống bắt đầu transaction nguyên tử:
-   - Revoke token cũ (`isRevoked = true`)
-   - Tạo Access Token mới
-   - Tạo Refresh Token mới
-   - Lưu Refresh Token mới vào DB
-5. Hệ thống trả về `200` + `{ accessToken, refreshToken }`
-
-**Luồng thay thế:**
-
-| Bước | Điều kiện | Xử lý |
-|---|---|---|
-| 1 | Thiếu refreshToken | Trả `400` — `Thiếu refresh token` |
-| 2 | Sai chữ ký hoặc hết hạn JWT | Trả `401` — `Refresh token không hợp lệ hoặc đã hết hạn` |
-| 3 | Token đã bị revoke | Trả `401` — `Refresh token không hợp lệ` |
-| 3 | Token không tìm thấy DB | Trả `401` — `Refresh token không hợp lệ` |
+**Alternative Flow:**
+- 2a. JWT invalid/expired → 401
+- 3a. Token không tồn tại / đã revoke / đã hết hạn → 401
 
 ---
 
-### UC-04: Quên mật khẩu — yêu cầu OTP
+## UC-04: Quên mật khẩu
 
-| Thuộc tính | Nội dung |
-|---|---|
-| **Actor** | Guest (đã quên mật khẩu) |
-| **Mục tiêu** | Nhận OTP qua email để khôi phục mật khẩu |
-| **Tiền điều kiện** | Guest có email đã đăng ký và có thể truy cập hộp thư |
-| **Hậu điều kiện** | OTP được gửi đến email (nếu email tồn tại); DB cập nhật hash OTP |
-| **Trigger** | Guest nhấn "Quên mật khẩu" và nhập email |
+**Actor:** Guest  
+**Precondition:** —
 
-**Luồng chính (Happy Path):**
+**Main Flow:**
+1. Guest gửi `POST /auth/forgot-password` với `email`
+2. Hệ thống tìm user theo email
+3. Hệ thống tạo OTP 6 số ngẫu nhiên
+4. Hệ thống lưu `SHA-256(otp)` vào `resetPasswordToken`, `expiresAt = now + 15 phút`
+5. Hệ thống gửi OTP gốc qua email
+6. Hệ thống trả 200
 
-1. Guest nhập `email`
-2. Hệ thống validate định dạng email
-3. Hệ thống tìm user theo email
-4. *(Nếu không tìm thấy → kết thúc im lặng, trả `200` — không leak)*
-5. Hệ thống sinh OTP 6 chữ số ngẫu nhiên (`Math.floor(100000 + Math.random() * 900000)`)
-6. Hệ thống hash OTP bằng SHA-256
-7. Hệ thống lưu `resetPasswordToken = hash`, `resetPasswordExpires = now + 15 phút`
-8. Hệ thống gửi email chứa OTP gốc
-9. Hệ thống trả về `200` (luôn — bất kể email có tồn tại hay không)
-
-**Ghi chú bảo mật:** Bước 4 là cố ý — ngăn attacker dùng endpoint này để liệt kê email hệ thống.
+**Alternative Flow:**
+- 2a. Email không tồn tại → **return 200** (không tiết lộ)
 
 ---
 
-### UC-05: Đặt lại mật khẩu bằng OTP
+## UC-05: Đặt lại mật khẩu
 
-| Thuộc tính | Nội dung |
-|---|---|
-| **Actor** | Guest (đã nhận OTP từ UC-04) |
-| **Mục tiêu** | Đặt mật khẩu mới bằng OTP |
-| **Tiền điều kiện** | Đã thực hiện UC-04 và nhận được OTP, OTP còn trong thời hạn 15 phút |
-| **Hậu điều kiện** | Mật khẩu mới được lưu; toàn bộ session cũ bị thu hồi |
-| **Trigger** | Guest nhập OTP và mật khẩu mới vào form |
+**Actor:** Guest (có OTP từ email)  
+**Precondition:** OTP còn hiệu lực (< 15 phút)
 
-**Luồng chính (Happy Path):**
+**Main Flow:**
+1. Guest gửi `POST /auth/reset-password` với `otp` (6 số) + `newPassword`
+2. Hệ thống hash OTP: `SHA-256(otp)`
+3. Hệ thống tìm user: `WHERE resetPasswordToken = hash AND resetPasswordExpires > now`
+4. Hệ thống hash mật khẩu mới
+5. **Transaction:**
+   - Cập nhật `passwordHash` mới; xóa `resetPasswordToken`, `resetPasswordExpires`
+   - Revoke toàn bộ refresh token của user
+6. Hệ thống trả 200
 
-1. Guest nhập `otp` (6 chữ số) và `newPassword`
-2. Hệ thống validate: OTP đúng 6 chữ số, password ≥ 8 ký tự
-3. Hệ thống hash OTP bằng SHA-256
-4. Hệ thống tìm user có `resetPasswordToken = hash` và `resetPasswordExpires > now`
-5. Hệ thống bắt đầu transaction nguyên tử:
-   - Hash mật khẩu mới bằng bcrypt
-   - Cập nhật `passwordHash`
-   - Xóa `resetPasswordToken` và `resetPasswordExpires`
-   - Revoke toàn bộ Refresh Token của user
-6. Hệ thống trả về `200` + `{ message: 'Đặt lại mật khẩu thành công' }`
-
-**Luồng thay thế:**
-
-| Bước | Điều kiện | Xử lý |
-|---|---|---|
-| 2 | OTP không phải 6 chữ số | Trả `400` — `OTP phải là 6 chữ số` |
-| 2 | password < 8 ký tự | Trả `400` — `Mật khẩu mới phải có ít nhất 8 ký tự` |
-| 4 | OTP sai hoặc hết hạn | Trả `400` — `Token không hợp lệ hoặc đã hết hạn` |
+**Alternative Flow:**
+- 1a. OTP không đúng định dạng 6 số hoặc password < 8 ký tự → 400 (validator)
+- 3a. Hash không khớp hoặc OTP hết hạn → 400 "Token không hợp lệ hoặc đã hết hạn"
 
 ---
 
-### UC-06: Đăng xuất
+## UC-06: Đăng xuất
 
-| Thuộc tính | Nội dung |
-|---|---|
-| **Actor** | Customer / Staff / Admin |
-| **Mục tiêu** | Kết thúc phiên đăng nhập hiện tại |
-| **Tiền điều kiện** | Client đang giữ Refresh Token |
-| **Hậu điều kiện** | Refresh Token bị revoke; Access Token hết hạn tự nhiên |
-| **Trigger** | Người dùng nhấn "Đăng xuất" |
+**Actor:** Authenticated User  
+**Precondition:** Có refresh token
 
-**Luồng chính (Happy Path):**
+**Main Flow:**
+1. Client gửi `POST /auth/logout` với `refreshToken`
+2. Hệ thống revoke token: `updateMany WHERE token AND isRevoked=false SET isRevoked=true`
+3. Hệ thống trả 200
 
-1. Client gửi `refreshToken`
-2. Hệ thống validate có refreshToken
-3. Hệ thống cập nhật `isRevoked = true` cho token trong DB
-4. Hệ thống trả về `200` + `{ message: 'Đăng xuất thành công' }`
-
-**Ghi chú:** Access Token không bị vô hiệu hóa ngay lập tức — sẽ tự hết hạn sau tối đa 15 phút.
+**Ghi chú:** Idempotent — token đã revoke không gây lỗi (count=0 là bình thường)
 
 ---
 
-### UC-07: Truy cập tài nguyên bảo vệ
+## UC-07: Dọn dẹp token hết hạn (System)
 
-| Thuộc tính | Nội dung |
-|---|---|
-| **Actor** | Customer / Staff / Admin |
-| **Mục tiêu** | Gọi API cần xác thực |
-| **Tiền điều kiện** | Client đang giữ Access Token hợp lệ |
-| **Hậu điều kiện** | Request được xử lý bởi controller tương ứng |
-| **Trigger** | Client gửi bất kỳ request nào đến protected route |
+**Actor:** System (cron job)  
+**Precondition:** —
 
-**Luồng chính (Happy Path):**
-
-1. Client gửi request với header `Authorization: Bearer <accessToken>`
-2. Middleware `authenticate` đọc và verify JWT
-3. Middleware gán `req.user = { userId, email, role }`
-4. (Nếu route yêu cầu role cụ thể) Middleware `authorize` kiểm tra role
-5. Request đến Controller
-
-**Luồng thay thế:**
-
-| Bước | Điều kiện | Xử lý |
-|---|---|---|
-| 1 | Không có header Authorization | `401` — `Không có token xác thực` |
-| 2 | Token sai/hết hạn | `401` — `Token không hợp lệ hoặc đã hết hạn` |
-| 4 | Role không đủ quyền | `403` — `Bạn không có quyền thực hiện thao tác này` |
+**Main Flow:**
+1. System gọi `cleanupExpiredTokens()`
+2. Xóa RefreshToken: `expiresAt < now`
+3. Xóa RefreshToken: `isRevoked = true AND createdAt < now - 7 ngày`
 
 ---
 
-## 4. Mối quan hệ giữa Use Cases
+## UC-08: Bảo vệ route (authenticate middleware)
 
-```
-UC-01 (Register) ──────────────────────► Tạo tài khoản
-                                              │
-                                              ▼
-UC-02 (Login) ─────────────────────────► Cấp token ─────► UC-07 (Truy cập)
-     │                                        │
-     │                              Access Token hết hạn
-     │                                        │
-     │                                        ▼
-     │                              UC-03 (Refresh) ───► UC-07 (Truy cập)
-     │
-     ├──────────────────────────────► UC-06 (Logout) ──► Revoke token
-     │
-     └── Quên mật khẩu ──────────── UC-04 (Forgot) ──► UC-05 (Reset) ──► UC-02 (Login lại)
-```
+**Actor:** Authenticated User  
+**Precondition:** Gọi route yêu cầu xác thực
+
+**Main Flow:**
+1. Hệ thống đọc header `Authorization: Bearer <token>`
+2. Hệ thống `verifyAccessToken(token)` → giải mã payload `{ userId, email, role }`
+3. Hệ thống gắn `req.user = payload`
+4. Request tiếp tục đến handler
+
+**Alternative Flow:**
+- 1a. Không có header → 401 "Không có token xác thực"
+- 2a. Token invalid/expired → 401 "Token không hợp lệ hoặc đã hết hạn"

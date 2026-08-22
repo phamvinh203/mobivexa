@@ -1,342 +1,191 @@
-# API Specification — Request / Response
-## Module: Authentication
+# API Specification
+## Module: Auth
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Base URL:** `http://localhost:3000/api` (development)  
-> **Content-Type:** `application/json`  
-> **Rate Limit:** 10 requests / 15 phút / IP (áp dụng cho register, login, refresh, forgot-password, reset-password)
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22  
+> **Base URL:** `/api/auth`  
+> **Rate Limit:** `authLimiter` áp dụng cho tất cả route trừ `/logout`
 
 ---
 
-## Tổng quan Endpoints
+### POST /api/auth/register
 
-| Method | Path | Mô tả | Rate Limit | Auth |
-|---|---|---|---|---|
-| POST | `/auth/register` | Đăng ký tài khoản | ✅ | ❌ |
-| POST | `/auth/login` | Đăng nhập | ✅ | ❌ |
-| POST | `/auth/refresh` | Làm mới token | ✅ | ❌ |
-| POST | `/auth/forgot-password` | Yêu cầu OTP | ✅ | ❌ |
-| POST | `/auth/reset-password` | Đặt lại mật khẩu | ✅ | ❌ |
-| POST | `/auth/logout` | Đăng xuất | ❌ | ❌ (dùng refreshToken) |
-
----
-
-## POST `/auth/register`
-
-### Request
-
-**Headers:**
-```
-Content-Type: application/json
-```
+**Rate limit:** authLimiter
 
 **Body:**
 ```json
 {
-  "email":    "nguyenvan@example.com",
+  "email": "user@example.com",
   "fullName": "Nguyễn Văn A",
-  "password": "matkhau123",
-  "phone":    "0901234567"
+  "password": "secret123"
 }
 ```
 
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `email` | string | ✅ | Format email hợp lệ |
-| `fullName` | string | ✅ | ≥ 2 ký tự sau trim |
-| `password` | string | ✅ | ≥ 8 ký tự |
-| `phone` | string | ❌ | Bất kỳ |
+**Validate:** email format; fullName trim >= 2; password length >= 8
 
-### Response
-
-**201 Created — Thành công:**
+**Response 200:**
 ```json
 {
-  "success": true,
-  "data": {
-    "id":        "clx1abc123",
-    "email":     "nguyenvan@example.com",
-    "fullName":  "Nguyễn Văn A",
-    "role":      "CUSTOMER",
-    "createdAt": "2026-06-19T08:00:00.000Z"
-  }
+  "id": "user-uuid",
+  "email": "user@example.com",
+  "fullName": "Nguyễn Văn A",
+  "role": "CUSTOMER",
+  "createdAt": "2026-08-22T08:00:00.000Z"
 }
 ```
 
-**400 Bad Request:**
-```json
-{ "success": false, "message": "Email không hợp lệ" }
-{ "success": false, "message": "Họ tên phải có ít nhất 2 ký tự" }
-{ "success": false, "message": "Mật khẩu phải có ít nhất 8 ký tự" }
-```
+**Lỗi:**
 
-**409 Conflict:**
-```json
-{ "success": false, "message": "Email đã được sử dụng" }
-```
-
-**429 Too Many Requests:**
-```json
-{ "message": "Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút" }
-```
-
----
-
-## POST `/auth/login`
-
-### Request
-
-**Body:**
-```json
-{
-  "email":    "nguyenvan@example.com",
-  "password": "matkhau123"
-}
-```
-
-| Field | Type | Required |
-|---|---|---|
-| `email` | string | ✅ |
-| `password` | string | ✅ |
-
-### Response
-
-**200 OK — Thành công:**
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken":  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "user": {
-      "id":        "clx1abc123",
-      "email":     "nguyenvan@example.com",
-      "fullName":  "Nguyễn Văn A",
-      "role":      "CUSTOMER",
-      "isActive":  true,
-      "avatarUrl": null,
-      "phone":     "0901234567",
-      "createdAt": "2026-06-19T08:00:00.000Z",
-      "updatedAt": "2026-06-19T08:00:00.000Z"
-    }
-  }
-}
-```
-
-**400 Bad Request:**
-```json
-{ "success": false, "message": "Email không hợp lệ" }
-{ "success": false, "message": "Vui lòng nhập mật khẩu" }
-```
-
-**401 Unauthorized:**
-```json
-{ "success": false, "message": "Email hoặc mật khẩu không đúng" }
-```
-
-**403 Forbidden:**
-```json
-{ "success": false, "message": "Tài khoản đã bị khóa" }
-```
-
-**Token Structure (JWT Payload):**
-```json
-{
-  "userId": "clx1abc123",
-  "email":  "nguyenvan@example.com",
-  "role":   "CUSTOMER",
-  "iat":    1750320000,
-  "exp":    1750320900
-}
-```
-
----
-
-## POST `/auth/refresh`
-
-### Request
-
-**Body:**
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-| Field | Type | Required |
-|---|---|---|
-| `refreshToken` | string | ✅ |
-
-### Response
-
-**200 OK — Thành công:**
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken":  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  }
-}
-```
-
-> Cả `accessToken` và `refreshToken` đều là token **mới**. Token cũ đã bị revoke.
-
-**400 Bad Request:**
-```json
-{ "success": false, "message": "Thiếu refresh token" }
-```
-
-**401 Unauthorized:**
-```json
-{ "success": false, "message": "Refresh token không hợp lệ hoặc đã hết hạn" }
-{ "success": false, "message": "Refresh token không hợp lệ" }
-```
-
----
-
-## POST `/auth/forgot-password`
-
-### Request
-
-**Body:**
-```json
-{
-  "email": "nguyenvan@example.com"
-}
-```
-
-| Field | Type | Required |
-|---|---|---|
-| `email` | string | ✅ |
-
-### Response
-
-**200 OK — Luôn trả về (dù email có tồn tại hay không):**
-```json
-{
-  "success": true,
-  "data": null
-}
-```
-
-> **Bảo mật:** Response 200 không thay đổi dù email có trong hệ thống hay không. Mục đích: ngăn attacker liệt kê email.
-
-**400 Bad Request:**
-```json
-{ "success": false, "message": "Email không hợp lệ" }
-```
-
-**Email gửi đến người dùng:**
-```
-Subject: Đặt lại mật khẩu Mobivexa
-Body: Mã OTP của bạn là: 382941
-      Mã này có hiệu lực trong 15 phút.
-```
-
----
-
-## POST `/auth/reset-password`
-
-### Request
-
-**Body:**
-```json
-{
-  "otp":         "382941",
-  "newPassword": "matkhaumoI123"
-}
-```
-
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `otp` | string | ✅ | Đúng 6 chữ số (`/^\d{6}$/`) |
-| `newPassword` | string | ✅ | ≥ 8 ký tự |
-
-### Response
-
-**200 OK — Thành công:**
-```json
-{
-  "success": true,
-  "data": { "message": "Đặt lại mật khẩu thành công" }
-}
-```
-
-**400 Bad Request:**
-```json
-{ "success": false, "message": "OTP phải là 6 chữ số" }
-{ "success": false, "message": "Mật khẩu mới phải có ít nhất 8 ký tự" }
-{ "success": false, "message": "Token không hợp lệ hoặc đã hết hạn" }
-```
-
----
-
-## POST `/auth/logout`
-
-### Request
-
-**Body:**
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-| Field | Type | Required |
-|---|---|---|
-| `refreshToken` | string | ✅ |
-
-### Response
-
-**200 OK:**
-```json
-{
-  "success": true,
-  "data": { "message": "Đăng xuất thành công" }
-}
-```
-
-**400 Bad Request:**
-```json
-{ "success": false, "message": "Thiếu refresh token" }
-```
-
----
-
-## Cách dùng Access Token trong các API khác
-
-Sau khi đăng nhập hoặc refresh, đính kèm `accessToken` vào header của mọi request đến protected route:
-
-```http
-GET /api/users/me HTTP/1.1
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-```
-
----
-
-## Mã lỗi tổng hợp
-
-| HTTP Code | Ý nghĩa |
+| HTTP | Điều kiện |
 |---|---|
-| `200` | Thành công |
-| `201` | Tạo mới thành công |
-| `400` | Dữ liệu đầu vào không hợp lệ |
-| `401` | Chưa xác thực / Token không hợp lệ |
-| `403` | Tài khoản bị khóa / Không có quyền |
-| `409` | Conflict — email đã tồn tại |
-| `429` | Vượt rate limit |
-| `500` | Lỗi server nội bộ |
+| 400 | Validation lỗi |
+| 409 | Email đã được sử dụng |
 
 ---
 
-## Lưu ý tích hợp (Integration Notes)
+### POST /api/auth/login
 
-| Tình huống | Xử lý khuyến nghị |
+**Rate limit:** authLimiter
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "secret123"
+}
+```
+
+**Response 200:**
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5...",
+  "user": {
+    "id": "user-uuid",
+    "email": "user@example.com",
+    "fullName": "Nguyễn Văn A",
+    "role": "CUSTOMER",
+    "isActive": true,
+    "avatarUrl": null
+  }
+}
+```
+
+> `user` không bao gồm: `passwordHash`, `resetPasswordToken`, `resetPasswordExpires`
+
+**Lỗi:**
+
+| HTTP | Điều kiện |
 |---|---|
-| Nhận `401` khi gọi protected API | Tự động gọi `POST /refresh` → retry request gốc |
-| Nhận `401` khi refresh | Đưa user về màn hình đăng nhập |
-| Lưu token | `accessToken` trong memory; `refreshToken` trong HttpOnly cookie hoặc secure storage |
-| Multiple tabs | Refresh Token Rotation đảm bảo chỉ 1 token mới valid — các tab khác cần refresh lại |
+| 400 | Validation lỗi |
+| 401 | Email/password không đúng (cùng message dù sai field nào) |
+| 403 | Tài khoản bị vô hiệu hóa |
+
+---
+
+### POST /api/auth/refresh
+
+**Rate limit:** authLimiter
+
+**Body:**
+```json
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5..."
+}
+```
+
+**Response 200:**
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5..."
+}
+```
+
+> Token cũ bị revoke; token mới tạo ra (rotation)
+
+**Lỗi:**
+
+| HTTP | Điều kiện |
+|---|---|
+| 400 | `refreshToken` thiếu |
+| 401 | JWT invalid / token đã revoke / đã hết hạn |
+
+---
+
+### POST /api/auth/forgot-password
+
+**Rate limit:** authLimiter
+
+**Body:**
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+**Response 200:** `{ message: "..." }` (luôn 200 dù email không tồn tại)
+
+**Lỗi:**
+
+| HTTP | Điều kiện |
+|---|---|
+| 400 | email không đúng format |
+
+---
+
+### POST /api/auth/reset-password
+
+**Rate limit:** authLimiter
+
+**Body:**
+```json
+{
+  "otp": "123456",
+  "newPassword": "newSecret123"
+}
+```
+
+**Validate:** `otp` khớp `/^\d{6}$/`; `newPassword` length >= 8
+
+**Response 200:** `{ message: "..." }`
+
+**Lỗi:**
+
+| HTTP | Điều kiện |
+|---|---|
+| 400 | Validation lỗi |
+| 400 | OTP sai / hết hạn (> 15 phút) |
+
+---
+
+### POST /api/auth/logout
+
+**Rate limit:** — (không có)
+
+**Body:**
+```json
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5..."
+}
+```
+
+**Response 200:** `{ message: "..." }`
+
+> Idempotent: gọi lại với token đã revoke vẫn trả 200
+
+**Lỗi:**
+
+| HTTP | Điều kiện |
+|---|---|
+| 400 | `refreshToken` thiếu |
+
+---
+
+## Headers xác thực (protected routes)
+
+```
+Authorization: Bearer <accessToken>
+```
+
+`authenticate` middleware verify access token và gắn `req.user = { userId, email, role }` vào request.

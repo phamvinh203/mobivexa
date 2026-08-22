@@ -1,711 +1,285 @@
 # Test Case Document
-## Module: Order (Đơn hàng)
+## Module: Order
 ### Dự án: Mobivexa E-Commerce Platform
 
-> **Phiên bản:** 1.0  
-> **Ngày:** 2026-06-19  
-> **Tham chiếu:** [SRS.md](./SRS.md) | [APISpec.md](./APISpec.md)  
-> **Test Framework:** Vitest + Supertest  
-> **Môi trường:** Test DB (NODE_ENV=test)
+> **Phiên bản:** 2.0 | **Ngày:** 2026-08-22  
+> **Framework:** Vitest + Supertest
 
 ---
 
-## Tổng quan Test Suite
+## Tổng quan
 
-| Nhóm | Số TC | Phủ |
-|---|---|---|
-| POST /orders | 9 | Đặt hàng |
-| GET /orders | 4 | Danh sách đơn của tôi |
-| GET /orders/:id | 3 | Chi tiết đơn hàng |
-| PATCH /orders/:id/cancel | 4 | Hủy đơn (Customer) |
-| GET /admin/orders | 5 | Admin danh sách |
-| GET /admin/orders/:id | 3 | Admin chi tiết |
-| PATCH /admin/orders/:id/status | 7 | Admin update status |
-| PATCH /admin/orders/:id/payment | 3 | Admin update payment |
-| **Tổng cộng** | **38** | |
+| Nhóm | Số TC |
+|---|---|
+| Tạo đơn hàng | 10 |
+| Customer xem đơn | 4 |
+| Customer hủy đơn | 5 |
+| Admin xem đơn | 3 |
+| Admin chuyển trạng thái | 7 |
+| Admin cập nhật thanh toán | 3 |
+| **Tổng** | **32** |
 
 ---
 
-## TC-CREATE: Đặt hàng
+## TC-CREATE: Tạo đơn hàng
 
-### TC-CREATE-01: Đặt hàng từ giỏ - Happy Path
+### TC-CREATE-01: Tạo từ giỏ hàng thành công
 
-**ID:** TC-CREATE-01  
-**Level:** Smoke
-
-**Precondition:** 
-- User đã đăng nhập
-- Giỏ hàng có 2 items với variants tồn tại và đủ stock
-- User có 1 address saved
-
-**Input:** `POST /api/orders` với JWT token + `{ addressId }` (không gửi items)
-
-**Expected Output:**
-- HTTP: `201`
-- Body: Order object với:
-  - `orderCode` format đúng
-  - `status = PENDING`
-  - `paymentStatus = UNPAID`
-  - `items` array có 2 items
-  - Tổng `subtotal`, `total` tính đúng
-- DB: CartItems bị xóa
-- DB: Stock của variants bị trừ đúng quantity
+**Precondition:** Giỏ có 2 sản phẩm; address của user  
+**Input:** `{ addressId }` (không truyền items)  
+**Expected:**
+- `201`
+- `orderCode` format `ORD-YYYYMMDD-XXXXXX`
+- `status = PENDING`
+- `items.length === 2`
+- Giỏ hàng bị xóa
 
 ---
 
-### TC-CREATE-02: Đặt hàng mua ngay - Happy Path
+### TC-CREATE-02: Tạo trực tiếp (buy now) — giỏ không bị xóa
 
-**Input:** `POST /api/orders` với `{ addressId, items: [...] }`
-
-**Expected Output:**
-- HTTP: `201`
-- Giống TC-CREATE-01
-- DB: CartItems KHÔNG bị xóa
+**Input:** `{ addressId, items: [{variantId, quantity: 1}] }`  
+**Expected:**
+- `201`
+- Giỏ hàng **còn nguyên**
 
 ---
 
-### TC-CREATE-03: Đặt hàng - Thiếu addressId
+### TC-CREATE-03: Address không thuộc user → 404
 
-**Input:** `POST /api/orders` (không có addressId)
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Vui lòng chọn địa chỉ giao hàng`
+**Input:** `addressId` của user khác  
+**Expected:** `404`
 
 ---
 
-### TC-CREATE-04: Đặt hàng - Address không thuộc user
+### TC-CREATE-04: Giỏ rỗng (không truyền items) → 400
 
-**Input:** `POST /api/orders` với `{ addressId: "addr_of_other_user" }`
-
-**Expected Output:**
-- HTTP: `404`
-- Message: `Địa chỉ không tồn tại`
+**Precondition:** Giỏ trống  
+**Expected:** `400 Giỏ hàng trống`
 
 ---
 
-### TC-CREATE-05: Đặt hàng từ giỏ - Giỏ trống
+### TC-CREATE-05: Variant không active → 400
 
-**Precondition:** Giỏ hàng của user trống
-
-**Input:** `POST /api/orders` (không gửi items)
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Giỏ hàng trống, không thể đặt hàng`
+**Precondition:** Variant có `isActive = false`  
+**Expected:** `400 Sản phẩm đã ngừng bán`
 
 ---
 
-### TC-CREATE-06: Đặt hàng - Variant không tồn tại
+### TC-CREATE-06: Stock không đủ → 400 + rollback
 
-**Input:** `{ items: [{ variantId: "non_existing", quantity: 1 }] }`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Sản phẩm không tồn tại: non_existing`
-
----
-
-### TC-CREATE-07: Đặt hàng - Variant inactive
-
-**Precondition:** Variant var_123 có `isActive = false`
-
-**Input:** `{ items: [{ variantId: "var_123", quantity: 1 }] }`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Sản phẩm đã ngừng bán: IP15-001`
+**Precondition:** Variant có `stock = 1`  
+**Input:** `quantity = 2`  
+**Expected:**
+- `400 không đủ hàng`
+- Đơn hàng **không được tạo** trong DB
 
 ---
 
-### TC-CREATE-08: Đặt hàng - Hết hàng (Race Condition)
+### TC-CREATE-07: Coupon hợp lệ → giảm giá chính xác
 
-**Precondition:** Variant var_123 có `stock = 5`
-
-**Input:** 
-- Request 1: `{ items: [{ variantId: "var_123", quantity: 5 }] }`
-- Request 2 (song song): `{ items: [{ variantId: "var_123", quantity: 5 }] }`
-
-**Expected Output:**
-- Request 1: HTTP `201` (thành công)
-- Request 2: HTTP `400` (stock không đủ)
-- DB: Stock cuối cùng = 0 (đúng)
+**Precondition:** Coupon PERCENT 10%, `minOrderValue = 100000`  
+**Input:** subtotal = 27990000  
+**Expected:**
+- `discount = 2799000`
+- `total = 25191000`
+- `couponCode` được snapshot vào đơn
 
 ---
 
-### TC-CREATE-09: Đặt hàng - paymentMethod không hợp lệ
+### TC-CREATE-08: Coupon hết lượt (race condition) → 409 + rollback
 
-**Input:** `{ addressId, paymentMethod: "INVALID" }`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Phương thức thanh toán không hợp lệ`
+**Precondition:** Coupon `usageLimit = 1`, đã dùng 1 lần (usedCount = 1)  
+**Expected:** `409 Mã giảm giá vừa hết lượt sử dụng`
 
 ---
 
-## TC-MYORDERS: Danh sách & Chi tiết đơn của tôi
+### TC-CREATE-09: total = 0 → paymentStatus = PAID
 
-### TC-MYORDERS-01: Danh sách đơn - Happy Path
-
-**Input:** `GET /api/orders?page=1&limit=10` với JWT token
-
-**Expected Output:**
-- HTTP: `200`
-- Body: `{ orders: [], pagination: {} }`
-- Chỉ trả về đơn của user đang login
-- Sort by `createdAt DESC`
+**Precondition:** Coupon giảm 100% hoặc FIXED >= subtotal  
+**Expected:**
+- `paymentStatus = PAID`
+- `paidAt != null`
 
 ---
 
-### TC-MYORDERS-02: Danh sách đơn - Filter by status
+### TC-CREATE-10: Coupon dùng hai lần cùng lúc (P2002) → 409
 
-**Input:** `GET /api/orders?status=CANCELLED`
-
-**Expected Output:**
-- HTTP: `200`
-- Chỉ đơn có `status = CANCELLED`
+**Precondition:** 2 request đồng thời dùng cùng coupon với cùng user  
+**Expected:** Chỉ 1 thành công; cái sau `409 Bạn đã sử dụng mã này rồi`
 
 ---
 
-### TC-MYORDERS-03: Chi tiết đơn - Happy Path
+## TC-LIST: Customer xem đơn
 
-**Input:** `GET /api/orders/:id` với JWT token (id thuộc về user)
+### TC-LIST-01: Xem danh sách đơn của mình
 
-**Expected Output:**
-- HTTP: `200`
-- Order object đầy đủ với items, user info
-
----
-
-### TC-MYORDERS-04: Chi tiết đơn - Not Found hoặc Not Belong to Me
-
-**Input:** `GET /api/orders/order_of_other_user`
-
-**Expected Output:**
-- HTTP: `404`
-- Message: `Đơn hàng không tồn tại`
+**Expected:**
+- `200`
+- Chỉ trả đơn thuộc user đang đăng nhập
+- Sort `createdAt DESC`
 
 ---
 
-## TC-CANCEL: Hủy đơn (Customer)
+### TC-LIST-02: Lọc theo status
 
-### TC-CANCEL-01: Hủy đơn - Happy Path (PENDING)
-
-**Precondition:** Order với `status = PENDING` thuộc về user
-
-**Input:** `PATCH /api/orders/:id/cancel` với `{ cancelReason: "Tôi muốn hủy" }`
-
-**Expected Output:**
-- HTTP: `200`
-- Body: Order object với `status = CANCELLED`
-- DB: Stock được hoàn trả (`increment`)
+**Input:** `?status=PENDING`  
+**Expected:** Tất cả đơn có `status === PENDING`
 
 ---
 
-### TC-CANCEL-02: Hủy đơn - Không được phép (DELIVERED)
+### TC-LIST-03: Xem chi tiết đơn — include items
 
-**Precondition:** Order với `status = DELIVERED`
-
-**Input:** `PATCH /api/orders/:id/cancel`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Không thể hủy đơn hàng ở trạng thái hiện tại`
+**Expected:** `200`; response có `items[]` đầy đủ
 
 ---
 
-### TC-CANCEL-03: Hủy đơn - Not Found
+### TC-LIST-04: Xem đơn của người khác → 404
 
-**Input:** `PATCH /api/orders/non_existing/cancel`
-
-**Expected Output:**
-- HTTP: `404`
+**Input:** `orderId` của user khác  
+**Expected:** `404`
 
 ---
 
-### TC-CANCEL-04: Hủy đơn - Stock được hoàn trả đúng
+## TC-CANCEL: Customer hủy đơn
 
-**Precondition:** Order có 2 items: var_123 (qty 5, stock gốc 10), var_456 (qty 3, stock gốc 8)
+### TC-CANCEL-01: Hủy đơn PENDING thành công + hoàn kho
 
-**Input:** `PATCH /api/orders/:id/cancel`
-
-**Expected Output:**
-- HTTP: `200`
-- DB: 
-  - var_123: stock = 10 + 5 = 15
-  - var_456: stock = 8 + 3 = 11
+**Precondition:** Stock biến thể = 5; đơn quantity = 2  
+**Expected:**
+- `200`, `status = CANCELLED`
+- Stock biến thể = 7
 
 ---
 
-## TC-ADMIN: Admin Endpoints
+### TC-CANCEL-02: Hủy đơn CONFIRMED thành công
 
-### TC-ADMIN-01: Admin danh sách - Happy Path
-
-**Input:** `GET /api/admin/orders?status=PENDING` với JWT token (STAFF+)
-
-**Expected Output:**
-- HTTP: `200`
-- Body: `{ orders: [], pagination: {} }`
-- Mỗi order có `_count.items` (không hydrate toàn bộ items)
-- Có `user` info (`id`, `fullName`, `email`)
+**Expected:** `200`, `status = CANCELLED`
 
 ---
 
-### TC-ADMIN-02: Admin danh sách - Filter Multi
+### TC-CANCEL-03: Hủy đơn DELIVERED → 400
 
-**Input:** `GET /api/admin/orders?status=PENDING&paymentMethod=COD&from=2026-06-01&to=2026-06-30`
-
-**Expected Output:**
-- HTTP: `200`
-- Orders thỏa tất cả filters
+**Expected:** `400 Không thể hủy đơn hàng ở trạng thái hiện tại`
 
 ---
 
-### TC-ADMIN-03: Admin danh sách - Unauthorized
+### TC-CANCEL-04: Hủy đơn đã CANCELLED → 400
 
-**Input:** `GET /api/admin/orders` với JWT token (CUSTOMER)
-
-**Expected Output:**
-- HTTP: `403`
-- Message: `Bạn không có quyền thực hiện thao tác này`
+**Expected:** `400`
 
 ---
 
-### TC-ADMIN-04: Admin chi tiết - Happy Path
+### TC-CANCEL-05: Hủy đơn có coupon → hoàn lượt mã
 
-**Input:** `GET /api/admin/orders/:id` với JWT token (STAFF+)
-
-**Expected Output:**
-- HTTP: `200`
-- Order object đầy đủ (kể cả CANCELLED)
+**Precondition:** Đơn dùng coupon; `usedCount = 1`  
+**Expected:** Sau khi hủy: `usedCount = 0`; `CouponUsage` bị xóa
 
 ---
 
-### TC-ADMIN-05: Admin chi tiết - Not Found
+## TC-ADMIN-LIST: Admin xem đơn
 
-**Input:** `GET /api/admin/orders/non_existing`
+### TC-ADMIN-LIST-01: CUSTOMER không có quyền → 403
 
-**Expected Output:**
-- HTTP: `404`
-
----
-
-## TC-UPDATE-STATUS: Admin Update Status
-
-### TC-UPDATE-STATUS-01: Update status - Happy Path (PENDING → CONFIRMED)
-
-**Input:** `PATCH /api/admin/orders/:id/status` với `{ status: "CONFIRMED" }`
-
-**Expected Output:**
-- HTTP: `200`
-- Order object với `status = CONFIRMED`
+**Expected:** `403`
 
 ---
 
-### TC-UPDATE-STATUS-02: Update status - Invalid Transition
+### TC-ADMIN-LIST-02: Search theo orderCode (partial)
 
-**Input:** `PATCH /api/admin/orders/:id/status` với `{ status: "DELIVERED" }` (hiện tại PENDING)
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Không thể chuyển từ "PENDING" sang "DELIVERED"`
+**Input:** `?search=A1B2`  
+**Expected:** Chỉ đơn có orderCode chứa "A1B2" (case-insensitive)
 
 ---
 
-### TC-UPDATE-STATUS-03: Update status - Invalid Status Value
+### TC-ADMIN-LIST-03: Admin list trả _count.items, không trả items[]
 
-**Input:** `{ status: "INVALID" }`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Trạng thái đơn hàng không hợp lệ`
+**Expected:** Response có `_count.items` (number), **không** có `items[]`
 
 ---
 
-### TC-UPDATE-STATUS-04: Cancel order - Happy Path
+## TC-STATUS: Admin chuyển trạng thái
 
-**Input:** `PATCH /api/admin/orders/:id/status` với `{ status: "CANCELLED", cancelReason: "Sản phẩm hết hàng" }`
+### TC-STATUS-01: PENDING → CONFIRMED thành công
 
-**Expected Output:**
-- HTTP: `200`
-- Order object với `status = CANCELLED`, `cancelReason`
-- DB: Stock được hoàn trả
+**Expected:** `200`, `status = CONFIRMED`
 
 ---
 
-### TC-UPDATE-STATUS-05: Cancel order - Missing cancelReason
+### TC-STATUS-02: CONFIRMED → DELIVERED → 400 (nhảy cóc)
 
-**Input:** `{ status: "CANCELLED" }` (không có cancelReason)
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Vui lòng nhập lý do hủy đơn`
+**Expected:** `400 Không thể chuyển từ "CONFIRMED" sang "DELIVERED"`
 
 ---
 
-### TC-UPDATE-STATUS-06: Cancel order - Stock Restoration
+### TC-STATUS-03: Admin hủy SHIPPING thành công + hoàn kho
 
-**Precondition:** Order có items: var_123 (qty 5), var_456 (qty 2)
-
-**Input:** Cancel order
-
-**Expected Output:**
-- HTTP: `200`
-- DB: Stock được hoàn trả đúng số lượng
+**Input:** `{ status: CANCELLED, cancelReason: "Lỗi hàng" }`  
+**Expected:**
+- `200`, `status = CANCELLED`
+- Stock được hoàn
 
 ---
 
-### TC-UPDATE-STATUS-07: Update status - Terminal State
+### TC-STATUS-04: Admin hủy thiếu cancelReason → 400
 
-**Precondition:** Order với `status = DELIVERED`
-
-**Input:** `PATCH /api/admin/orders/:id/status` với `{ status: "CONFIRMED" }`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Không thể chuyển từ "DELIVERED" sang...` (DELIVERED là terminal state)
+**Input:** `{ status: CANCELLED }` (thiếu cancelReason)  
+**Expected:** `400 Vui lòng nhập lý do hủy đơn`
 
 ---
 
-## TC-UPDATE-PAYMENT: Admin Update Payment
+### TC-STATUS-05: DELIVERED → không thể chuyển tiếp → 400
 
-### TC-UPDATE-PAYMENT-01: Update payment - Happy Path (UNPAID → PAID)
-
-**Input:** `PATCH /api/admin/orders/:id/payment` với `{ paymentStatus: "PAID" }`
-
-**Expected Output:**
-- HTTP: `200`
-- Order object với `paymentStatus = PAID`
-- `paidAt` được set (not null)
+**Expected:** `400`
 
 ---
 
-### TC-UPDATE-PAYMENT-02: Update payment - Invalid PaymentStatus
+### TC-STATUS-06: Concurrency conflict → 409
 
-**Input:** `{ paymentStatus: "INVALID" }`
-
-**Expected Output:**
-- HTTP: `400`
-- Message: `Trạng thái thanh toán không hợp lệ`
+**Scenario:** 2 admin cùng chuyển 1 đơn  
+**Expected:** Cái sau nhận `409 Đơn hàng vừa được cập nhật ở nơi khác`
 
 ---
 
-### TC-UPDATE-PAYMENT-03: Update payment - Not Found
+### TC-STATUS-07: variantId null khi hủy → skip, không lỗi
 
-**Input:** `PATCH /api/admin/orders/non_existing/payment`
-
-**Expected Output:**
-- HTTP: `404`
+**Precondition:** OrderItem có `variantId = null` (variant đã bị xóa)  
+**Expected:** `200`, kho không cộng thêm cho variant null
 
 ---
 
-## TC-STATE-MACHINE: State Machine Tests
+## TC-PAYMENT: Admin cập nhật thanh toán
 
-### TC-STATE-01: Valid Transitions - PENDING
+### TC-PAYMENT-01: UNPAID → PAID thành công
 
-**Precondition:** Order status = PENDING
-
-**Test:**
-- ✅ PENDING → CONFIRMED (valid)
-- ✅ PENDING → CANCELLED (valid)
-- ❌ PENDING → SHIPPING (invalid)
-- ❌ PENDING → DELIVERED (invalid)
+**Expected:** `200`, `paymentStatus = PAID`
 
 ---
 
-### TC-STATE-02: Valid Transitions - CONFIRMED
+### TC-PAYMENT-02: paymentStatus không hợp lệ → 400
 
-**Precondition:** Order status = CONFIRMED
-
-**Test:**
-- ✅ CONFIRMED → SHIPPING (valid)
-- ✅ CONFIRMED → CANCELLED (valid)
-- ❌ CONFIRMED → PENDING (invalid)
-- ❌ CONFIRMED → DELIVERED (invalid)
+**Input:** `{ paymentStatus: "INVALID" }`  
+**Expected:** `400`
 
 ---
 
-### TC-STATE-03: Valid Transitions - SHIPPING
+### TC-PAYMENT-03: Đơn không tồn tại → 404
 
-**Precondition:** Order status = SHIPPING
-
-**Test:**
-- ✅ SHIPPING → DELIVERED (valid)
-- ✅ SHIPPING → CANCELLED (valid)
-- ❌ SHIPPING → PENDING (invalid)
-- ❌ SHIPPING → CONFIRMED (invalid)
-
----
-
-### TC-STATE-04: Terminal States - DELIVERED
-
-**Precondition:** Order status = DELIVERED
-
-**Test:**
-- ❌ DELIVERED → CONFIRMED (invalid)
-- ❌ DELIVERED → SHIPPING (invalid)
-- ❌ DELIVERED → CANCELLED (invalid)
-- ❌ DELIVERED → PENDING (invalid)
-
----
-
-### TC-STATE-05: Terminal States - CANCELLED
-
-**Precondition:** Order status = CANCELLED
-
-**Test:**
-- ❌ CANCELLED → CONFIRMED (invalid)
-- ❌ CANCELLED → SHIPPING (invalid)
-- ❌ CANCELLED → DELIVERED (invalid)
-- ❌ CANCELLED → PENDING (invalid)
-
----
-
-## TC-STOCK: Stock Management
-
-### TC-STOCK-01: Stock Decrement - Atomic
-
-**Precondition:** var_123 có stock = 10
-
-**Concurrent requests:**
-- Request 1: order 5 units
-- Request 2: order 6 units
-
-**Expected Output:**
-- Request 1: `201` (thành công), stock còn 5
-- Request 2: `400` (stock không đủ), stock vẫn 5 (rollback)
-
----
-
-### TC-STOCK-02: Stock Restoration - Cancel
-
-**Precondition:** var_123 stock = 5 (sau khi đặt)
-
-**Input:** Hủy đơn có item var_123 qty = 5
-
-**Expected Output:**
-- HTTP: `200`
-- DB: var_123 stock = 10 (được hoàn trả đầy đủ)
-
----
-
-### TC-STOCK-03: Stock Restoration - Partial
-
-**Precondition:** Order có 3 items:
-- var_123 qty 5
-- var_456 qty 3
-- var_789 qty 2
-
-**Input:** Hủy đơn
-
-**Expected Output:**
-- HTTP: `200`
-- DB: Tất cả stock được hoàn trả đúng quantity
-
----
-
-## TC-ORDER-CODE: Order Code Generation
-
-### TC-ORDERCODE-01: Order Code Format
-
-**Precondition:** Tạo đơn hàng thành công
-
-**Expected Output:**
-- `orderCode` match regex: `^ORD-\d{8}-[A-F0-9]{6}$`
-- Example: `ORD-20240619-A3F9C2`
-
----
-
-### TC-ORDERCODE-02: Order Code Unique
-
-**Test:** Tạo 100 đơn hàng song song
-
-**Expected Output:**
-- Tất cả 100 `orderCode` unique
-- Không trùng lặp
-
----
-
-## TC-SNAPSHOT: Snapshot Data Integrity
-
-### TC-SNAPSHOT-01: OrderItem Snapshot - Price Change
-
-**Precondition:** 
-- Đặt hàng với var_123, `salePrice = 100000`
-- Sau đó admin update var_123 `salePrice = 120000`
-
-**Input:** `GET /api/orders/:id`
-
-**Expected Output:**
-- OrderItem với `unitPrice = 100000` (snapshot)
-- Không bị ảnh hưởng bởi giá mới
-
----
-
-### TC-SNAPSHOT-02: OrderItem Snapshot - Product Deleted
-
-**Precondition:**
-- Đặt hàng với var_123
-- Sau đó admin xóa var_123
-
-**Input:** `GET /api/orders/:id`
-
-**Expected Output:**
-- OrderItem vẫn hiển thị đầy đủ (snapshot info)
-- `variantId` = null hoặc vẫn giữ ID cũ (không lỗi)
-
----
-
-### TC-SNAPSHOT-03: Order Shipping Address - Address Deleted
-
-**Precondition:**
-- Đặt hàng với addressId = addr_123
-- Sau đó user xóa address addr_123
-
-**Input:** `GET /api/orders/:id`
-
-**Expected Output:**
-- Order vẫn hiển thị đầy đủ shipping info (snapshot)
-- Không có lỗi
-
----
-
-## TC-CALCULATION: Price Calculation
-
-### TC-CALC-01: Tính toán subtotal - Single Item
-
-**Input:** `{ items: [{ variantId, quantity, unitPrice: 100000 }] }`
-
-**Expected Output:**
-- `subtotal = unitPrice × quantity = 100000`
-
----
-
-### TC-CALC-02: Tính toán subtotal - Multiple Items
-
-**Input:** `{ items: [{ variantId, quantity: 2, unitPrice: 100000 }, { variantId, quantity: 1, unitPrice: 50000 }] }`
-
-**Expected Output:**
-- Item 1 subtotal = 200000
-- Item 2 subtotal = 50000
-- Total subtotal = 250000
-
----
-
-### TC-CALC-03: Tính toán total - Với shippingFee
-
-**Precondition:** `shippingFee = 30000`, `discount = 0`
-
-**Input:** `{ subtotal: 250000 }`
-
-**Expected Output:**
-- `total = subtotal + shippingFee - discount = 280000`
-
----
-
-## TC-AUTH: Authentication & Authorization
-
-### TC-AUTH-01: Customer endpoint - No Token
-
-**Input:** `POST /api/orders` (không có JWT token)
-
-**Expected Output:**
-- HTTP: `401`
-- Message: `Không có token xác thực`
-
----
-
-### TC-AUTH-02: Customer endpoint - Expired Token
-
-**Input:** `POST /api/orders` với JWT token hết hạn
-
-**Expected Output:**
-- HTTP: `401`
-- Message: `Token không hợp lệ hoặc đã hết hạn`
-
----
-
-### TC-AUTH-03: Admin endpoint - Wrong Role (CUSTOMER)
-
-**Input:** `GET /api/admin/orders` với JWT token (CUSTOMER)
-
-**Expected Output:**
-- HTTP: `403`
-- Message: `Bạn không có quyền thực hiện thao tác này`
+**Expected:** `404`
 
 ---
 
 ## Checklist Coverage
 
-| Tiêu chí | Trạng thái |
+| Tiêu chí | TC |
 |---|---|
-| Happy path tất cả endpoints | ✅ |
-| Validation errors (400) | ✅ |
-| Not found (404) | ✅ |
-| Unauthorized (401) | ✅ |
-| Forbidden (403) | ✅ |
-| State machine transitions | ✅ |
-| Atomic stock check-and-decrement | ✅ |
-| Stock restoration on cancel | ✅ |
-| Snapshot data integrity | ✅ |
-| Price calculation accuracy | ✅ |
-| Order code uniqueness & format | ✅ |
-| DB state verification sau mỗi action | ✅ |
-
----
-
-## Test Data Setup
-
-**Seed Data:**
-
-```typescript
-// User
-const user = await db.user.create({
-  data: {
-    email: "customer@test.com",
-    fullName: "Test Customer",
-    passwordHash: bcrypt.hash("password123", 12),
-    role: "CUSTOMER"
-  }
-});
-
-// Address
-const address = await db.address.create({
-  data: {
-    userId: user.id,
-    fullName: "Test Customer",
-    phone: "0901234567",
-    province: "Hà Nội",
-    district: "Quận Hoàn Kiếm",
-    ward: "Phường Chương Dương",
-    streetDetail: "123 Đường ABC"
-  }
-});
-
-// Variants (với đủ stock)
-const variant1 = await db.productVariant.create({
-  data: {
-    productId: "prod_123",
-    sku: "TEST-001",
-    color: "Đen",
-    originalPrice: 100000,
-    salePrice: 80000,
-    stock: 10
-  }
-});
-
-// Cart items (nếu test đặt từ giỏ)
-await db.cartItem.createMany({
-  data: [
-    { userId: user.id, variantId: variant1.id, quantity: 2 },
-    { userId: user.id, variantId: variant2.id, quantity: 1 }
-  ]
-});
-```
-
----
-
-> **Document Status:** Draft  
-> **Last Updated:** 2026-06-19  
-> **Total Test Cases:** 38  
-> **Next Review:** After test implementation
+| Stock atomic decrement + rollback | TC-CREATE-06 |
+| total=0 → PAID ngay lúc tạo | TC-CREATE-09 |
+| Coupon race condition | TC-CREATE-08, TC-CREATE-10 |
+| Đặt từ giỏ → xóa giỏ | TC-CREATE-01 |
+| Buy now → giỏ giữ nguyên | TC-CREATE-02 |
+| Hoàn kho khi hủy | TC-CANCEL-01, TC-STATUS-03 |
+| Hoàn coupon khi hủy | TC-CANCEL-05 |
+| null variantId skip khi hủy | TC-STATUS-07 |
+| Concurrency guard P2025 | TC-STATUS-06 |
+| VALID_TRANSITIONS | TC-STATUS-02, TC-STATUS-05 |
