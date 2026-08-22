@@ -206,9 +206,24 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
 
   const total = subtotal + shippingFee - discount
 
+  // Đơn 0đ đã thanh toán xong ngay lúc sinh ra: không còn gì để thu, trên COD
+  // cũng như trên chuyển khoản. Trước khi có mã giảm giá, discount luôn là 0 nên
+  // total = 0 là bất khả; giờ PERCENT value=100 (spec cho phép) và FIXED bị
+  // computeDiscount kẹp trần bằng subtotal đều dẫn tới đó.
+  //
+  // Để nguyên UNPAID là kẹt đơn VĨNH VIỄN, không phải chỉ khó chịu: getOrderPaymentInfo
+  // dựng link VietQR với amount=0 — một yêu cầu chuyển khoản không tồn tại — còn
+  // resolveAndRecord chỉ khớp khi transferAmount === total, tức đòi một giao dịch
+  // 0đ mà ngân hàng không bao giờ sinh ra. Đơn nằm đó tới khi admin lật tay.
+  //
+  // `status` vẫn để mặc định PENDING: đã trả tiền không có nghĩa là đã duyệt đơn,
+  // admin xác nhận như mọi đơn khác.
+  const settled = total === 0
+
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
+        ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
         orderCode:        generateOrderCode(),
         userId,
         shippingName:     address.fullName,
@@ -255,7 +270,11 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
         })
         if (count === 0) throw new AppError(409, 'Mã giảm giá vừa hết lượt sử dụng')
       } else {
-        await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
+        // updateMany chứ không update, cùng lý do như nhánh trên: mã bị admin xoá
+        // xen vào giữa lúc kiểm và lúc ghi thì update ném P2025 không ai bắt và
+        // hoá thành 500. Nhánh này không có trần để chặn nên count = 0 là chuyện
+        // bình thường, không cần đọc.
+        await tx.coupon.updateMany({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
       }
 
       // P2002 nghĩa là chính khách này vừa đặt một đơn khác cùng mã ở request song

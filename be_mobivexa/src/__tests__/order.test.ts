@@ -521,6 +521,27 @@ describe('POST /api/orders - có mã giảm giá', () => {
     expect(res.body.message).toBe('Bạn đã sử dụng mã này rồi')
   })
 
+  // Mã phủ trọn giỏ (PERCENT 100%) cho total = 0 — trước khi có tính năng này thì
+  // discount luôn 0 nên ca đó bất khả. Đơn 0đ mà để UNPAID là kẹt vĩnh viễn:
+  // VietQR không đòi được 0đ và SePay đối soát theo transferAmount === total nên
+  // không giao dịch nào khớp nổi.
+  it('201 - mã giảm 100% cho đơn 0đ, đánh dấu đã thanh toán ngay', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue({ ...ACTIVE_COUPON, value: 100 })
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.coupon.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.couponUsage.create.mockResolvedValue({})
+
+    const res = await postOrder()
+
+    expect(res.status).toBe(201)
+    const data = mockPrisma.order.create.mock.calls[0][0].data
+    expect(data.total).toBe(0)
+    expect(data.paymentStatus).toBe('PAID')
+    expect(data.paidAt).not.toBeNull()
+    // Đã thu đủ tiền không có nghĩa là đã duyệt đơn — admin vẫn xác nhận như thường.
+    expect(data.status).toBeUndefined()
+  })
+
   const postCoupon = (couponCode: unknown) =>
     request(app)
       .post('/api/orders')
