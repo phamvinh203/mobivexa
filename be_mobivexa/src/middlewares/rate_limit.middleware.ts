@@ -15,6 +15,19 @@ function makeLimiter(limit: number, windowMs: number, message: string): Partial<
   }
 }
 
+// Auth là bề mặt bị dò mật khẩu nhiều nhất. Cửa sổ 15 phút thay vì 1 phút như
+// các limiter dưới: brute-force bị chặn phải chờ lâu hơn hẳn, còn người dùng gõ
+// nhầm mật khẩu vài lần vẫn nằm trong 10 lượt.
+export const authLimiter = rateLimit(
+  makeLimiter(10, 15 * 60_000, 'Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút')
+)
+
+// Upload avatar tốn băng thông và quota Cloudinary — một người đổi ảnh đại diện
+// quá 10 lần/giờ là bất thường.
+export const avatarLimiter = rateLimit(
+  makeLimiter(10, 60 * 60_000, 'Quá nhiều lần upload ảnh, vui lòng thử lại sau 1 giờ')
+)
+
 // Webhook là endpoint public — ai cũng POST được. SePay thực tế chỉ bắn vài
 // request/phút, nên 120/phút vừa thoải mái cho retry vừa chặn được spam.
 export const webhookLimiter = rateLimit(

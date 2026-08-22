@@ -1,20 +1,11 @@
 import { Router } from 'express'
-import rateLimit from 'express-rate-limit'
+import { avatarLimiter } from '../middlewares/rate_limit.middleware'
 import { authenticate } from '../middlewares/auth.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { validateUpdateProfile, validateChangePassword, validateAddress } from '../validators/user.validator'
 import * as controller from '../controllers/user.controller'
 
 const router: Router = Router()
-
-const avatarLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 giờ
-  max: 10,
-  message: { message: 'Quá nhiều lần upload ảnh, vui lòng thử lại sau 1 giờ' },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: () => process.env.NODE_ENV === 'test',
-})
 
 // Tất cả user routes đều yêu cầu đăng nhập
 router.use(authenticate)
