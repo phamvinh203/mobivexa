@@ -27,7 +27,15 @@ export function computeDiscount(rule: DiscountRule, subtotal: number): number {
   // Kẹp ở subtotal là chốt chặn total âm: total = subtotal + shippingFee - discount,
   // nên discount <= subtotal đảm bảo total >= shippingFee >= 0, đúng cả khi sau này
   // shippingFee khác 0.
-  return Math.round(Math.min(discount, subtotal))
+  //
+  // Làm tròn TRƯỚC rồi mới kẹp, và kẹp bằng Math.floor(subtotal) chứ không phải
+  // subtotal thô: nếu kẹp trước rồi mới làm tròn thì chính bước làm tròn lại đẩy
+  // discount vượt lên trên một subtotal lẻ — subtotal 300.000,6 cho ra discount
+  // 300.001, total thành -0,4. Đây không phải giả định: salePrice là Decimal(12,2)
+  // và validator chỉ chặn số âm chứ không ép số nguyên, nên subtotal lẻ vào được
+  // tới đây. Math.floor giữ trần luôn là số nguyên <= subtotal, nên sau khi làm
+  // tròn discount vẫn không thể vượt.
+  return Math.min(Math.round(discount), Math.floor(subtotal))
 }
 
 // ─── Kiểm tra điều kiện áp mã ─────────────────────────────────────────────────

@@ -20,14 +20,34 @@ describe('computeDiscount', () => {
     expect(computeDiscount({ type: 'FIXED', value: 150_000, maxDiscount: null }, 1_000_000)).toBe(150_000)
   })
 
+  // maxDiscount là trần của tỉ lệ phần trăm; với FIXED thì số tiền đã là trần của
+  // chính nó nên trần phải bị bỏ qua. Không có test này thì xoá điều kiện
+  // `rule.type === 'PERCENT' &&` trong cài đặt sẽ âm thầm cắt mất tiền giảm.
+  it('FIXED - bỏ qua maxDiscount', () => {
+    expect(computeDiscount({ type: 'FIXED', value: 150_000, maxDiscount: 50_000 }, 1_000_000)).toBe(150_000)
+  })
+
   // Chốt chặn total âm: total = subtotal + shippingFee - discount
   it('FIXED - không bao giờ giảm quá subtotal', () => {
     expect(computeDiscount({ type: 'FIXED', value: 500_000, maxDiscount: null }, 300_000)).toBe(300_000)
   })
 
+  // salePrice là Decimal(12,2) nên subtotal lẻ vào được tới đây. Nếu kẹp ở subtotal
+  // trước rồi mới làm tròn thì ra 300.001 > subtotal, total âm.
+  it('FIXED - subtotal lẻ vẫn không bị giảm quá', () => {
+    expect(computeDiscount({ type: 'FIXED', value: 500_000, maxDiscount: null }, 300_000.6)).toBe(300_000)
+  })
+
   it('làm tròn về đồng', () => {
     // 333.333 * 10% = 33.333,3 -> 33.333
     expect(computeDiscount({ type: 'PERCENT', value: 10, maxDiscount: null }, 333_333)).toBe(33_333)
+  })
+
+  // Mốc .5 là chỗ duy nhất phân biệt được làm tròn với cắt cụt: 33.333,3 thì
+  // round/floor/trunc đều ra 33.333, nên chỉ test đó thôi là đổi sang floor vẫn xanh.
+  it('làm tròn nửa lên chứ không cắt cụt', () => {
+    // 333.335 * 10% = 33.333,5 -> 33.334 (floor/trunc sẽ ra 33.333)
+    expect(computeDiscount({ type: 'PERCENT', value: 10, maxDiscount: null }, 333_335)).toBe(33_334)
   })
 
   it('subtotal 0 thì giảm 0', () => {
