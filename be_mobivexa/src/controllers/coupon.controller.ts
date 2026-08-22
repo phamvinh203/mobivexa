@@ -8,6 +8,8 @@ import {
   updateCoupon,
   toggleCouponStatus,
   deleteCoupon,
+  listActiveCoupons,
+  previewCoupon,
 } from '../services/coupon.service'
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
@@ -40,4 +42,17 @@ export const toggleStatus = asyncHandler(async (req: Request, res: Response) => 
 export const remove = asyncHandler(async (req: Request, res: Response) => {
   await deleteCoupon(req.params.id as string)
   sendSuccess(res, { message: 'Xóa mã giảm giá thành công' })
+})
+
+// ─── Customer ─────────────────────────────────────────────────────────────────
+
+export const listMine = asyncHandler(async (req: Request, res: Response) => {
+  const result = await listActiveCoupons(req.user!.userId)
+  sendSuccess(res, result)
+})
+
+export const preview = asyncHandler(async (req: Request, res: Response) => {
+  const { code, items } = req.body
+  const result = await previewCoupon(req.user!.userId, code, items)
+  sendSuccess(res, result)
 })

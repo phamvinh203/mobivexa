@@ -1,4 +1,5 @@
 import { CouponType } from '../generated/prisma/client'
+import type { OrderItemInput } from './order.type'
 
 export interface CreateCouponBody {
   code: string
@@ -24,4 +25,9 @@ export interface AdminCouponListQuery {
   search?: string
   status?: CouponStatusFilter
   isActive?: string
+}
+
+export interface PreviewCouponBody {
+  code: string
+  items?: OrderItemInput[]
 }

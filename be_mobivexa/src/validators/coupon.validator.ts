@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
 import { CouponType } from '../generated/prisma/client'
+import { checkId } from './common.validator'
 
 const CODE_RE = /^[A-Z0-9_-]{3,32}$/
 
@@ -124,5 +125,10 @@ export function validateCreateCoupon(req: Request, res: Response, next: NextFunc
 
 export function validateUpdateCoupon(req: Request, res: Response, next: NextFunction): void {
   if (!validateBody(req, res, true)) return
+  next()
+}
+
+export function validatePreviewCoupon(req: Request, res: Response, next: NextFunction): void {
+  if (!checkId(res, req.body?.code, 'Vui lòng nhập mã giảm giá')) return
   next()
 }

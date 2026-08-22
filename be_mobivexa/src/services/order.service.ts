@@ -112,7 +112,9 @@ async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: str
 
 // ─── Tạo đơn hàng ─────────────────────────────────────────────────────────────
 
-async function resolveItems(userId: string, itemsInput?: OrderItemInput[]) {
+// Export để coupon.service dùng lại: preview mã phải tính subtotal từ ĐÚNG bộ
+// hàng mà createOrder sẽ tính, nếu không preview và đặt hàng ra hai con số khác nhau.
+export async function resolveItems(userId: string, itemsInput?: OrderItemInput[]) {
   if (itemsInput && itemsInput.length > 0) return itemsInput
 
   const cart = await prisma.cart.findUnique({ where: { userId }, include: { items: true } })

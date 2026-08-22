@@ -3,7 +3,10 @@ import { Prisma, CouponType } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
+import { computeDiscount, checkCouponUsable } from '../utils/discount'
+import { resolveItems } from './order.service'
 import type { CreateCouponBody, UpdateCouponBody, AdminCouponListQuery } from '../types/coupon.type'
+import type { OrderItemInput } from '../types/order.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -161,4 +164,95 @@ export async function deleteCoupon(id: string) {
     if (isPrismaError(err, 'P2025')) throw new AppError(404, 'Mã giảm giá không tồn tại')
     throw err
   }
+}
+
+// ─── Customer ─────────────────────────────────────────────────────────────────
+
+// Đổi Decimal của Prisma thành number cho tầng luật thuần.
+type CouponRow = {
+  type: CouponType
+  value: Prisma.Decimal
+  maxDiscount: Prisma.Decimal | null
+  isActive: boolean
+  startsAt: Date
+  endsAt: Date
+  usageLimit: number | null
+  usedCount: number
+  minOrderValue: Prisma.Decimal
+}
+
+const toRule = (c: CouponRow) => ({
+  type:        c.type,
+  value:       Number(c.value),
+  maxDiscount: c.maxDiscount === null ? null : Number(c.maxDiscount),
+})
+
+const toCheckInput = (c: CouponRow) => ({
+  isActive:      c.isActive,
+  startsAt:      c.startsAt,
+  endsAt:        c.endsAt,
+  usageLimit:    c.usageLimit,
+  usedCount:     c.usedCount,
+  minOrderValue: Number(c.minOrderValue),
+})
+
+// Tính subtotal từ chính bộ hàng sẽ được đặt. KHÔNG nhận subtotal từ client —
+// nhận là mời người ta gửi subtotal: 999999999 để qua ải minOrderValue.
+async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<number> {
+  const resolved = await resolveItems(userId, items)
+
+  const variants = await prisma.productVariant.findMany({
+    where:  { id: { in: resolved.map((i) => i.variantId) } },
+    select: { id: true, salePrice: true },
+  })
+  const priceById = new Map(variants.map((v) => [v.id, Number(v.salePrice)]))
+
+  return resolved.reduce((sum, i) => sum + (priceById.get(i.variantId) ?? 0) * i.quantity, 0)
+}
+
+export async function listActiveCoupons(userId: string) {
+  const now = new Date()
+
+  const coupons = await prisma.coupon.findMany({
+    where: {
+      isActive: true,
+      startsAt: { lte: now },
+      endsAt:   { gte: now },
+    },
+    orderBy: { endsAt: 'asc' },
+  })
+
+  // Một lượt truy vấn cho toàn bộ mã, không phải mỗi mã một lượt.
+  const usages = await prisma.couponUsage.findMany({
+    where:  { userId, couponId: { in: coupons.map((c) => c.id) } },
+    select: { couponId: true },
+  })
+  const usedIds = new Set(usages.map((u) => u.couponId))
+
+  // Mã đã dùng VẪN trả về, chỉ gắn cờ — để FE làm mờ kèm lý do, thay vì mã biến
+  // mất khỏi danh sách mà khách không hiểu vì sao.
+  return {
+    coupons: coupons
+      .filter((c) => c.usageLimit === null || c.usedCount < c.usageLimit)
+      .map((c) => ({ ...c, used: usedIds.has(c.id) })),
+  }
+}
+
+export async function previewCoupon(userId: string, code: string, items?: OrderItemInput[]) {
+  const normalized = normalizeCode(code)
+
+  const [coupon, usage, subtotal] = await Promise.all([
+    prisma.coupon.findUnique({ where: { code: normalized } }),
+    prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
+    subtotalOf(userId, items),
+  ])
+
+  const check = checkCouponUsable(coupon && toCheckInput(coupon), usage !== null, subtotal)
+
+  if (!check.ok) {
+    return { valid: false, subtotal, discount: 0, total: subtotal, reason: check.reason }
+  }
+
+  const discount = computeDiscount(toRule(coupon!), subtotal)
+  return { valid: true, subtotal, discount, total: subtotal - discount }
 }

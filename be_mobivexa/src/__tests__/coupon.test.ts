@@ -12,9 +12,12 @@ const mockPrisma = vi.hoisted(() => ({
   },
   couponUsage: {
     findUnique: vi.fn(),
+    findFirst:  vi.fn(),
     findMany:   vi.fn(),
     count:      vi.fn(),
   },
+  cart:           { findUnique: vi.fn() },
+  productVariant: { findMany: vi.fn() },
 }))
 
 vi.mock('../config/db', () => ({ default: mockPrisma }))
@@ -343,5 +346,139 @@ describe('DELETE /api/admin/coupons/:id', () => {
 
     expect(res.status).toBe(409)
     expect(mockPrisma.coupon.delete).not.toHaveBeenCalled()
+  })
+})
+
+// ─── GET /api/coupons ─────────────────────────────────────────────────────────
+
+const USER_TOKEN = `Bearer ${signAccessToken({ userId: 'user-1', email: 'user@test.com', role: 'CUSTOMER' })}`
+
+describe('GET /api/coupons', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('200 - chỉ mã đang chạy và còn lượt', async () => {
+    mockPrisma.coupon.findMany.mockResolvedValue([BASE_COUPON])
+    mockPrisma.couponUsage.findMany.mockResolvedValue([])
+
+    const res = await request(app).get('/api/coupons').set('Authorization', USER_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(res.body.coupons).toHaveLength(1)
+
+    const where = mockPrisma.coupon.findMany.mock.calls[0][0].where
+    expect(where.isActive).toBe(true)
+    expect(where.startsAt).toHaveProperty('lte')
+    expect(where.endsAt).toHaveProperty('gte')
+  })
+
+  // Mã đã dùng VẪN hiện nhưng gắn cờ — để FE làm mờ kèm lý do, thay vì mã biến
+  // mất không rõ vì sao.
+  it('200 - mã khách đã dùng vẫn hiện nhưng used = true', async () => {
+    mockPrisma.coupon.findMany.mockResolvedValue([BASE_COUPON])
+    mockPrisma.couponUsage.findMany.mockResolvedValue([{ couponId: 'coupon-1' }])
+
+    const res = await request(app).get('/api/coupons').set('Authorization', USER_TOKEN)
+
+    expect(res.body.coupons[0].used).toBe(true)
+  })
+
+  it('401 - không có token', async () => {
+    const res = await request(app).get('/api/coupons')
+    expect(res.status).toBe(401)
+  })
+})
+
+// ─── POST /api/coupons/preview ────────────────────────────────────────────────
+
+const VARIANT = {
+  id:        'var-1',
+  sku:       'SKU-001',
+  salePrice: 1_000_000,
+  isActive:  true,
+  color:     null,
+  storage:   null,
+  ram:       null,
+  product:   { name: 'iPhone 15' },
+}
+
+describe('POST /api/coupons/preview', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.productVariant.findMany.mockResolvedValue([VARIANT])
+  })
+
+  it('200 - mã hợp lệ, trả số tiền giảm và tổng mới', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'sale10', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(200)
+    expect(res.body.valid).toBe(true)
+    expect(res.body.subtotal).toBe(1_000_000)
+    expect(res.body.discount).toBe(100_000)
+    expect(res.body.total).toBe(900_000)
+  })
+
+  // Đây là endpoint KIỂM TRA — "mã không hợp lệ" là kết quả bình thường, không
+  // phải lỗi. FE đọc một cờ `valid` thay vì phân nhánh theo bốn mã HTTP.
+  it('200 - mã không tồn tại vẫn trả 200 kèm lý do', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(null)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'KHONGCO', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(200)
+    expect(res.body.valid).toBe(false)
+    expect(res.body.reason).toBe('Mã giảm giá không tồn tại')
+    expect(res.body.discount).toBe(0)
+  })
+
+  it('200 - chưa đạt đơn tối thiểu thì báo lý do, không giảm', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue({ ...BASE_COUPON, minOrderValue: 5_000_000 })
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.body.valid).toBe(false)
+    expect(res.body.reason).toMatch(/tối thiểu/)
+    expect(res.body.discount).toBe(0)
+  })
+
+  // Nhận subtotal từ client là mời người ta gửi subtotal: 999999999 để qua ải
+  // minOrderValue. Server tự tính từ giỏ hoặc từ items.
+  it('200 - bỏ qua subtotal client gửi lên, tự tính từ items', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', subtotal: 999_999_999, items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.body.subtotal).toBe(1_000_000)
+  })
+
+  it('400 - thiếu code', async () => {
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({})
+
+    expect(res.status).toBe(400)
+  })
+
+  it('401 - không có token', async () => {
+    const res = await request(app).post('/api/coupons/preview').send({ code: 'SALE10' })
+    expect(res.status).toBe(401)
   })
 })
