@@ -120,6 +120,22 @@ describe('POST /api/admin/coupons', () => {
     expect(mockPrisma.coupon.create).not.toHaveBeenCalled()
   })
 
+  // Validator kiểm Number(b.value) nhưng tầng dưới từng ghi b.value thô — hai giá
+  // trị khác nhau. Ghi ngược giá trị đã ép kiểu (lối của parseIntField) để cái được
+  // kiểm chính là cái được ghi, nếu không thì Number(true) = 1 lọt qua mọi vòng
+  // kiểm rồi boolean rơi thẳng vào cột Decimal.
+  it('201 - value dạng chuỗi số được ép về number trước khi ghi', async () => {
+    mockPrisma.coupon.create.mockResolvedValue(BASE_COUPON)
+
+    const res = await request(app)
+      .post('/api/admin/coupons')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ ...VALID_BODY, value: '15' })
+
+    expect(res.status).toBe(201)
+    expect(mockPrisma.coupon.create.mock.calls[0][0].data.value).toBe(15)
+  })
+
   it('400 - endsAt không sau startsAt', async () => {
     const res = await request(app)
       .post('/api/admin/coupons')
@@ -226,6 +242,76 @@ describe('PUT /api/admin/coupons/:id', () => {
       .send({ maxDiscount: 50_000 })
 
     expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  // null trên cột NOT NULL từng là điểm mù: validator coi null như "không gửi" nên
+  // bỏ qua hết, còn couponData lại coi là "có gửi" nên vẫn ghi. new Date(null) ra
+  // 1970-01-01 — Date HỢP LỆ, không phải NaN — nên Prisma nhận, và mã hẹn lịch cho
+  // đợt khuyến mãi tháng sau thành dùng được ngay lập tức.
+  it('400 - startsAt = null không được coi là bỏ trống field', async () => {
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ startsAt: null })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  // Cùng lỗ hổng, nhánh khác: normalizeCode(null) ném TypeError thành 500 "Lỗi
+  // server" — lỗi của client mà báo như lỗi hệ thống.
+  it('400 - code = null trả lỗi client chứ không phải 500', async () => {
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ code: null })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  // Mặt còn lại của cùng một luật: cột NULLABLE thì null là thao tác xoá hợp lệ,
+  // và là cách duy nhất admin gỡ trần giảm. Chặn nhầm ở đây là khoá luôn tính năng.
+  it('200 - maxDiscount = null gỡ trần giảm của mã PERCENT', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.coupon.update.mockResolvedValue({ ...BASE_COUPON, maxDiscount: null })
+
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ maxDiscount: null })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.coupon.update.mock.calls[0][0].data.maxDiscount).toBe(null)
+  })
+})
+
+// ─── PATCH /api/admin/coupons/:id/status ──────────────────────────────────────
+
+describe('PATCH /api/admin/coupons/:id/status', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('200 - đảo trạng thái mã đang bật thành tắt', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.coupon.update.mockResolvedValue({ ...BASE_COUPON, isActive: false })
+
+    const res = await request(app)
+      .patch('/api/admin/coupons/coupon-1/status')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.coupon.update.mock.calls[0][0].data.isActive).toBe(false)
+  })
+
+  it('404 - đảo trạng thái mã không tồn tại', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(null)
+
+    const res = await request(app)
+      .patch('/api/admin/coupons/khong-co/status')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(404)
     expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
   })
 })

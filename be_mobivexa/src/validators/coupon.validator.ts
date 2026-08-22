@@ -4,11 +4,36 @@ import { CouponType } from '../generated/prisma/client'
 
 const CODE_RE = /^[A-Z0-9_-]{3,32}$/
 
+// Các cột schema khai NOT NULL, kèm nhãn tiếng Việt để dựng thông báo lỗi.
+// Cột nullable (description, maxDiscount, usageLimit) CỐ Ý không có mặt: gửi null
+// lên chúng là thao tác xoá hợp lệ, đó là cách duy nhất admin gỡ trần giảm hay bỏ
+// giới hạn lượt dùng.
+const REQUIRED_LABELS: Record<string, string> = {
+  code:          'Mã giảm giá',
+  type:          'Loại mã giảm giá',
+  value:         'Giá trị giảm',
+  minOrderValue: 'Giá trị đơn tối thiểu',
+  startsAt:      'Thời gian bắt đầu',
+  endsAt:        'Thời gian kết thúc',
+  isActive:      'Trạng thái',
+}
+
 // Kiểm tra chung cho create và update. `partial` bật lên khi update — field không
 // gửi lên thì bỏ qua, field có gửi thì vẫn phải đúng.
 function validateBody(req: Request, res: Response, partial: boolean): boolean {
   const b = req.body ?? {}
   const has = (k: string) => b[k] !== undefined && b[k] !== null
+
+  // Chặn null trên cột NOT NULL TRƯỚC mọi kiểm tra khác, vì has() coi null như
+  // vắng mặt nên toàn bộ nhánh bên dưới sẽ né đúng những field này. {startsAt:null}
+  // từng lọt qua đây rồi thành new Date(null) = 1970-01-01 — một Date HỢP LỆ chứ
+  // không phải NaN — nên Prisma nhận, và mã hẹn lịch thành dùng được ngay.
+  for (const [key, label] of Object.entries(REQUIRED_LABELS)) {
+    if (b[key] === null) {
+      sendError(res, 400, `${label} không được để trống`)
+      return false
+    }
+  }
 
   if (!partial || has('code')) {
     if (typeof b.code !== 'string' || !CODE_RE.test(b.code.trim().toUpperCase())) {
@@ -24,6 +49,10 @@ function validateBody(req: Request, res: Response, partial: boolean): boolean {
     }
   }
 
+  // Mọi field số đều GHI NGƯỢC giá trị đã ép kiểu vào body — cùng lối với
+  // parseIntField (common.validator.ts). Chỉ kiểm tra Number(x) rồi để tầng dưới
+  // ghi x thô là hai giá trị khác nhau: Number(true) = 1 lọt qua mọi vòng kiểm,
+  // rồi boolean rơi thẳng vào cột Decimal và Prisma ném 500.
   if (!partial || has('value')) {
     const value = Number(b.value)
     if (!Number.isFinite(value) || value <= 0) {
@@ -34,6 +63,7 @@ function validateBody(req: Request, res: Response, partial: boolean): boolean {
       sendError(res, 400, 'Giảm theo phần trăm không được vượt quá 100')
       return false
     }
+    b.value = value
   }
 
   // Trần giảm chỉ có nghĩa với PERCENT. Báo lỗi chứ không bỏ qua im lặng: admin
@@ -49,6 +79,7 @@ function validateBody(req: Request, res: Response, partial: boolean): boolean {
       sendError(res, 400, 'Trần giảm phải là số dương')
       return false
     }
+    b.maxDiscount = max
   }
 
   if (has('minOrderValue')) {
@@ -57,6 +88,7 @@ function validateBody(req: Request, res: Response, partial: boolean): boolean {
       sendError(res, 400, 'Giá trị đơn tối thiểu không được là số âm')
       return false
     }
+    b.minOrderValue = min
   }
 
   if (has('usageLimit')) {
@@ -65,6 +97,7 @@ function validateBody(req: Request, res: Response, partial: boolean): boolean {
       sendError(res, 400, 'Giới hạn lượt dùng phải là số nguyên dương')
       return false
     }
+    b.usageLimit = limit
   }
 
   if (!partial || has('startsAt') || has('endsAt')) {

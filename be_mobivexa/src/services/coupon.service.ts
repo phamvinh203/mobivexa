@@ -22,16 +22,26 @@ async function findCouponOrThrow(id: string) {
 function couponData(body: UpdateCouponBody) {
   const data: Prisma.CouponUncheckedUpdateInput = {}
 
-  if (body.code          !== undefined) data.code          = normalizeCode(body.code)
-  if (body.description   !== undefined) data.description   = body.description
-  if (body.type          !== undefined) data.type          = body.type
-  if (body.value         !== undefined) data.value         = body.value
-  if (body.maxDiscount   !== undefined) data.maxDiscount   = body.maxDiscount
-  if (body.minOrderValue !== undefined) data.minOrderValue = body.minOrderValue
-  if (body.usageLimit    !== undefined) data.usageLimit    = body.usageLimit
-  if (body.startsAt      !== undefined) data.startsAt      = new Date(body.startsAt)
-  if (body.endsAt        !== undefined) data.endsAt        = new Date(body.endsAt)
-  if (body.isActive      !== undefined) data.isActive      = body.isActive
+  // Nullability của schema là luật phân nhóm ở đây, không phải sự tiện tay.
+  //
+  // Cột NOT NULL dùng `!= null` (lỏng, bắt cả null lẫn undefined): body vá lẻ gửi
+  // null lên thì KHÔNG BAO GIỜ được ghi xuống. Dùng `!== undefined` như trước là
+  // lọt, mà lọt im lặng: new Date(null) ra 1970-01-01 — một Date HỢP LỆ chứ không
+  // phải NaN — nên Prisma nhận và mã hẹn lịch thành dùng được ngay; còn
+  // normalizeCode(null) thì nổ TypeError thành 500.
+  if (body.code          != null) data.code          = normalizeCode(body.code)
+  if (body.type          != null) data.type          = body.type
+  if (body.value         != null) data.value         = body.value
+  if (body.minOrderValue != null) data.minOrderValue = body.minOrderValue
+  if (body.startsAt      != null) data.startsAt      = new Date(body.startsAt)
+  if (body.endsAt        != null) data.endsAt        = new Date(body.endsAt)
+  if (body.isActive      != null) data.isActive      = body.isActive
+
+  // Cột nullable giữ `!== undefined`: null ở đây là thao tác XOÁ hợp lệ, và là
+  // cách duy nhất admin gỡ trần giảm hay bỏ giới hạn lượt dùng.
+  if (body.description !== undefined) data.description = body.description
+  if (body.maxDiscount !== undefined) data.maxDiscount = body.maxDiscount
+  if (body.usageLimit  !== undefined) data.usageLimit  = body.usageLimit
 
   // FIXED không có trần giảm — validator đã chặn việc GỬI maxDiscount kèm FIXED,
   // nhưng đổi type từ PERCENT sang FIXED mà không gửi maxDiscount thì trần cũ vẫn
