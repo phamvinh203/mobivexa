@@ -4,6 +4,7 @@ import { AppError } from '../helpers/app_error'
 import { USER_PUBLIC_SELECT } from './user.service'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type { AdminUserListQuery } from '../types/admin.type'
+import { parseSearch } from '../utils/search'
 
 // Set cho O(1) lookup — không tái tính mỗi request
 const VALID_ROLES = new Set(Object.values(UserRole))
@@ -43,7 +44,7 @@ export async function listUsers(query: AdminUserListQuery) {
   const where: Prisma.UserWhereInput = {}
   // Trim trước khi lọc, giống listOrders: ô tìm kiếm chỉ có khoảng trắng phải
   // coi như không lọc, chứ không phải lọc theo ' ' rồi ra danh sách vô nghĩa.
-  const search = query.search?.trim()
+  const search = parseSearch(query.search)
   if (search) {
     where.OR = [
       { email:    { contains: search, mode: 'insensitive' } },

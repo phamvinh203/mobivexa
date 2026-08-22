@@ -20,7 +20,8 @@ import type {
 const findBySlug = (slug: string) => prisma.product.findUnique({ where: { slug }, select: { id: true } })
 
 async function findProductOrThrow(id: string) {
-  const product = await prisma.product.findUnique({ where: { id }, select: { id: true, isActive: true, isFeatured: true } })
+  // name để updateProduct sinh lại được slug khi admin xoá trắng ô slug.
+  const product = await prisma.product.findUnique({ where: { id }, select: { id: true, name: true, isActive: true, isFeatured: true } })
   if (!product) throw new AppError(404, 'Sản phẩm không tồn tại')
   return product
 }
@@ -167,6 +168,10 @@ export async function listProducts(
       orderBy: resolveSort(query.sort),
       skip: (page - 1) * limit,
       take: limit,
+      // Bảng danh sách không hiển thị mô tả, mà cột này chứa HTML của RichTextEditor
+      // — ảnh dán vào được nhúng thẳng dạng base64, nên mỗi dòng có thể vài MB.
+      // Chỉ endpoint chi tiết mới cần tới nó.
+      ...(admin && { omit: { description: true } }),
       include: {
         category: { select: { id: true, name: true, slug: true } },
         brand: { select: { id: true, name: true, slug: true } },
@@ -272,7 +277,7 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
 }
 
 export async function updateProduct(id: string, body: UpdateProductBody, files?: Express.Multer.File[]) {
-  await findProductOrThrow(id)
+  const product = await findProductOrThrow(id)
   const { name, slug, description, categoryId, brandId, isActive, isFeatured, tagIds } = body
 
   const checks: Promise<void>[] = []
@@ -283,8 +288,13 @@ export async function updateProduct(id: string, body: UpdateProductBody, files?:
 
   const data: Prisma.ProductUpdateInput = {}
   if (name !== undefined) data.name = name.trim()
-  if (slug !== undefined) data.slug = await generateUniqueSlug(slug, slugTaken(findBySlug, id))
-  if (description !== undefined) data.description = description
+  // Slug rỗng = yêu cầu sinh lại từ tên, đúng như placeholder ở form hứa. Không có
+  // nhánh này thì generateUniqueSlug('') sẽ tạo ra slug rỗng.
+  if (slug !== undefined) {
+    const base = slug.trim() || name?.trim() || product.name
+    data.slug = await generateUniqueSlug(base, slugTaken(findBySlug, id))
+  }
+  if (description !== undefined) data.description = description || null
   if (categoryId !== undefined) data.category = { connect: { id: categoryId } }
   if (brandId !== undefined) data.brand = { connect: { id: brandId } }
   if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
@@ -418,9 +428,33 @@ export async function updateVariant(productId: string, variantId: string, body: 
   if (body.stock !== undefined) data.stock = body.stock
   if (body.isActive !== undefined) data.isActive = body.isActive
 
+  // Cập nhật từng phần: đối chiếu giá trên kết quả sau khi trộn với giá đang lưu,
+  // nếu không thì gửi mỗi salePrice sẽ lách được ràng buộc.
+  const nextOriginal = body.originalPrice ?? Number(variant.originalPrice)
+  const nextSale = body.salePrice ?? Number(variant.salePrice)
+  if (nextSale > nextOriginal) throw new AppError(400, 'Giá bán không được lớn hơn giá gốc')
+
   const updated = await prisma.productVariant.update({ where: { id: variantId }, data })
 
   return updated
+}
+
+/** Ghi đè tồn kho bằng một số tuyệt đối. `expectedStock` là con số admin nhìn thấy
+ *  lúc mở form; nếu tồn kho đã đổi từ lúc đó (khách vừa đặt hàng, hoặc admin khác
+ *  vừa sửa) thì từ chối, vì ghi đè sẽ nuốt mất phần chênh lệch đó. */
+export async function updateVariantStock(
+  productId: string,
+  variantId: string,
+  stock: number,
+  expectedStock?: number,
+) {
+  const variant = await findOwnedVariant(productId, variantId)
+
+  if (expectedStock !== undefined && variant.stock !== expectedStock) {
+    throw new AppError(409, `Tồn kho đã thay đổi (hiện tại ${variant.stock}). Hãy tải lại và nhập lại.`)
+  }
+
+  return prisma.productVariant.update({ where: { id: variantId }, data: { stock } })
 }
 
 export async function deleteVariant(productId: string, variantId: string) {

@@ -5,6 +5,8 @@ import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
+import { parseSearch } from '../utils/search'
+import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
 import type {
   CreateOrderBody,
   OrderItemInput,
@@ -106,13 +108,29 @@ async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: str
       })
     }
 
+    // Hoàn lượt mã. Không cần guard chống hoàn hai lần: lệnh update ở trên đã có
+    // guard `status`, nên chỉ đúng một request đi được tới đây.
+    const usage = await tx.couponUsage.findUnique({ where: { orderId: order.id } })
+    if (usage) {
+      await tx.couponUsage.delete({
+        where: { couponId_userId: { couponId: usage.couponId, userId: usage.userId } },
+      })
+      // gt: 0 là chốt phòng thân để số đếm không bao giờ âm
+      await tx.coupon.updateMany({
+        where: { id: usage.couponId, usedCount: { gt: 0 } },
+        data:  { usedCount: { decrement: 1 } },
+      })
+    }
+
     return updated
   })
 }
 
 // ─── Tạo đơn hàng ─────────────────────────────────────────────────────────────
 
-async function resolveItems(userId: string, itemsInput?: OrderItemInput[]) {
+// Export để coupon.service dùng lại: preview mã phải tính subtotal từ ĐÚNG bộ
+// hàng mà createOrder sẽ tính, nếu không preview và đặt hàng ra hai con số khác nhau.
+export async function resolveItems(userId: string, itemsInput?: OrderItemInput[]) {
   if (itemsInput && itemsInput.length > 0) return itemsInput
 
   const cart = await prisma.cart.findUnique({ where: { userId }, include: { items: true } })
@@ -122,7 +140,7 @@ async function resolveItems(userId: string, itemsInput?: OrderItemInput[]) {
 }
 
 export async function createOrder(userId: string, body: CreateOrderBody) {
-  const { addressId, paymentMethod = 'COD', note, items: itemsInput } = body
+  const { addressId, paymentMethod = 'COD', note, items: itemsInput, couponCode } = body
 
   const [address, resolvedItems] = await Promise.all([
     prisma.address.findFirst({ where: { id: addressId, userId } }),
@@ -163,12 +181,50 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
 
   const subtotal    = orderItems.reduce((sum, i) => sum + i.subtotal, 0)
   const shippingFee = 0
-  const discount    = 0
-  const total       = subtotal + shippingFee - discount
+
+  // Kiểm tra mã NGOÀI transaction: hỏng ở đây thì chưa ghi gì, và thông điệp lỗi
+  // đủ cụ thể để khách sửa. Trong transaction chỉ còn phần chống đua.
+  let coupon: Awaited<ReturnType<typeof prisma.coupon.findUnique>> = null
+  let discount = 0
+
+  if (couponCode) {
+    const normalized = normalizeCode(couponCode)
+
+    const [found, usage] = await Promise.all([
+      prisma.coupon.findUnique({ where: { code: normalized } }),
+      prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
+    ])
+
+    // toCheckInput/toRule dùng CHUNG với previewCoupon, không chép lại: preview và
+    // đặt hàng phải ra cùng một con số cho cùng một giỏ, đúng lý do resolveItems
+    // được export.
+    const check = checkCouponUsable(found && toCheckInput(found), usage !== null, subtotal)
+    if (!check.ok) throw new AppError(400, check.reason)
+
+    coupon = found
+    discount = computeDiscount(toRule(found!), subtotal)
+  }
+
+  const total = subtotal + shippingFee - discount
+
+  // Đơn 0đ đã thanh toán xong ngay lúc sinh ra: không còn gì để thu, trên COD
+  // cũng như trên chuyển khoản. Trước khi có mã giảm giá, discount luôn là 0 nên
+  // total = 0 là bất khả; giờ PERCENT value=100 (spec cho phép) và FIXED bị
+  // computeDiscount kẹp trần bằng subtotal đều dẫn tới đó.
+  //
+  // Để nguyên UNPAID là kẹt đơn VĨNH VIỄN, không phải chỉ khó chịu: getOrderPaymentInfo
+  // dựng link VietQR với amount=0 — một yêu cầu chuyển khoản không tồn tại — còn
+  // resolveAndRecord chỉ khớp khi transferAmount === total, tức đòi một giao dịch
+  // 0đ mà ngân hàng không bao giờ sinh ra. Đơn nằm đó tới khi admin lật tay.
+  //
+  // `status` vẫn để mặc định PENDING: đã trả tiền không có nghĩa là đã duyệt đơn,
+  // admin xác nhận như mọi đơn khác.
+  const settled = total === 0
 
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
+        ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
         orderCode:        generateOrderCode(),
         userId,
         shippingName:     address.fullName,
@@ -183,6 +239,7 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
         total,
         paymentMethod,
         note,
+        couponCode: coupon?.code ?? null,
         items: { create: orderItems },
       },
       include: ORDER_INCLUDE,
@@ -202,6 +259,34 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
         }
       })
     )
+
+    if (coupon) {
+      // Guard usedCount < usageLimit là chốt chống vượt hạn: usageLimit đọc được
+      // ở bước kiểm tra, nên nếu một transaction khác vừa tăng usedCount chạm trần
+      // thì WHERE không khớp và count === 0. Đúng khuôn đang dùng cho tồn kho.
+      if (coupon.usageLimit !== null) {
+        const { count } = await tx.coupon.updateMany({
+          where: { id: coupon.id, usedCount: { lt: coupon.usageLimit } },
+          data:  { usedCount: { increment: 1 } },
+        })
+        if (count === 0) throw new AppError(409, 'Mã giảm giá vừa hết lượt sử dụng')
+      } else {
+        // updateMany chứ không update, cùng lý do như nhánh trên: mã bị admin xoá
+        // xen vào giữa lúc kiểm và lúc ghi thì update ném P2025 không ai bắt và
+        // hoá thành 500. Nhánh này không có trần để chặn nên count = 0 là chuyện
+        // bình thường, không cần đọc.
+        await tx.coupon.updateMany({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
+      }
+
+      // P2002 nghĩa là chính khách này vừa đặt một đơn khác cùng mã ở request song
+      // song. Khoá chính (couponId, userId) là thứ chặn, không phải logic ứng dụng.
+      try {
+        await tx.couponUsage.create({ data: { couponId: coupon.id, userId, orderId: order.id } })
+      } catch (err) {
+        if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Bạn đã sử dụng mã này rồi')
+        throw err
+      }
+    }
 
     if (!itemsInput || itemsInput.length === 0) {
       await tx.cartItem.deleteMany({ where: { cart: { userId } } })
@@ -251,7 +336,7 @@ export async function listOrders(query: AdminOrderListQuery) {
   // Mã đơn dạng ORD-20260817-A1B2C3 — admin thường chỉ nhớ đuôi hoặc ngày, nên
   // khớp một phần (contains) thay vì bằng tuyệt đối. Không dùng full-text như
   // tìm tên sản phẩm vì mã không phải là từ, tokenizer sẽ không tách ra được.
-  const search = query.search?.trim()
+  const search = parseSearch(query.search)
   if (search)              where.orderCode     = { contains: search, mode: 'insensitive' }
 
   if (query.status)        where.status        = query.status

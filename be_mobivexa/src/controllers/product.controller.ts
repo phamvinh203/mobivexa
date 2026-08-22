@@ -13,6 +13,7 @@ import {
   toggleProductFeatured,
   addVariant,
   updateVariant,
+  updateVariantStock,
   deleteVariant,
   addProductImages,
   deleteProductImage,
@@ -124,7 +125,13 @@ export const removeVariant = asyncHandler(async (req: Request, res: Response) =>
 // ─── Admin: Stock ─────────────────────────────────────────────────────────────
 
 export const patchStock = asyncHandler(async (req: Request, res: Response) => {
-  const variant = await updateVariant(req.params.id as string, req.params.variantId as string, { stock: Number(req.body.stock) })
+  const { expectedStock } = req.body
+  const variant = await updateVariantStock(
+    req.params.id as string,
+    req.params.variantId as string,
+    Number(req.body.stock),
+    expectedStock === undefined ? undefined : Number(expectedStock),
+  )
   sendSuccess(res, { message: 'Cập nhật tồn kho thành công', variant })
 })
 

@@ -51,11 +51,14 @@ export async function ensureSearchIndexes(): Promise<void> {
   // ILIKE '%...%'. Wildcard đứng đầu nên btree của @unique vô dụng — không có
   // index này thì mỗi lần gõ là quét cạn bảng orders HAI lần (findMany + count).
   // pg_trgm là loại index duy nhất phục vụ được khớp giữa chuỗi.
+  //
+  // Tên cột phải để trong nháy kép: Prisma chỉ đổi tên khi có @map, mà Order.orderCode
+  // không có — nên cột thật là "orderCode" camelCase, còn order_code không tồn tại.
   try {
     await prisma.$executeRaw`CREATE EXTENSION IF NOT EXISTS pg_trgm`;
     await prisma.$executeRaw`
       CREATE INDEX IF NOT EXISTS idx_orders_order_code_trgm
-      ON orders USING GIN (order_code gin_trgm_ops)
+      ON orders USING GIN ("orderCode" gin_trgm_ops)
     `;
     console.log("[DB] Order code trigram index ready");
   } catch (error) {

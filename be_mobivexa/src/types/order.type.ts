@@ -9,6 +9,8 @@ export interface CreateOrderBody {
   addressId: string
   paymentMethod?: PaymentMethod
   note?: string
+  /** Mã giảm giá, không phân biệt hoa thường */
+  couponCode?: string
   // Nếu không truyền items → tự động lấy từ giỏ hàng
   items?: OrderItemInput[]
 }

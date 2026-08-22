@@ -39,6 +39,14 @@ export const qrLimiter = rateLimit(
   makeLimiter(30, 60_000, 'Bạn thao tác quá nhanh, vui lòng thử lại sau')
 )
 
+// Preview mã là một cỗ máy DÒ MÃ: gõ đại một code là biết ngay mã đó có thật hay
+// không, mà mỗi lượt tốn ba lượt truy vấn DB. Không chặn thì một script quét từ
+// điển vừa moi được trọn bộ mã đang chạy vừa kéo DB xuống. 20/phút thoải mái cho
+// người thật thử vài mã trong giỏ.
+export const couponPreviewLimiter = rateLimit(
+  makeLimiter(20, 60_000, 'Bạn thử mã giảm giá quá nhanh, vui lòng chờ một lát')
+)
+
 // Sync gọi ra SePay UserAPI (2 req/s theo giới hạn của SePay) → siết chặt.
 export const syncLimiter = rateLimit(
   makeLimiter(10, 60_000, 'Đồng bộ quá thường xuyên, vui lòng thử lại sau')

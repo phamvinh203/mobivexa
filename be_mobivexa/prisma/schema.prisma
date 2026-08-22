@@ -77,6 +77,7 @@ model User {
   orders        Order[]
   reviews       Review[]
   reviewHelpful ReviewHelpful[]
+  couponUsages  CouponUsage[]
   favorites     Favorite[]
 
   @@index([role])
@@ -340,6 +341,7 @@ model Order {
 
   note          String?
   cancelReason  String?
+  couponCode    String?       // snapshot mã đã dùng — đơn cũ không đổi khi mã bị sửa/xoá
   paidAt        DateTime?
 
   createdAt     DateTime      @default(now())
@@ -348,6 +350,7 @@ model Order {
   user     User               @relation(fields: [userId], references: [id])
   items    OrderItem[]
   sepayTxs SePayTransaction[]
+  couponUsage CouponUsage?
 
   @@index([userId])
   @@index([status])
@@ -487,6 +490,66 @@ model Favorite {
   // phục vụ trọn câu truy vấn, không phải sort lại sau khi lọc.
   @@index([userId, createdAt])
   @@map("favorites")
+}
+
+enum CouponType {
+  PERCENT // value = 10 nghĩa là giảm 10%
+  FIXED   // value = 100000 nghĩa là giảm thẳng 100.000đ
+}
+
+// Mã giảm giá. `code` luôn được chuẩn hoá UPPERCASE cả lúc ghi lẫn lúc tra, nên
+// @unique có tác dụng như so sánh không phân biệt hoa thường mà không cần index
+// biểu thức.
+model Coupon {
+  id            String     @id @default(uuid())
+  code          String     @unique
+  description   String?
+  type          CouponType
+  value         Decimal    @db.Decimal(12, 2)
+  maxDiscount   Decimal?   @db.Decimal(12, 2) // trần giảm; CHỈ có nghĩa với PERCENT
+  minOrderValue Decimal    @db.Decimal(12, 2) @default(0)
+
+  usageLimit    Int?       // null = không giới hạn tổng lượt
+  usedCount     Int        @default(0)
+
+  startsAt      DateTime
+  endsAt        DateTime
+  isActive      Boolean    @default(true)
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  usages        CouponUsage[]
+
+  // Truy vấn "mã đang chạy": btree seek bằng isActive rồi quét range trên
+  // startsAt — tới cột thứ ba thì hết seek được, endsAt chỉ còn lọc trên đúng
+  // những dòng đã quét ra. Vẫn đáng để cả ba cột: nhánh cây hẹp hơn nhiều so với
+  // quét bảng, và endsAt nằm trong index nên không phải chạm heap.
+  @@index([isActive, startsAt, endsAt])
+  @@map("coupons")
+}
+
+// Bảng RÀNG BUỘC, không phải sổ lịch sử.
+//
+// Huỷ đơn thì dòng này bị xoá để khách dùng lại mã được. Lịch sử nằm ở
+// Order.couponCode và Order.discount dạng snapshot — cùng cách repo đang snapshot
+// địa chỉ giao hàng và giá sản phẩm, nên đổi tên hay xoá mã về sau không làm sai
+// lệch đơn cũ.
+model CouponUsage {
+  couponId  String
+  userId    String
+  orderId   String   @unique // một đơn dùng tối đa một mã
+  createdAt DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // Khoá chính CHÍNH LÀ ràng buộc "1 lượt / khách / mã". DB chặn, không có khe đua
+  // giữa lúc đếm và lúc ghi như cách kiểm tra bằng logic ứng dụng.
+  @@id([couponId, userId])
+  @@index([userId])
+  @@map("coupon_usages")
 }
 
 model Banner {
