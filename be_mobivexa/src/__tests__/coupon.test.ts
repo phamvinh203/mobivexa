@@ -107,6 +107,19 @@ describe('POST /api/admin/coupons', () => {
     expect(res.status).toBe(400)
   })
 
+  // value âm cho ra discount âm, mà total = subtotal + shippingFee - discount nên
+  // discount âm LÀM TĂNG tiền phải trả. Tầng thuần (utils/discount.ts) cố ý không
+  // tự vệ, nên chốt chặn nằm hết ở đây.
+  it('400 - value âm', async () => {
+    const res = await request(app)
+      .post('/api/admin/coupons')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ ...VALID_BODY, value: -10 })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.create).not.toHaveBeenCalled()
+  })
+
   it('400 - endsAt không sau startsAt', async () => {
     const res = await request(app)
       .post('/api/admin/coupons')
@@ -176,6 +189,44 @@ describe('GET /api/admin/coupons', () => {
 
     const where = mockPrisma.coupon.findMany.mock.calls[0][0].where
     expect(where.code).toEqual({ contains: 'SALE' })
+  })
+})
+
+// ─── PUT /api/admin/coupons/:id ───────────────────────────────────────────────
+
+// Update bỏ trống `type` thì validator không có gì để so — nó là middleware, không
+// đọc được DB. Hai ca dưới đây đều lọt qua validator và phải bị service chặn lại
+// bằng type ĐANG LƯU.
+describe('PUT /api/admin/coupons/:id', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('400 - value vượt 100 trên mã PERCENT đang lưu, dù body không gửi type', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ value: 150 })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
+  })
+
+  it('400 - đặt trần giảm cho mã FIXED đang lưu, dù body không gửi type', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue({
+      ...BASE_COUPON,
+      type:        'FIXED',
+      value:       100_000,
+      maxDiscount: null,
+    })
+
+    const res = await request(app)
+      .put('/api/admin/coupons/coupon-1')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ maxDiscount: 50_000 })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.coupon.update).not.toHaveBeenCalled()
   })
 })
 

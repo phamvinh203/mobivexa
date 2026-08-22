@@ -106,7 +106,25 @@ export async function createCoupon(body: CreateCouponBody) {
 }
 
 export async function updateCoupon(id: string, body: UpdateCouponBody) {
-  await findCouponOrThrow(id)
+  const current = await findCouponOrThrow(id)
+
+  // Cổng thứ hai cho hai luật phụ thuộc `type`. Validator là middleware, không đọc
+  // được DB nên chỉ so được với `type` GỬI LÊN — update bỏ trống `type` là lọt cả
+  // hai: PUT {value:150} trên mã PERCENT đang lưu, hay PUT {maxDiscount:...} trên
+  // mã FIXED đang lưu. Ở đây đã có bản ghi trong tay nên chốt được theo type THỰC.
+  const type  = body.type ?? current.type
+  const value = Number(body.value ?? current.value)
+
+  if (type === CouponType.PERCENT && value > 100) {
+    throw new AppError(400, 'Giảm theo phần trăm không được vượt quá 100')
+  }
+
+  // Chỉ chặn khi ĐẶT trần thật. maxDiscount = null là thao tác xoá trần hợp lệ,
+  // và couponData cũng tự set null khi đổi sang FIXED — chặn cả hai ca đó thì
+  // không ai gỡ được trần cũ nữa.
+  if (type === CouponType.FIXED && body.maxDiscount !== undefined && body.maxDiscount !== null) {
+    throw new AppError(400, 'Mã giảm số tiền cố định không có trần giảm')
+  }
 
   try {
     return await prisma.coupon.update({ where: { id }, data: couponData(body) })
