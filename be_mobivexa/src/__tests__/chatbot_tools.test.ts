@@ -1,8 +1,8 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 const mockPrisma = vi.hoisted(() => ({
-  product:  { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn() },
-  category: { findMany: vi.fn() },
+  product:  { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn(), groupBy: vi.fn() },
+  category: { findMany: vi.fn(), findUnique: vi.fn() },
   brand:    { findMany: vi.fn() },
   $queryRaw: vi.fn(),
 }))
@@ -84,6 +84,41 @@ describe('executeTool: searchProducts', () => {
     expect(mockPrisma.product.findMany.mock.calls[0][0].take).toBeLessThanOrEqual(8)
   })
 
+  it('danh mục cha gồm cả sản phẩm của danh mục con', async () => {
+    // "Điện thoại" là nhánh gốc rỗng, máy thật nằm ở danh mục con "android".
+    mockPrisma.category.findUnique.mockResolvedValue({
+      id: 'cat-parent',
+      slug: 'dien-thoai',
+      children: [{ slug: 'android' }],
+    })
+    mockPrisma.product.findMany
+      .mockResolvedValueOnce([]) // dien-thoai: rỗng
+      .mockResolvedValueOnce([PRODUCT_ROW]) // android: có hàng
+    mockPrisma.product.count.mockResolvedValue(0)
+
+    const result = await executeTool('searchProducts', { categorySlug: 'dien-thoai' })
+
+    expect(result.products).toHaveLength(1)
+    expect(result.products[0].slug).toBe('iphone-15')
+  })
+
+  it('không lấy quá số sản phẩm yêu cầu khi gộp nhiều danh mục con', async () => {
+    mockPrisma.category.findUnique.mockResolvedValue({
+      id: 'cat-parent',
+      slug: 'dien-thoai',
+      children: [{ slug: 'android' }, { slug: 'iphone' }],
+    })
+    mockPrisma.product.findMany.mockResolvedValue([
+      PRODUCT_ROW,
+      { ...PRODUCT_ROW, id: 'prod-2', slug: 'p2' },
+    ])
+    mockPrisma.product.count.mockResolvedValue(2)
+
+    const result = await executeTool('searchProducts', { categorySlug: 'dien-thoai', limit: 1 })
+
+    expect(result.products).toHaveLength(1)
+  })
+
   it('khoảng giá ngược trả về error thay vì ném lỗi', async () => {
     const result = await executeTool('searchProducts', { priceMin: 20000000, priceMax: 1000000 })
 
@@ -129,6 +164,36 @@ describe('executeTool: getProductDetail', () => {
     const result = await executeTool('getProductDetail', { slug: 'khong-co' })
 
     expect(result.data).toHaveProperty('error')
+  })
+})
+
+// ─── listCategories ───────────────────────────────────────────────────────────
+
+describe('executeTool: listCategories', () => {
+  it('kèm danh mục cha và số sản phẩm để model không tra vào nhánh rỗng', async () => {
+    mockPrisma.category.findMany.mockResolvedValue([
+      { id: 'cat-parent', name: 'Điện thoại', slug: 'dien-thoai', parentId: null },
+      { id: 'cat-child',  name: 'android',    slug: 'android',    parentId: 'cat-parent' },
+    ])
+    mockPrisma.product.groupBy.mockResolvedValue([{ categoryId: 'cat-child', _count: { _all: 2 } }])
+
+    const result = await executeTool('listCategories', {})
+
+    expect(result.data).toEqual({
+      categories: [
+        { name: 'Điện thoại', slug: 'dien-thoai', parentSlug: null,           productCount: 0 },
+        { name: 'android',    slug: 'android',    parentSlug: 'dien-thoai',   productCount: 2 },
+      ],
+    })
+  })
+
+  it('chỉ đếm sản phẩm đang bán', async () => {
+    mockPrisma.category.findMany.mockResolvedValue([])
+    mockPrisma.product.groupBy.mockResolvedValue([])
+
+    await executeTool('listCategories', {})
+
+    expect(mockPrisma.product.groupBy.mock.calls[0][0].where).toEqual({ isActive: true })
   })
 })
 

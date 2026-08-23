@@ -1,4 +1,5 @@
 import { Type, type FunctionDeclaration } from '@google/genai'
+import prisma from '../config/db'
 import { listProducts, getProductBySlug } from './product.service'
 import { getCategories } from './category.service'
 import { getBrands } from './brand.service'
@@ -29,7 +30,7 @@ export const CHAT_TOOL_DECLARATIONS: FunctionDeclaration[] = [
       type: Type.OBJECT,
       properties: {
         keyword:      { type: Type.STRING, description: 'Từ khoá trong tên sản phẩm, ví dụ "iphone 15"' },
-        categorySlug: { type: Type.STRING, description: 'Slug danh mục, lấy từ listCategories' },
+        categorySlug: { type: Type.STRING, description: 'Slug danh mục, lấy từ listCategories. Danh mục cha tự động gồm cả sản phẩm của danh mục con.' },
         brandSlug:    { type: Type.STRING, description: 'Slug thương hiệu, lấy từ listBrands' },
         priceMin:     { type: Type.NUMBER, description: 'Giá thấp nhất tính bằng VND' },
         priceMax:     { type: Type.NUMBER, description: 'Giá cao nhất tính bằng VND' },
@@ -152,22 +153,57 @@ const optionalString = (value: unknown): string | undefined =>
 const optionalNumber = (value: unknown): string | undefined =>
   Number.isFinite(Number(value)) && value !== null && value !== '' ? String(Number(value)) : undefined
 
+// listProducts khớp slug danh mục CHÍNH XÁC, không lấy nhánh con. Với cây danh
+// mục kiểu "Điện thoại > android, iphone" — nơi danh mục cha không giữ sản phẩm
+// nào — model tra "dien-thoai" sẽ nhận 0 kết quả rồi kết luận cửa hàng không bán
+// điện thoại, dù kho đầy máy.
+//
+// Với người hỏi, "điện thoại" hiển nhiên bao gồm cả android lẫn iphone, nên tool
+// mở rộng slug ra các nhánh con. Chỉ áp dụng cho chatbot; hành vi của trang
+// listing không đổi.
+async function resolveCategorySlugs(slug: string): Promise<string[]> {
+  const category = await prisma.category.findUnique({
+    where: { slug },
+    select: { slug: true, children: { where: { isActive: true }, select: { slug: true } } },
+  })
+
+  if (!category) return [slug]
+  return [category.slug, ...category.children.map((c) => c.slug)]
+}
+
 async function searchProducts(args: Record<string, unknown>): Promise<ToolResult> {
+  const limit = clampLimit(args.limit)
+  const categorySlug = optionalString(args.categorySlug)
+
   // Gọi lại listProducts ở chế độ public thay vì viết query mới: nó đã có
   // full-text search qua GIN index, lọc theo slug danh mục/thương hiệu, lọc
   // khoảng giá theo biến thể, và tự ép isActive = true. Viết query song song sẽ
   // tạo ra bản định nghĩa thứ hai về "sản phẩm nào được phép hiện ra", và sớm
   // muộn hai bản sẽ lệch nhau.
-  const { products } = await listProducts({
+  const baseQuery = {
     search:   optionalString(args.keyword),
-    category: optionalString(args.categorySlug),
     brand:    optionalString(args.brandSlug),
     minPrice: optionalNumber(args.priceMin),
     maxPrice: optionalNumber(args.priceMax),
-    limit:    String(clampLimit(args.limit)),
-  })
+    limit:    String(limit),
+  }
 
-  const list = products as unknown as ProductLike[]
+  const slugs = categorySlug ? await resolveCategorySlugs(categorySlug) : [undefined]
+
+  // Dedupe theo id: một sản phẩm chỉ thuộc một danh mục nên trùng lặp hiếm, nhưng
+  // Map cũng là chỗ đếm để dừng đúng số model xin.
+  const found = new Map<string, ProductLike>()
+  for (const slug of slugs) {
+    if (found.size >= limit) break
+
+    const { products } = await listProducts({ ...baseQuery, category: slug })
+    for (const product of products as unknown as ProductLike[]) {
+      if (found.size >= limit) break
+      found.set(product.id, product)
+    }
+  }
+
+  const list = [...found.values()]
 
   return {
     data: { count: list.length, products: list.map(toCompact) },
@@ -198,10 +234,35 @@ async function getProductDetail(args: Record<string, unknown>): Promise<ToolResu
 }
 
 async function listCategoriesTool(): Promise<ToolResult> {
-  const categories = (await getCategories()) as { name: string; slug: string }[]
+  // Danh mục cha ở shop này KHÔNG giữ sản phẩm trực tiếp: máy nằm trong danh mục
+  // con (android, iphone), còn "Điện thoại" chỉ là nhánh gốc rỗng. Model chọn
+  // slug mà không biết điều đó sẽ tra vào nhánh rỗng rồi kết luận cửa hàng không
+  // bán điện thoại — đúng lỗi gặp ở lần chạy thử đầu tiên.
+  //
+  // Cách chữa là đưa model thông tin đúng chứ không phải nhắc nó trong prompt:
+  // parentSlug cho nó thấy cây danh mục, productCount cho nó biết nhánh nào có
+  // hàng thật.
+  const [categories, counts] = await Promise.all([
+    getCategories() as Promise<{ id: string; name: string; slug: string; parentId: string | null }[]>,
+    prisma.product.groupBy({
+      by: ['categoryId'],
+      where: { isActive: true },
+      _count: { _all: true },
+    }),
+  ])
+
+  const countByCategory = new Map(counts.map((c) => [c.categoryId, c._count._all]))
+  const slugById = new Map(categories.map((c) => [c.id, c.slug]))
 
   return {
-    data: { categories: categories.map((c) => ({ name: c.name, slug: c.slug })) },
+    data: {
+      categories: categories.map((c) => ({
+        name: c.name,
+        slug: c.slug,
+        parentSlug: c.parentId ? (slugById.get(c.parentId) ?? null) : null,
+        productCount: countByCategory.get(c.id) ?? 0,
+      })),
+    },
     products: [],
   }
 }
