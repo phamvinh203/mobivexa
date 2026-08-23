@@ -20,6 +20,7 @@ import {
 import { bannerRoutes, bannerAdminRoutes } from './banner.route'
 import { favoriteRoutes } from './favorite.route'
 import { couponRoutes, couponAdminRoutes } from './coupon.route'
+import { chatRoutes } from './chat.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -36,6 +37,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/cart`, cartRoutes)
   app.use(`${v}/favorites`, favoriteRoutes)
   app.use(`${v}/coupons`, couponRoutes)
+  app.use(`${v}/chat`, chatRoutes)
   app.use(`${v}/orders`, orderRoutes)
   app.use(`${v}`, paymentRoutes)
 
