@@ -13,6 +13,9 @@ export default defineConfig({
       SEPAY_WEBHOOK_SECRET: 'test-webhook-secret',
       SEPAY_API_TOKEN: 'test-api-token',
       SEPAY_ACCOUNT_NUMBER: '0123456789',
+      // Chuỗi giả là đủ: mọi test đều mock client Gemini, không test nào gọi API
+      // thật. Key thật chỉ sống trong .env.local — file này được git theo dõi.
+      GEMINI_API_KEY: 'test-gemini-key',
     },
     coverage: {
       provider: 'v8',
