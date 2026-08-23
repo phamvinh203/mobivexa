@@ -239,6 +239,26 @@ Lưu ý về giá: giá nằm ở `ProductVariant.salePrice`, không phải ở 
 theo khoảng giá là "sản phẩm có ít nhất một biến thể trong khoảng" —
 `listProducts` đã xử lý đúng như vậy.
 
+### 6.3 Danh mục cha gồm cả danh mục con
+
+`listProducts` khớp slug danh mục chính xác, không lấy nhánh con. Cây danh mục
+thực tế của cửa hàng là `Điện thoại > android, iphone`, trong đó danh mục cha
+không giữ sản phẩm nào. Kiểm chứng thực tế cho thấy model hỏi "shop có điện
+thoại nào" sẽ tra slug `dien-thoai`, nhận 0 kết quả, rồi trả lời cửa hàng không
+bán điện thoại — trong khi kho có đủ máy.
+
+Với người hỏi, "điện thoại" hiển nhiên bao gồm cả android lẫn iphone, nên
+`searchProducts` mở rộng slug danh mục ra các nhánh con đang hoạt động rồi gộp
+kết quả, cắt theo `limit`. Việc mở rộng chỉ nằm trong tool của chatbot; hành vi
+của trang listing không đổi.
+
+`listCategories` đồng thời trả kèm `parentSlug` và `productCount` để model nhìn
+được cây danh mục và biết nhánh nào thật sự có hàng, thay vì đoán mò.
+
+**Ghi nhận cho phía web:** trang listing hiện cũng sẽ hiển thị rỗng khi khách bấm
+vào danh mục "Điện thoại". Đây là vấn đề của `listProducts`, nằm ngoài phạm vi
+chatbot, cần quyết định riêng.
+
 ### 6.2 Rút gọn dữ liệu trước khi đưa vào model
 
 Kết quả Prisma **không** được đưa nguyên vẹn cho Gemini. Một `Product` kèm quan

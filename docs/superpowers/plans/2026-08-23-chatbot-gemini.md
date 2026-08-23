@@ -158,12 +158,6 @@ ls src/generated/prisma/models | grep -i chat
 
 Expected: in ra `ChatMessage.ts` và `ChatSession.ts`
 
-- [ ] **Step 7: Commit**
-
-```bash
-git add prisma/schema.prisma
-git commit -m "feat(chat): add ChatSession and ChatMessage models"
-```
 
 `src/generated/prisma` nằm trong `.gitignore` — client sinh ra không được commit, mỗi máy tự chạy `prisma generate`.
 
@@ -298,15 +292,6 @@ Expected: PASS, 2 test
 
 ```bash
 npx tsc --noEmit
-```
-
-Expected: exit 0
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add package.json package-lock.json vitest.config.ts src/config/gemini.ts src/__tests__/gemini_config.test.ts
-git commit -m "feat(chat): add Gemini client config with startup env check"
 ```
 
 ---
@@ -787,15 +772,6 @@ Expected: PASS, 9 test
 npx tsc --noEmit
 ```
 
-Expected: exit 0
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/types/chat.type.ts src/services/chatbot_tools.ts src/__tests__/chatbot_tools.test.ts
-git commit -m "feat(chat): add read-only Gemini tools backed by product services"
-```
-
 ---
 
 ## Task 4: Vòng lặp hội thoại
@@ -1253,14 +1229,6 @@ Expected: PASS, 13 test
 npx tsc --noEmit
 ```
 
-Expected: exit 0
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/services/chat.service.ts src/__tests__/chat_service.test.ts
-git commit -m "feat(chat): add conversation loop with capped tool rounds"
-```
 
 ---
 
@@ -1381,15 +1349,6 @@ Expected: PASS, 3 test
 
 ```bash
 npx tsc --noEmit
-```
-
-Expected: exit 0
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/middlewares/auth.middleware.ts src/middlewares/rate_limit.middleware.ts src/__tests__/chat.test.ts
-git commit -m "feat(chat): add optionalAuthenticate and chatLimiter"
 ```
 
 ---
@@ -1688,15 +1647,6 @@ Expected: toàn bộ test xanh, không có suite nào hỏng vì `GEMINI_API_KEY
 
 ```bash
 npx tsc --noEmit
-```
-
-Expected: exit 0
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add src/validators/chat.validator.ts src/controllers/chat.controller.ts src/routes/chat.route.ts src/routes/index.route.ts src/__tests__/chat.test.ts
-git commit -m "feat(chat): expose /api/chat endpoints"
 ```
 
 ---
