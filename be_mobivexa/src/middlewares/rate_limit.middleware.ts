@@ -51,3 +51,10 @@ export const couponPreviewLimiter = rateLimit(
 export const syncLimiter = rateLimit(
   makeLimiter(10, 60_000, 'Đồng bộ quá thường xuyên, vui lòng thử lại sau')
 )
+
+// Mỗi tin nhắn tốn quota Gemini chứ không chỉ tốn CPU, nên siết chặt hơn các
+// limiter khác. 15 tin/phút vẫn thoải mái cho người gõ thật — nhanh hơn thế là
+// script.
+export const chatLimiter = rateLimit(
+  makeLimiter(15, 60_000, 'Bạn nhắn quá nhanh, vui lòng chờ một lát')
+)

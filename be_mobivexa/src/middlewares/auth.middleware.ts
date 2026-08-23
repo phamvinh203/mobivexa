@@ -28,3 +28,22 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     sendError(res, 401, 'Token không hợp lệ hoặc đã hết hạn')
   }
 }
+
+// Bản mềm của authenticate, dành cho endpoint phục vụ cả khách vãng lai.
+//
+// Token hỏng hoặc hết hạn KHÔNG trả 401: với chatbot, khách mở lại tab cũ mang
+// theo token quá hạn vẫn nên chat được như người chưa đăng nhập, thay vì bị chặn
+// giữa chừng bởi một thứ họ không biết là gì.
+export function optionalAuthenticate(req: Request, _res: Response, next: NextFunction): void {
+  const authHeader = req.headers.authorization
+
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      req.user = verifyAccessToken(authHeader.slice(7))
+    } catch {
+      // Bỏ qua: coi như khách chưa đăng nhập
+    }
+  }
+
+  next()
+}
