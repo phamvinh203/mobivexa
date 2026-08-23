@@ -18,8 +18,25 @@ import type {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Dòng hàng của đơn là SNAPSHOT (productName, sku, giá) nên không có ảnh. Kèm
+ * theo ảnh của phiên bản — ảnh riêng của phiên bản, không có thì ảnh bìa sản
+ * phẩm — để lịch sử đơn hàng nhìn ra ngay đã mua máy nào.
+ *
+ * `variant` là nullable (onDelete: SetNull): phiên bản bị xoá thì client tự rơi
+ * về ô ảnh dự phòng, phần snapshot vẫn còn nguyên.
+ */
 const ORDER_INCLUDE = {
-  items: true,
+  items: {
+    include: {
+      variant: {
+        select: {
+          imageUrl: true,
+          product: { select: { images: { where: { isCover: true }, take: 1, select: { url: true } } } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.OrderInclude
 
 function generateOrderCode(): string {
