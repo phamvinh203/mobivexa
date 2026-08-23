@@ -53,6 +53,11 @@ enum BannerPosition {
   HORIZONTAL  // Banner ngang dài (dưới hero hoặc giữa trang)
 }
 
+enum ChatRole {
+  USER
+  MODEL
+}
+
 model User {
   id                 String   @id @default(uuid())
   email              String   @unique
@@ -79,6 +84,7 @@ model User {
   reviewHelpful ReviewHelpful[]
   couponUsages  CouponUsage[]
   favorites     Favorite[]
+  chatSessions  ChatSession[]
 
   @@index([role])
   @@index([isActive])
@@ -567,4 +573,44 @@ model Banner {
 
   @@index([isActive, position, sortOrder])
   @@map("banners")
+}
+
+// Một phiên trò chuyện với chatbot.
+//
+// userId nullable vì khách CHƯA đăng nhập vẫn phải chat được — đó chính là nhóm
+// cần tư vấn nhất. Xoá tài khoản thì SetNull chứ không Cascade: hội thoại là dữ
+// liệu thống kê về chất lượng tư vấn, mất theo tài khoản là mất luôn số liệu.
+model ChatSession {
+  id        String   @id @default(uuid())
+  userId    String?
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages ChatMessage[]
+
+  @@index([userId, updatedAt])
+  @@map("chat_sessions")
+}
+
+// Một tin nhắn trong phiên. role = USER là người hỏi, MODEL là bot trả lời.
+//
+// toolCalls lưu vết bot đã tra cứu gì ở lượt đó (tên tool, tham số, số kết quả).
+// Không có nó thì khi bot trả lời sai không cách nào biết là do tra cứu ra dữ
+// liệu sai hay do model diễn đạt sai.
+model ChatMessage {
+  id        String   @id @default(uuid())
+  sessionId String
+  role      ChatRole
+  content   String
+  toolCalls Json?
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Truy vấn duy nhất trên bảng này là "N tin gần nhất của phiên X" — index gộp
+  // phục vụ trọn cả lọc lẫn sắp xếp.
+  @@index([sessionId, createdAt])
+  @@map("chat_messages")
 }

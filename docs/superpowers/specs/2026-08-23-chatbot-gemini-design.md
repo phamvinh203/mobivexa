@@ -304,9 +304,11 @@ src/controllers/chat.controller.ts
 src/routes/chat.route.ts
 src/validators/chat.validator.ts
 src/types/chat.type.ts
-prisma/migrations/<ts>_add_chat/   Migration 2 bảng + enum ChatRole
 src/__tests__/chat.test.ts
 ```
+
+Không có thư mục migration: dự án đồng bộ schema bằng `npx prisma db push` rồi
+`npx prisma generate`, đúng như khi thêm bảng `Coupon` trước đây.
 
 ### Sửa
 
