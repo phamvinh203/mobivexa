@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import prisma from '../config/db'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/token_manager'
 import { hashPassword, verifyPassword } from '../utils/password'
 import { sendResetPasswordEmail } from '../utils/mailer'
@@ -9,8 +10,14 @@ import type { RegisterBody, LoginBody, JwtPayload } from '../types/auth.type'
 const RESET_TOKEN_EXPIRES_MS = 15 * 60 * 1000 // 15 phút
 const REFRESH_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000 // 7 ngày
 
-function hashResetToken(token: string): string {
+// Hash-at-rest: DB chỉ lưu sha256, rò rỉ DB không cho dùng lại token/OTP gốc
+function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+function hashesMatch(storedToken: string | null, providedToken: string): boolean {
+  if (!storedToken || storedToken.length !== providedToken.length) return false
+  return crypto.timingSafeEqual(Buffer.from(storedToken), Buffer.from(providedToken))
 }
 
 function refreshExpiry(): Date {
@@ -25,10 +32,16 @@ export async function registerService(body: RegisterBody) {
 
   const passwordHash = await hashPassword(password)
 
-  return prisma.user.create({
-    data: { email, fullName, passwordHash },
-    select: { id: true, email: true, fullName: true, role: true, createdAt: true },
-  })
+  try {
+    return await prisma.user.create({
+      data: { email, fullName, passwordHash },
+      select: { id: true, email: true, fullName: true, role: true, createdAt: true },
+    })
+  } catch (err) {
+    // Double-submit song song vượt qua pre-check ở trên, unique index là chốt chặn cuối
+    if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Email đã được sử dụng')
+    throw err
+  }
 }
 
 export async function loginService(body: LoginBody) {
@@ -45,8 +58,9 @@ export async function loginService(body: LoginBody) {
   const accessToken = signAccessToken(payload)
   const refreshToken = signRefreshToken(payload)
 
+  // Lưu bản hash của refresh token — bản gốc JWT chỉ tồn tại ở client
   await prisma.refreshToken.create({
-    data: { token: refreshToken, userId: user.id, expiresAt: refreshExpiry() },
+    data: { token: hashToken(refreshToken), userId: user.id, expiresAt: refreshExpiry() },
   })
 
   const { passwordHash: _, resetPasswordToken: __, resetPasswordExpires: ___, ...safeUser } = user
@@ -62,7 +76,7 @@ export async function refreshTokenService(token: string) {
     throw new AppError(401, 'Refresh token không hợp lệ hoặc đã hết hạn')
   }
 
-  const stored = await prisma.refreshToken.findUnique({ where: { token } })
+  const stored = await prisma.refreshToken.findUnique({ where: { token: hashToken(token) } })
   if (!stored || stored.isRevoked || stored.expiresAt < new Date()) {
     throw new AppError(401, 'Refresh token không hợp lệ')
   }
@@ -75,7 +89,7 @@ export async function refreshTokenService(token: string) {
   await prisma.$transaction([
     prisma.refreshToken.update({ where: { id: stored.id }, data: { isRevoked: true } }),
     prisma.refreshToken.create({
-      data: { token: newRefreshToken, userId: stored.userId, expiresAt: refreshExpiry() },
+      data: { token: hashToken(newRefreshToken), userId: stored.userId, expiresAt: refreshExpiry() },
     }),
   ])
 
@@ -88,20 +102,61 @@ export async function forgotPasswordService(email: string) {
   if (!user) return
 
   // OTP 6 chữ số — hash trước khi lưu DB, chỉ gửi bản gốc qua email
-  const otp = String(Math.floor(100000 + Math.random() * 900000))
-  const hashedOtp = hashResetToken(otp)
+  const otp = String(crypto.randomInt(100000, 1000000))
+  const hashedOtp = hashToken(otp)
   const expires = new Date(Date.now() + RESET_TOKEN_EXPIRES_MS)
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { resetPasswordToken: hashedOtp, resetPasswordExpires: expires },
+    data: { resetPasswordToken: hashedOtp, resetPasswordExpires: expires, resetPasswordAttempts: 0 },
   })
 
   await sendResetPasswordEmail(email, otp)
 }
 
-export async function resetPasswordService(otp: string, newPassword: string) {
-  const hashedToken = hashResetToken(otp)
+const MAX_RESET_ATTEMPTS = 5
+
+export async function resetPasswordService(otp: string, newPassword: string, email?: string) {
+  const hashedToken = hashToken(otp)
+
+  // Khi client gửi kèm email: OTP tra theo đúng user đó và MỌI lần đoán sai đều
+  // tăng resetPasswordAttempts — không có email thì đoán sai không biết key vào
+  // user nào, Counter MAX_RESET_ATTEMPTS chỉ bật được qua nhánh email này
+  // (FE hiện tại chưa gửi email, lúc đó chỉ còn authLimiter chắn brute-force).
+  if (email) {
+    const target = await prisma.user.findUnique({ where: { email } })
+
+    if (target) {
+      // Chỉ đếm khi user đang giữ OTP còn hạn — hết hạn/trống thì không cần đếm
+      if (target.resetPasswordToken && target.resetPasswordExpires && target.resetPasswordExpires > new Date()) {
+        await prisma.user.updateMany({
+          where: { id: target.id, resetPasswordAttempts: { lt: MAX_RESET_ATTEMPTS } },
+          data: { resetPasswordAttempts: { increment: 1 } },
+        })
+      }
+
+      const match = await prisma.user.findFirst({
+        where: {
+          id: target.id,
+          resetPasswordToken: hashedToken,
+          resetPasswordExpires: { gt: new Date() },
+        },
+      })
+
+      if (!match) throw new AppError(400, 'Token không hợp lệ hoặc đã hết hạn')
+
+      if (match.resetPasswordAttempts >= MAX_RESET_ATTEMPTS) {
+        await prisma.user.update({
+          where: { id: match.id },
+          data: { resetPasswordToken: null, resetPasswordExpires: null, resetPasswordAttempts: 0 },
+        })
+        throw new AppError(400, 'Token không hợp lệ hoặc đã hết hạn')
+      }
+
+      await finishResetPassword(match.id, newPassword)
+      return
+    }
+  }
 
   const user = await prisma.user.findFirst({
     where: {
@@ -110,18 +165,32 @@ export async function resetPasswordService(otp: string, newPassword: string) {
     },
   })
 
-  if (!user) throw new AppError(400, 'Token không hợp lệ hoặc đã hết hạn')
+  if (!user) {
+    throw new AppError(400, 'Token không hợp lệ hoặc đã hết hạn')
+  }
 
+  if (user.resetPasswordAttempts >= MAX_RESET_ATTEMPTS) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { resetPasswordToken: null, resetPasswordExpires: null, resetPasswordAttempts: 0 },
+    })
+    throw new AppError(400, 'Token không hợp lệ hoặc đã hết hạn')
+  }
+
+  await finishResetPassword(user.id, newPassword)
+}
+
+async function finishResetPassword(userId: string, newPassword: string) {
   const passwordHash = await hashPassword(newPassword)
 
   // Đổi mật khẩu + revoke toàn bộ refresh token cũ trong 1 transaction
   await prisma.$transaction([
     prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash, resetPasswordToken: null, resetPasswordExpires: null },
+      where: { id: userId },
+      data: { passwordHash, resetPasswordToken: null, resetPasswordExpires: null, resetPasswordAttempts: 0 },
     }),
     prisma.refreshToken.updateMany({
-      where: { userId: user.id, isRevoked: false },
+      where: { userId, isRevoked: false },
       data: { isRevoked: true },
     }),
   ])
@@ -129,7 +198,7 @@ export async function resetPasswordService(otp: string, newPassword: string) {
 
 export function logoutService(token: string) {
   return prisma.refreshToken.updateMany({
-    where: { token, isRevoked: false },
+    where: { token: hashToken(token), isRevoked: false },
     data: { isRevoked: true },
   })
 }

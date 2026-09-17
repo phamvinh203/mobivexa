@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
+import { checkPasswordStrength } from './common.validator'
 
 const PHONE_RE = /^(0|\+84)[0-9]{8,10}$/
 
@@ -29,10 +30,7 @@ export function validateChangePassword(req: Request, res: Response, next: NextFu
     sendError(res, 400, 'Vui lòng nhập mật khẩu hiện tại')
     return
   }
-  if (!newPassword || String(newPassword).length < 8) {
-    sendError(res, 400, 'Mật khẩu mới phải có ít nhất 8 ký tự')
-    return
-  }
+  if (!checkPasswordStrength(res, newPassword, 'Mật khẩu mới')) return
   if (currentPassword === newPassword) {
     sendError(res, 400, 'Mật khẩu mới phải khác mật khẩu hiện tại')
     return

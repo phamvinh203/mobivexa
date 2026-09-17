@@ -31,8 +31,8 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 })
 
 export const resetPassword = asyncHandler(async (req, res) => {
-  const { otp, newPassword } = req.body
-  await resetPasswordService(otp, newPassword)
+  const { otp, newPassword, email } = req.body
+  await resetPasswordService(otp, newPassword, email)
   sendSuccess(res, { message: 'Đặt lại mật khẩu thành công' })
 })
 

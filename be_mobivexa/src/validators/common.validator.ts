@@ -55,6 +55,23 @@ export function checkId(res: Response, value: unknown, message: string): boolean
   return true
 }
 
+// Kiểm tra độ mạnh mật khẩu: tối thiểu 8 ký tự, có cả chữ lẫn số. Không bắt ký
+// tự đặc biệt — dài + có chữ có số đã chặn được phần lớn brute-force/dictionary
+// attack (vd toàn số như "12345678", toàn chữ như "password") mà không làm khó
+// người dùng thật quá mức.
+export function checkPasswordStrength(res: Response, password: unknown, label = 'Mật khẩu'): boolean {
+  const value = String(password ?? '')
+  if (!password || value.length < 8) {
+    sendError(res, 400, `${label} phải có ít nhất 8 ký tự`)
+    return false
+  }
+  if (!/[a-zA-Z]/.test(value) || !/[0-9]/.test(value)) {
+    sendError(res, 400, `${label} phải có cả chữ và số`)
+    return false
+  }
+  return true
+}
+
 // Kiểm tra field "tên": trả về true nếu hợp lệ, false (và đã gửi lỗi) nếu không.
 // optional=true dùng cho update — chỉ validate khi field được gửi lên.
 export function checkName(

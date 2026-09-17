@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
+import { checkPasswordStrength } from './common.validator'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -20,10 +21,7 @@ export function validateRegister(req: Request, res: Response, next: NextFunction
     sendError(res, 400, 'Họ tên phải có ít nhất 2 ký tự')
     return
   }
-  if (!password || String(password).length < 8) {
-    sendError(res, 400, 'Mật khẩu phải có ít nhất 8 ký tự')
-    return
-  }
+  if (!checkPasswordStrength(res, password, 'Mật khẩu')) return
 
   next()
 }
@@ -46,16 +44,15 @@ export function validateForgotPassword(req: Request, res: Response, next: NextFu
 }
 
 export function validateResetPassword(req: Request, res: Response, next: NextFunction): void {
-  const { otp, newPassword } = req.body
+  const { otp, newPassword, email } = req.body
 
   if (!otp || !/^\d{6}$/.test(String(otp))) {
     sendError(res, 400, 'OTP phải là 6 chữ số')
     return
   }
-  if (!newPassword || String(newPassword).length < 8) {
-    sendError(res, 400, 'Mật khẩu mới phải có ít nhất 8 ký tự')
-    return
-  }
+  // email tùy chọn: có thì bật đếm số lần đoán OTP sai theo user (chống brute-force)
+  if (email !== undefined && !checkEmail(res, email)) return
+  if (!checkPasswordStrength(res, newPassword, 'Mật khẩu mới')) return
 
   next()
 }

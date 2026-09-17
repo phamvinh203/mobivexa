@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import request from 'supertest'
+import crypto from 'crypto'
 
 // ─── Hoisted mocks (chạy trước tất cả import) ────────────────────────────────
 
@@ -9,6 +10,7 @@ const mockPrisma = vi.hoisted(() => ({
     findFirst:  vi.fn(),
     create:     vi.fn(),
     update:     vi.fn(),
+    updateMany: vi.fn(),
   },
   refreshToken: {
     create:      vi.fn(),
@@ -52,7 +54,14 @@ const BASE_USER = {
   updatedAt: new Date(),
   resetPasswordToken: null,
   resetPasswordExpires: null,
+  resetPasswordAttempts: 0,
 }
+
+// hashResetToken thật trong auth.service.ts — dùng để dựng fixture khớp otp test.
+const hashOtp = (otp: string) => crypto.createHash('sha256').update(otp).digest('hex')
+const VALID_OTP = '123456'
+const notExpired = () => new Date(Date.now() + 10 * 60 * 1000)
+const expired = () => new Date(Date.now() - 60 * 1000)
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -240,6 +249,26 @@ describe('POST /api/auth/forgot-password', () => {
     expect(mockSendResetEmail).toHaveBeenCalledOnce()
   })
 
+  it('200 - sinh OTP bằng CSPRNG (crypto.randomInt), không dùng Math.random', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue(BASE_USER)
+    mockPrisma.user.update.mockResolvedValue({})
+    const randomIntSpy = vi.spyOn(crypto, 'randomInt')
+    const mathRandomSpy = vi.spyOn(Math, 'random')
+
+    const res = await request(app).post('/api/auth/forgot-password').send({ email: 'test@example.com' })
+
+    expect(res.status).toBe(200)
+    // Khoảng [100000, 1000000) đúng bằng dải OTP 6 chữ số (100000-999999).
+    expect(randomIntSpy).toHaveBeenCalledWith(100000, 1000000)
+    expect(mathRandomSpy).not.toHaveBeenCalled()
+
+    const otpSent = mockSendResetEmail.mock.calls[0][1]
+    expect(otpSent).toMatch(/^\d{6}$/)
+
+    randomIntSpy.mockRestore()
+    mathRandomSpy.mockRestore()
+  })
+
   it('400 - email không hợp lệ', async () => {
     const res = await request(app).post('/api/auth/forgot-password').send({ email: 'bad' })
     expect(res.status).toBe(400)
@@ -250,12 +279,18 @@ describe('POST /api/auth/reset-password', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('200 - đặt lại mật khẩu thành công', async () => {
-    mockPrisma.user.findFirst.mockResolvedValue(BASE_USER)
+    mockPrisma.user.findFirst.mockResolvedValue({
+      ...BASE_USER,
+      resetPasswordToken: hashOtp(VALID_OTP),
+      resetPasswordExpires: notExpired(),
+      resetPasswordAttempts: 0,
+    })
     mockPrisma.user.update.mockResolvedValue({})
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 }) // còn lượt thử, giữ chỗ thành công
     mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 })
 
     const res = await request(app).post('/api/auth/reset-password').send({
-      otp: '123456',
+      otp: VALID_OTP,
       newPassword: 'newpassword123',
     })
     expect(res.status).toBe(200)
@@ -272,20 +307,73 @@ describe('POST /api/auth/reset-password', () => {
 
   it('400 - mật khẩu mới quá ngắn', async () => {
     const res = await request(app).post('/api/auth/reset-password').send({
-      otp: '123456',
+      otp: VALID_OTP,
       newPassword: 'abc',
     })
     expect(res.status).toBe(400)
   })
 
-  it('400 - OTP hết hạn hoặc không tồn tại', async () => {
+  it('400 - token không tồn tại (không tiết lộ, trả lỗi giống hệt OTP sai)', async () => {
     mockPrisma.user.findFirst.mockResolvedValue(null)
 
     const res = await request(app).post('/api/auth/reset-password').send({
-      otp: '999999',
+      otp: VALID_OTP,
       newPassword: 'newpassword123',
     })
     expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/không hợp lệ hoặc đã hết hạn/)
+  })
+
+  it('400 - OTP đã hết hạn', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue(null)
+
+    const res = await request(app).post('/api/auth/reset-password').send({
+      otp: VALID_OTP,
+      newPassword: 'newpassword123',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - OTP sai thì không đổi mật khẩu', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue(null)
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app).post('/api/auth/reset-password').send({
+      otp: '999999', // sai so với hashOtp(VALID_OTP) đã set ở trên
+      newPassword: 'newpassword123',
+    })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.user.updateMany).not.toHaveBeenCalled()
+    // Chưa đổi mật khẩu — không có lệnh update nào ghi passwordHash
+    expect(mockPrisma.user.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ passwordHash: expect.anything() }) }),
+    )
+  })
+
+  it('400 - hết lượt thử (đã khóa từ trước) thì vô hiệu OTP luôn, dù gửi đúng OTP', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue({
+      ...BASE_USER,
+      resetPasswordToken: hashOtp(VALID_OTP),
+      resetPasswordExpires: notExpired(),
+      resetPasswordAttempts: 5, // đã chạm ngưỡng MAX_RESET_ATTEMPTS
+    })
+    // updateMany có điều kiện resetPasswordAttempts < 5 KHÔNG khớp row nào → count 0
+    // (mô phỏng đúng cách Postgres tự loại request khi WHERE không còn thỏa mãn)
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 0 })
+    mockPrisma.user.update.mockResolvedValue({})
+
+    const res = await request(app).post('/api/auth/reset-password').send({
+      otp: VALID_OTP, // đúng OTP nhưng vẫn phải bị chặn vì đã hết lượt
+      newPassword: 'newpassword123',
+    })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { resetPasswordToken: null, resetPasswordExpires: null, resetPasswordAttempts: 0 },
+      }),
+    )
   })
 })
 

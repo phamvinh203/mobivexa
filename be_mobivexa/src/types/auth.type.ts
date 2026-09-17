@@ -21,6 +21,8 @@ export interface ForgotPasswordBody {
 export interface ResetPasswordBody {
   otp: string
   newPassword: string
+  // Tùy chọn: có thì bật đếm số lần đoán OTP sai theo user (chống brute-force)
+  email?: string
 }
 
 export interface LogoutBody {
@@ -31,4 +33,6 @@ export interface JwtPayload {
   userId: string
   email: string
   role: string
+  // 'access' cho token đăng nhập, 'guest_chat' cho token sở hữu phiên chat khách
+  typ?: string
 }

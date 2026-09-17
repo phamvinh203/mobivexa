@@ -22,7 +22,14 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   const token = authHeader.slice(7)
 
   try {
-    req.user = verifyAccessToken(token)
+    const payload = verifyAccessToken(token)
+    // Phòng thủ lớp hai: verifyAccessToken đã chặn guest token, ở đây chặn nốt
+    // nốt payload thiếu userId để không bao giờ chạy query không giới hạn theo user
+    if (typeof payload.userId !== 'string' || !payload.userId) {
+      sendError(res, 401, 'Token không hợp lệ hoặc đã hết hạn')
+      return
+    }
+    req.user = payload
     next()
   } catch {
     sendError(res, 401, 'Token không hợp lệ hoặc đã hết hạn')
