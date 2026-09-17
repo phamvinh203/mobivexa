@@ -86,11 +86,14 @@ describe('executeTool: searchProducts', () => {
 
   it('danh mục cha gồm cả sản phẩm của danh mục con', async () => {
     // "Điện thoại" là nhánh gốc rỗng, máy thật nằm ở danh mục con "android".
+    // resolveCategorySlugs còn tra thêm cháu (parentId IN con) — findMany category
+    // mock rỗng cho truy vấn đó.
     mockPrisma.category.findUnique.mockResolvedValue({
       id: 'cat-parent',
       slug: 'dien-thoai',
-      children: [{ slug: 'android' }],
+      children: [{ id: 'cat-child', slug: 'android' }],
     })
+    mockPrisma.category.findMany.mockResolvedValue([]) // không có danh mục cháu
     mockPrisma.product.findMany
       .mockResolvedValueOnce([]) // dien-thoai: rỗng
       .mockResolvedValueOnce([PRODUCT_ROW]) // android: có hàng
@@ -106,8 +109,12 @@ describe('executeTool: searchProducts', () => {
     mockPrisma.category.findUnique.mockResolvedValue({
       id: 'cat-parent',
       slug: 'dien-thoai',
-      children: [{ slug: 'android' }, { slug: 'iphone' }],
+      children: [
+        { id: 'cat-child-1', slug: 'android' },
+        { id: 'cat-child-2', slug: 'iphone' },
+      ],
     })
+    mockPrisma.category.findMany.mockResolvedValue([]) // không có danh mục cháu
     mockPrisma.product.findMany.mockResolvedValue([
       PRODUCT_ROW,
       { ...PRODUCT_ROW, id: 'prod-2', slug: 'p2' },
@@ -130,13 +137,18 @@ describe('executeTool: searchProducts', () => {
 // ─── getProductDetail ─────────────────────────────────────────────────────────
 
 describe('executeTool: getProductDetail', () => {
+  beforeEach(() => {
+    // getProductDetail đọc description qua $queryRaw substring (không kéo cả cột
+    // MB-scale qua driver) — default null, test nào cần mô tả thì override.
+    mockPrisma.$queryRaw.mockResolvedValue([{ text: null }])
+  })
+
   it('cắt thẻ HTML khỏi mô tả', async () => {
     mockPrisma.product.findUnique.mockResolvedValue({
       ...PRODUCT_ROW,
-      description: '<p>Máy <b>rất</b> tốt</p>',
       specs: [{ label: 'CPU', value: 'A17' }],
-      productTags: [],
     })
+    mockPrisma.$queryRaw.mockResolvedValue([{ text: '<p>Máy <b>rất</b> tốt</p>' }])
 
     const result = await executeTool('getProductDetail', { slug: 'iphone-15' })
 
@@ -147,9 +159,7 @@ describe('executeTool: getProductDetail', () => {
   it('bỏ qua biến thể đã ngừng bán', async () => {
     mockPrisma.product.findUnique.mockResolvedValue({
       ...PRODUCT_ROW,
-      description: null,
       specs: [],
-      productTags: [],
       variants: [VARIANT, { ...VARIANT, id: 'var-2', color: 'Trắng', isActive: false }],
     })
 

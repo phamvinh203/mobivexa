@@ -1,8 +1,6 @@
 import { Type, type FunctionDeclaration } from '@google/genai'
 import prisma from '../config/db'
-import { listProducts, getProductBySlug } from './product.service'
-import { getCategories } from './category.service'
-import { getBrands } from './brand.service'
+import { listProducts } from './product.service'
 import type { ChatProductCard } from '../types/chat.type'
 
 // Trần cứng ở phía server. Model có thể xin limit bao nhiêu tuỳ nó, con số thật
@@ -164,11 +162,30 @@ const optionalNumber = (value: unknown): string | undefined =>
 async function resolveCategorySlugs(slug: string): Promise<string[]> {
   const category = await prisma.category.findUnique({
     where: { slug },
-    select: { slug: true, children: { where: { isActive: true }, select: { slug: true } } },
+    select: {
+      slug: true,
+      children: { where: { isActive: true }, select: { id: true, slug: true } },
+    },
   })
 
   if (!category) return [slug]
-  return [category.slug, ...category.children.map((c) => c.slug)]
+
+  // Cây sâu hơn 2 tầng: nếu chỉ mở con trực tiếp thì khi có cháu, nhánh cháu bị
+  // âm thầm loại khỏi tra cứu và lỗi "0 kết quả" quay lại. Một findMany với
+  // parentId IN(...) là đủ, không cần đệ quy.
+  const childIds = category.children.map((c) => c.id)
+  const grandchildren = childIds.length
+    ? await prisma.category.findMany({
+        where: { parentId: { in: childIds }, isActive: true },
+        select: { slug: true },
+      })
+    : []
+
+  return [
+    category.slug,
+    ...category.children.map((c) => c.slug),
+    ...grandchildren.map((c) => c.slug),
+  ]
 }
 
 async function searchProducts(args: Record<string, unknown>): Promise<ToolResult> {
@@ -191,19 +208,20 @@ async function searchProducts(args: Record<string, unknown>): Promise<ToolResult
   const slugs = categorySlug ? await resolveCategorySlugs(categorySlug) : [undefined]
 
   // Dedupe theo id: một sản phẩm chỉ thuộc một danh mục nên trùng lặp hiếm, nhưng
-  // Map cũng là chỗ đếm để dừng đúng số model xin.
+  // Map cũng là chỗ ép đúng số lượng model xin. Các slug tra SONG SONG — chạy
+  // tuần tự thì mỗi slug là một lượt network nối tiếp nằm kẹp giữa hai lần gọi
+  // Gemini; trần số lượng ép ở slice cuối.
   const found = new Map<string, ProductLike>()
-  for (const slug of slugs) {
-    if (found.size >= limit) break
+  await Promise.all(
+    slugs.map(async (slug) => {
+      const { products } = await listProducts({ ...baseQuery, category: slug })
+      for (const product of products as unknown as ProductLike[]) {
+        found.set(product.id, product)
+      }
+    }),
+  )
 
-    const { products } = await listProducts({ ...baseQuery, category: slug })
-    for (const product of products as unknown as ProductLike[]) {
-      if (found.size >= limit) break
-      found.set(product.id, product)
-    }
-  }
-
-  const list = [...found.values()]
+  const list = [...found.values()].slice(0, limit)
 
   return {
     data: { count: list.length, products: list.map(toCompact) },
@@ -215,25 +233,68 @@ async function getProductDetail(args: Record<string, unknown>): Promise<ToolResu
   const slug = optionalString(args.slug)
   if (!slug) return { data: { error: 'Thiếu slug sản phẩm' }, products: [] }
 
-  const product = await getProductBySlug(slug)
-  const typed = product as unknown as ProductLike & {
-    description: string | null
-    specs: { label: string; value: string }[]
+  // Lấy thẳng bằng select hẹp thay vì getProductBySlug: PRODUCT_DETAIL_INCLUDE
+  // kéo cả description HTML (có thể vài MB), toàn bộ ảnh và tags — trong khi tool
+  // chỉ dùng ~500 ký tự chữ, ảnh cover và specs. Description cắt ở DB bằng
+  // substring để không phải chuyển MB dữ liệu qua driver chỉ để vứt đi.
+  const [product, descRows] = await Promise.all([
+    prisma.product.findUnique({
+      where: { slug },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        category: { select: { name: true } },
+        brand: { select: { name: true } },
+        variants: {
+          where: { isActive: true },
+          orderBy: { salePrice: 'asc' as const },
+          select: { isActive: true, color: true, storage: true, ram: true, salePrice: true, originalPrice: true, stock: true },
+        },
+        images: { orderBy: { sortOrder: 'asc' as const }, take: 1, select: { url: true } },
+        specs: { orderBy: { sortOrder: 'asc' as const }, select: { label: true, value: true } },
+      },
+    }),
+    prisma.$queryRaw<{ text: string | null }[]>`
+      SELECT substring(description from 1 for 2000) AS text
+      FROM products WHERE slug = ${slug}
+    `,
+  ])
+
+  if (!product || !product.isActive) {
+    return { data: { error: 'Không tìm thấy sản phẩm' }, products: [] }
   }
 
-  const card = toCard(typed)
+  const card = toCard(product)
+  const description = descRows[0]?.text ?? null
 
   return {
     data: {
-      ...toCompact(typed),
-      description: stripHtml(typed.description),
-      specs: typed.specs.map((s) => ({ label: s.label, value: s.value })),
+      ...toCompact(product),
+      description: stripHtml(description),
+      specs: product.specs,
     },
     products: card ? [card] : [],
   }
 }
 
+// Kết quả listCategories/listBrands chỉ đổi khi admin sửa danh mục/thương hiệu,
+// mà hội thoại kiểu "cửa hàng có bán gì" gọi chúng mỗi lượt — cache 5 phút trong
+// process (theo lối inventorySummaryCache của product.service) tiết kiệm cả query
+// lẫn một vòng Gemini cho mỗi lượt hỏi sau đó.
+const TOOL_CACHE_TTL_MS = 5 * 60_000
+// Cache tắt hẳn trong test — các case trong cùng file mock DB khác nhau, cache
+// sống qua các case sẽ khiến case sau đọc kết quả của case trước.
+const TOOL_CACHE_SKIP_IN_TEST = process.env.NODE_ENV === 'test'
+let listCategoriesCache: { data: unknown; expiresAt: number } | null = null
+let listBrandsCache: { data: unknown; expiresAt: number } | null = null
+
 async function listCategoriesTool(): Promise<ToolResult> {
+  if (!TOOL_CACHE_SKIP_IN_TEST && listCategoriesCache && Date.now() < listCategoriesCache.expiresAt) {
+    return { data: listCategoriesCache.data, products: [] }
+  }
+
   // Danh mục cha ở shop này KHÔNG giữ sản phẩm trực tiếp: máy nằm trong danh mục
   // con (android, iphone), còn "Điện thoại" chỉ là nhánh gốc rỗng. Model chọn
   // slug mà không biết điều đó sẽ tra vào nhánh rỗng rồi kết luận cửa hàng không
@@ -241,9 +302,13 @@ async function listCategoriesTool(): Promise<ToolResult> {
   //
   // Cách chữa là đưa model thông tin đúng chứ không phải nhắc nó trong prompt:
   // parentSlug cho nó thấy cây danh mục, productCount cho nó biết nhánh nào có
-  // hàng thật.
+  // hàng thật. Chỉ select 4 trường cần — getCategories() kéo cả description/ảnh.
   const [categories, counts] = await Promise.all([
-    getCategories() as Promise<{ id: string; name: string; slug: string; parentId: string | null }[]>,
+    prisma.category.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, slug: true, parentId: true },
+    }),
     prisma.product.groupBy({
       by: ['categoryId'],
       where: { isActive: true },
@@ -254,26 +319,33 @@ async function listCategoriesTool(): Promise<ToolResult> {
   const countByCategory = new Map(counts.map((c) => [c.categoryId, c._count._all]))
   const slugById = new Map(categories.map((c) => [c.id, c.slug]))
 
-  return {
-    data: {
-      categories: categories.map((c) => ({
-        name: c.name,
-        slug: c.slug,
-        parentSlug: c.parentId ? (slugById.get(c.parentId) ?? null) : null,
-        productCount: countByCategory.get(c.id) ?? 0,
-      })),
-    },
-    products: [],
+  const data = {
+    categories: categories.map((c) => ({
+      name: c.name,
+      slug: c.slug,
+      parentSlug: c.parentId ? (slugById.get(c.parentId) ?? null) : null,
+      productCount: countByCategory.get(c.id) ?? 0,
+    })),
   }
+
+  listCategoriesCache = { data, expiresAt: Date.now() + TOOL_CACHE_TTL_MS }
+  return { data, products: [] }
 }
 
 async function listBrandsTool(): Promise<ToolResult> {
-  const brands = (await getBrands()) as { name: string; slug: string }[]
-
-  return {
-    data: { brands: brands.map((b) => ({ name: b.name, slug: b.slug })) },
-    products: [],
+  if (!TOOL_CACHE_SKIP_IN_TEST && listBrandsCache && Date.now() < listBrandsCache.expiresAt) {
+    return { data: listBrandsCache.data, products: [] }
   }
+
+  const brands = await prisma.brand.findMany({
+    where: { isActive: true },
+    orderBy: { name: 'asc' },
+    select: { name: true, slug: true },
+  })
+
+  const data = { brands: brands.map((b) => ({ name: b.name, slug: b.slug })) }
+  listBrandsCache = { data, expiresAt: Date.now() + TOOL_CACHE_TTL_MS }
+  return { data, products: [] }
 }
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<ToolResult>> = {
