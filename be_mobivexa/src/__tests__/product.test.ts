@@ -146,7 +146,8 @@ describe('GET /api/products', () => {
     expect(mockPrisma.product.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          variants: { some: { salePrice: { gte: 3000000, lte: 7000000 } } },
+          // isActive: lọc giá phải khớp với biến thể đang bán — variant ẩn không hiển thị
+          variants: { some: { isActive: true, salePrice: { gte: 3000000, lte: 7000000 } } },
         }),
       })
     )

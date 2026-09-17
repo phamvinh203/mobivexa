@@ -103,6 +103,24 @@ function parsePriceParam(raw: string | undefined, label: string): number | undef
   return value
 }
 
+// Tìm kiếm full-text trên tên sản phẩm — rút gọn còn mảng id để nhồi vào IN (...),
+// dùng chung cho listing + inventory (trước đây lặp khối $queryRaw này hai chỗ).
+//
+// LIMIT 1000: từ khoá quá rộng ("a", "phone") mà không giới hạn thì mảng id phình
+// to vô ích — client chỉ phân trang vài chục dòng mỗi lần.
+// is_active: inventory không lọc sản phẩm ẩn trong where của mình, nên phải chặn
+// ở đây để biến thể của sản phẩm đã ngừng bán không lọt vào kết quả tìm kiếm.
+// Cả listing admin cũng đi qua helper này nên search admin chỉ khớp sản phẩm còn
+// bán — admin muốn tới sản phẩm ẩn thì dùng filter isActive, không dùng search.
+async function searchActiveProductIds(tsQuery: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM products
+    WHERE is_active AND to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
+    LIMIT 1000
+  `
+  return rows.map((r) => r.id)
+}
+
 // ─── Public ─────────────────────────────────────────────────────────────────
 
 // Listing sản phẩm dùng chung cho public + admin (admin: thấy cả sản phẩm ẩn,
@@ -126,14 +144,11 @@ export async function listProducts(
       return { products: [], pagination: paginationMeta(page, limit, 0) }
     }
     // Dùng GIN index — nhanh hơn ILIKE '%keyword%' nhiều lần
-    const rows = await prisma.$queryRaw<{ id: string }[]>`
-      SELECT id FROM products
-      WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
-    `
-    if (rows.length === 0) {
+    const ids = await searchActiveProductIds(tsQuery)
+    if (ids.length === 0) {
       return { products: [], pagination: paginationMeta(page, limit, 0) }
     }
-    where.id = { in: rows.map((r) => r.id) }
+    where.id = { in: ids }
   }
 
   // Filter riêng từng mode
@@ -158,7 +173,10 @@ export async function listProducts(
     if (minPrice !== undefined) priceFilter.gte = minPrice
     if (maxPrice !== undefined) priceFilter.lte = maxPrice
     if (priceFilter.gte !== undefined || priceFilter.lte !== undefined) {
-      where.variants = { some: { salePrice: priceFilter } }
+      // isActive: true — khớp bộ variant hiển thị phía dưới (public chỉ thấy
+      // variant đang bán): không có nó thì card khoe "giá từ X" bởi một variant
+      // đã ẩn mà X không hề hiện trên trang.
+      where.variants = { some: { isActive: true, salePrice: priceFilter } }
     }
   }
 
@@ -255,25 +273,31 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
     ? await Promise.all(files.map((f) => uploadEntityImage(f.buffer, 'products')))
     : []
 
-  const product = await prisma.product.create({
-    data: {
-      name: name.trim(),
-      slug: finalSlug,
-      description,
-      categoryId,
-      brandId,
-      isActive: isActive != null ? String(isActive) !== 'false' : true,
-      isFeatured: isFeatured != null ? String(isFeatured) !== 'false' : false,
-      variants: { create: variants.map(variantCreateData) },
-      specs: specs.length ? { create: specs.map(specCreateData) } : undefined,
-      productTags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
-      images: uploadedImages.length
-        ? { create: uploadedImages.map((img, i) => ({ url: img.url, publicId: img.publicId, isCover: i === 0, sortOrder: i })) }
-        : undefined,
-    },
-    include: PRODUCT_DETAIL_INCLUDE,
-  })
-  return product
+  try {
+    return await prisma.product.create({
+      data: {
+        name: name.trim(),
+        slug: finalSlug,
+        description,
+        categoryId,
+        brandId,
+        isActive: isActive != null ? String(isActive) !== 'false' : true,
+        isFeatured: isFeatured != null ? String(isFeatured) !== 'false' : false,
+        variants: { create: variants.map(variantCreateData) },
+        specs: specs.length ? { create: specs.map(specCreateData) } : undefined,
+        productTags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
+        images: uploadedImages.length
+          ? { create: uploadedImages.map((img, i) => ({ url: img.url, publicId: img.publicId, isCover: i === 0, sortOrder: i })) }
+          : undefined,
+      },
+      include: PRODUCT_DETAIL_INCLUDE,
+    })
+  } catch (err) {
+    // create hỏng (SKU trùng do đua, FK...) thì dọn số ảnh đã upload — bỏ quên
+    // là ảnh mồ côi trên Cloudinary không còn dòng DB nào trỏ tới
+    uploadedImages.forEach((img) => void destroyImage(img.publicId))
+    throw err
+  }
 }
 
 export async function updateProduct(id: string, body: UpdateProductBody, files?: Express.Multer.File[]) {
@@ -554,14 +578,11 @@ export async function getInventory(query: InventoryQuery) {
     if (!tsQuery) {
       return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
     }
-    const rows = await prisma.$queryRaw<{ id: string }[]>`
-      SELECT id FROM products
-      WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
-    `
-    if (rows.length === 0) {
+    const ids = await searchActiveProductIds(tsQuery)
+    if (ids.length === 0) {
       return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
     }
-    where.productId = { in: rows.map((r) => r.id) }
+    where.productId = { in: ids }
   }
 
   if (query.brandSlug) {
