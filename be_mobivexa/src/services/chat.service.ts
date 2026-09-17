@@ -1,8 +1,9 @@
 import type { Content, Part } from '@google/genai'
 import prisma from '../config/db'
 import { Prisma } from '../generated/prisma/client'
-import { genAI, GEMINI_MODEL, GEMINI_TIMEOUT_MS } from '../config/gemini'
+import { getGemini, isGeminiConfigured, GEMINI_MODEL, GEMINI_TIMEOUT_MS } from '../config/gemini'
 import { AppError } from '../helpers/app_error'
+import { signGuestChatToken, verifyGuestChatToken } from '../utils/token_manager'
 import { CHAT_TOOL_DECLARATIONS, executeTool } from './chatbot_tools'
 import type {
   ChatProductCard,
@@ -57,9 +58,26 @@ interface SessionRow {
   title: string | null
 }
 
-// Phiên của người khác trả 404 chứ không phải 403: 403 là lời xác nhận rằng
-// sessionId đó có thật, tức là biến endpoint thành máy dò phiên.
-async function resolveSession(sessionId: string | undefined, userId?: string): Promise<SessionRow> {
+// session id là cuid — không phải bí mật (có thể lộ qua log/referrer/lịch sử
+// trình duyệt), nên không thể dùng một mình nó làm bằng chứng sở hữu cho phiên
+// khách vãng lai. Phiên đã có userId thì xác thực bằng userId (JWT); phiên còn
+// là khách vãng lai (userId null) thì bắt buộc guestToken khớp mới được coi là
+// chủ phiên. Phiên của người khác trả 404 chứ không phải 403: 403 là lời xác
+// nhận rằng sessionId đó có thật, tức là biến endpoint thành máy dò phiên.
+function isValidGuestToken(sessionId: string, guestToken?: string): boolean {
+  if (!guestToken) return false
+  try {
+    return verifyGuestChatToken(guestToken) === sessionId
+  } catch {
+    return false
+  }
+}
+
+async function resolveSession(
+  sessionId: string | undefined,
+  userId?: string,
+  guestToken?: string,
+): Promise<SessionRow> {
   if (!sessionId) {
     return prisma.chatSession.create({
       data: { userId: userId ?? null },
@@ -73,70 +91,99 @@ async function resolveSession(sessionId: string | undefined, userId?: string): P
   })
 
   if (!session) throw new AppError(404, 'Không tìm thấy phiên trò chuyện')
-  if (session.userId && session.userId !== userId) {
+
+  if (session.userId) {
+    if (session.userId !== userId) throw new AppError(404, 'Không tìm thấy phiên trò chuyện')
+  } else if (!isValidGuestToken(session.id, guestToken)) {
     throw new AppError(404, 'Không tìm thấy phiên trò chuyện')
   }
 
   return session
 }
 
-export async function createSession(userId?: string): Promise<{ sessionId: string }> {
+export async function createSession(userId?: string): Promise<{ sessionId: string; guestToken?: string }> {
   const session = await prisma.chatSession.create({
     data: { userId: userId ?? null },
     select: { id: true },
   })
 
-  return { sessionId: session.id }
+  if (userId) return { sessionId: session.id }
+  return { sessionId: session.id, guestToken: signGuestChatToken(session.id) }
 }
 
-export async function getMessages(sessionId: string, userId?: string) {
-  await resolveSession(sessionId, userId)
+export async function getMessages(sessionId: string, userId?: string, guestToken?: string) {
+  await resolveSession(sessionId, userId, guestToken)
 
+  // take chặn payload của phiên quá lâu — phiên guest sống 30 ngày, không chặn
+  // thì mở lại tab cũ phải tải toàn bộ lịch sử. Lấy 200 tin MỚI nhất rồi đảo
+  // ngược để trả theo thứ tự thời gian.
   const messages = await prisma.chatMessage.findMany({
     where: { sessionId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { seq: 'desc' },
+    take: 200,
     select: { id: true, role: true, content: true, createdAt: true },
   })
 
-  return { sessionId, messages }
+  return { sessionId, messages: messages.reverse() }
 }
 
 // ─── Gọi model ────────────────────────────────────────────────────────────────
 
-// Promise.race thay vì AbortSignal của SDK: cách này không phụ thuộc phiên bản
-// SDK có hỗ trợ huỷ hay không, và đây là chỗ duy nhất cần sửa nếu đổi SDK.
-async function callGemini(contents: Content[]): Promise<GeminiResponse> {
-  let timer: NodeJS.Timeout | undefined
+// thinkingConfig tắt thinking: 2.5-flash bật mặc định với ngân sách động, token
+// thinking tính phí như output và cộng thêm 1–5s mỗi vòng — trong khi bot này
+// tư vấn theo dữ liệu tool trả về, không cần suy luận tự do.
+//
+// abortSignal hủy THẬT request đang chạy khi quá 30 giây. Cách Promise.race cũ
+// chỉ bỏ cuộc đua phía server, request cũ vẫn ngốn quota và socket; khách retry
+// giữa lúc Gemini chậm sẽ xếp chồng các request mồ côi.
+async function callGeminiOnce(contents: Content[]): Promise<GeminiResponse> {
+  return (await getGemini().models.generateContent({
+    model: GEMINI_MODEL,
+    contents,
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      tools: [{ functionDeclarations: CHAT_TOOL_DECLARATIONS }],
+      thinkingConfig: { thinkingBudget: 0 },
+      maxOutputTokens: 1024,
+      temperature: 0.2,
+      abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+    },
+  })) as GeminiResponse
+}
 
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Gemini timeout')), GEMINI_TIMEOUT_MS)
-  })
+// Lỗi tạm thời của Google (hết quota 429, 5xx) đáng thử lại 1 lần trước khi báo
+// 503 cho khách; timeout/hủy thì không — khách đã bỏ đi rồi, request càng thêm
+// nghiêm túc thì càng phải trả lỗi ngay.
+function isTransientGeminiError(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status
+  return status === 429 || status === 500 || status === 503
+}
+
+async function callGemini(contents: Content[]): Promise<GeminiResponse> {
+  if (!isGeminiConfigured()) {
+    throw new AppError(503, 'Chatbot tạm thời không khả dụng, vui lòng thử lại sau')
+  }
 
   try {
-    return (await Promise.race([
-      genAI.models.generateContent({
-        model: GEMINI_MODEL,
-        contents,
-        config: {
-          systemInstruction: SYSTEM_PROMPT,
-          tools: [{ functionDeclarations: CHAT_TOOL_DECLARATIONS }],
-        },
-      }),
-      timeout,
-    ])) as GeminiResponse
-  } finally {
-    clearTimeout(timer)
+    return await callGeminiOnce(contents)
+  } catch (err) {
+    if (!isTransientGeminiError(err)) throw err
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    return callGeminiOnce(contents)
   }
 }
 
 // ─── Vòng lặp hội thoại ───────────────────────────────────────────────────────
 
 export async function sendMessage(body: SendMessageBody, userId?: string): Promise<ChatReply> {
-  const session = await resolveSession(body.sessionId, userId)
+  const session = await resolveSession(body.sessionId, userId, body.guestToken)
 
   const history = await prisma.chatMessage.findMany({
     where: { sessionId: session.id },
-    orderBy: { createdAt: 'desc' },
+    // seq là tiebreaker: cặp USER/MODEL của một lượt được createMany chèn chung
+    // một statement nên dùng chung createdAt, sắp theo createdAt alone không bảo
+    // đảm thứ tự trong cặp — đảo lộn là hỏng trật tự xen kẽ user/model cho Gemini
+    orderBy: { seq: 'desc' },
     take: HISTORY_LIMIT,
     select: { role: true, content: true },
   })
@@ -166,12 +213,20 @@ export async function sendMessage(body: SendMessageBody, userId?: string): Promi
         parts: calls.map((c) => ({ functionCall: { name: c.name, args: c.args ?? {} } })),
       })
 
-      const parts: Part[] = []
-      for (const call of calls) {
-        const name = call.name ?? ''
-        const args = call.args ?? {}
-        const result = await executeTool(name, args)
+      // Các call trong cùng một vòng độc lập với nhau và executeTool không bao giờ
+      // ném (lỗi biến thành { error } cho model đọc), nên chạy song song được —
+      // Promise.all giữ đúng thứ tự kết quả cho parts/traces.
+      const executed = await Promise.all(
+        calls.map(async (call) => {
+          const name = call.name ?? ''
+          const args = call.args ?? {}
+          const result = await executeTool(name, args)
+          return { name, args, result }
+        }),
+      )
 
+      const parts: Part[] = []
+      for (const { name, args, result } of executed) {
         result.products.slice(0, MAX_CARDS).forEach((p) => cards.set(p.id, p))
         traces.push({ name, args, resultCount: result.products.length })
         parts.push({ functionResponse: { name, response: { result: result.data } } })
@@ -214,5 +269,10 @@ export async function sendMessage(body: SendMessageBody, userId?: string): Promi
     await prisma.chatSession.update({ where: { id: session.id }, data: patch })
   }
 
-  return { sessionId: session.id, reply, products: [...cards.values()] }
+  // Chỉ cấp guestToken khi phiên vừa được tạo trong lượt này: token cũ client đã
+  // giữ còn hạn 30 ngày, cấp lại mỗi lượt là khiến client xoay tokens vô ích.
+  const ownerId = session.userId ?? patch.userId ?? null
+  const guestToken = !body.sessionId && !ownerId ? signGuestChatToken(session.id) : undefined
+
+  return { sessionId: session.id, reply, products: [...cards.values()], guestToken }
 }

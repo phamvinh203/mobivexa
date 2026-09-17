@@ -3,6 +3,9 @@
 export interface SendMessageBody {
   sessionId?: string
   message: string
+  // Bắt buộc khi tiếp tục một phiên khách vãng lai (session.userId = null) — chứng
+  // minh người gọi chính là người đã tạo phiên, vì session id không phải bí mật.
+  guestToken?: string
 }
 
 // Sản phẩm rút gọn để frontend render thành card bấm được.
@@ -22,6 +25,9 @@ export interface ChatReply {
   sessionId: string
   reply: string
   products: ChatProductCard[]
+  // Chỉ có khi phiên còn là khách vãng lai — client phải lưu lại và gửi kèm
+  // (SendMessageBody.guestToken / header x-chat-guest-token) ở các lượt sau.
+  guestToken?: string
 }
 
 // Vết tra cứu lưu vào ChatMessage.toolCalls

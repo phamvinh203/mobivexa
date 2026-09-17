@@ -14,6 +14,7 @@ export const send = asyncHandler(async (req: Request, res: Response) => {
 })
 
 export const messages = asyncHandler(async (req: Request, res: Response) => {
-  const result = await chatService.getMessages(req.params.id as string, req.user?.userId)
+  const guestToken = req.header('x-chat-guest-token')
+  const result = await chatService.getMessages(req.params.id as string, req.user?.userId, guestToken)
   sendSuccess(res, result)
 })

@@ -182,4 +182,23 @@ describe('GET /api/chat/sessions/:id/messages', () => {
 
     expect(res.status).toBe(404)
   })
+
+  it('chuyển header x-chat-guest-token xuống service', async () => {
+    mockChatService.getMessages.mockResolvedValue({ sessionId: 'sess-1', messages: [] })
+
+    await request(app)
+      .get('/api/chat/sessions/sess-1/messages')
+      .set('x-chat-guest-token', 'token-cua-khach')
+
+    expect(mockChatService.getMessages).toHaveBeenCalledWith('sess-1', undefined, 'token-cua-khach')
+  })
+
+  it('404 - khách vãng lai không kèm guestToken', async () => {
+    mockChatService.getMessages.mockRejectedValue(new AppError(404, 'Không tìm thấy phiên trò chuyện'))
+
+    const res = await request(app).get('/api/chat/sessions/sess-1/messages')
+
+    expect(res.status).toBe(404)
+    expect(mockChatService.getMessages).toHaveBeenCalledWith('sess-1', undefined, undefined)
+  })
 })
