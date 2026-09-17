@@ -2,12 +2,16 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import request from 'supertest'
 
 const mockPrisma = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   user: {
     findUnique: vi.fn(),
     findMany:   vi.fn(),
     count:      vi.fn(),
     update:     vi.fn(),
     delete:     vi.fn(),
+  },
+  refreshToken: {
+    updateMany: vi.fn(),
   },
 }))
 
@@ -97,11 +101,17 @@ describe('GET /api/admin/users/:id', () => {
 // ─── PATCH /api/admin/users/:id/role ─────────────────────────────────────────
 
 describe('PATCH /api/admin/users/:id/role', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+  })
 
   it('200 - đổi role thành công', async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2' })
     mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, role: 'STAFF', _count: { addresses: 0, refreshTokens: 0 } })
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 2 })
 
     const res = await request(app)
       .patch('/api/admin/users/user-2/role')
@@ -109,6 +119,26 @@ describe('PATCH /api/admin/users/:id/role', () => {
       .send({ role: 'STAFF' })
 
     expect(res.status).toBe(200)
+  })
+
+  it('200 - đổi role thì thu hồi (revoke) toàn bộ refresh token đang hoạt động của user đó', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2' })
+    mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, role: 'STAFF', _count: { addresses: 0, refreshTokens: 0 } })
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 2 })
+
+    const res = await request(app)
+      .patch('/api/admin/users/user-2/role')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ role: 'STAFF' })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-2', isRevoked: false },
+      data: { isRevoked: true },
+    })
+    // Revoke phải cùng transaction với update role — không phải 2 thao tác rời rạc
+    // có thể thành công-1-thất bại-1.
+    expect(mockPrisma.$transaction).toHaveBeenCalled()
   })
 
   it('400 - không thể đổi role của chính mình', async () => {
@@ -145,17 +175,40 @@ describe('PATCH /api/admin/users/:id/role', () => {
 // ─── PATCH /api/admin/users/:id/status ───────────────────────────────────────
 
 describe('PATCH /api/admin/users/:id/status', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+  })
 
   it('200 - khóa tài khoản người dùng', async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2', isActive: true })
     mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, isActive: false, _count: { addresses: 0, refreshTokens: 0 } })
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .patch('/api/admin/users/user-2/status')
       .set('Authorization', ADMIN_TOKEN)
 
     expect(res.status).toBe(200)
+  })
+
+  it('200 - khóa tài khoản thì thu hồi toàn bộ refresh token đang hoạt động của user đó', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2', isActive: true })
+    mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, isActive: false, _count: { addresses: 0, refreshTokens: 0 } })
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app)
+      .patch('/api/admin/users/user-2/status')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-2', isRevoked: false },
+      data: { isRevoked: true },
+    })
+    expect(mockPrisma.$transaction).toHaveBeenCalled()
   })
 
   it('400 - không thể khóa tài khoản của chính mình', async () => {

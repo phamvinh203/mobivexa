@@ -75,26 +75,55 @@ export async function listUsers(query: AdminUserListQuery) {
   }
 }
 
+// Thu hồi mọi refresh token đang hoạt động của user — dùng khi quyền hạn của họ
+// vừa đổi (role/status). refreshTokenService chỉ tin vào cờ isRevoked + hạn dùng
+// của chính token, KHÔNG đọc lại User mỗi lần refresh — nên nếu không revoke ở
+// đây, user vừa bị đổi role/khoá tài khoản vẫn refresh được access token mang
+// quyền CŨ cho tới khi refresh token tự hết hạn (tối đa 7 ngày). Access token
+// đang cầm (JWT, tối đa 15 phút) vẫn còn hiệu lực tới khi hết hạn — không thể
+// thu hồi tức thời vì JWT là stateless, nhưng revoke refresh token chặn được
+// việc gia hạn quyền cũ sau đó.
+function revokeUserSessions(targetId: string) {
+  return prisma.refreshToken.updateMany({
+    where: { userId: targetId, isRevoked: false },
+    data: { isRevoked: true },
+  })
+}
+
 export async function updateUserRole(actorId: string, targetId: string, role: string) {
   assertNotSelf(actorId, targetId, 'đổi role')
-  // role đã được validate ở middleware — chỉ cần kiểm tra user tồn tại
+  // Role đã được validate ở middleware (validateUpdateUserRole) — kiểm tra lại
+  // ở đây là phòng thủ lớp 2, đề phòng route/middleware sau này đổi mà bỏ sót.
+  if (!VALID_ROLES.has(role as UserRole)) {
+    throw new AppError(400, `Role không hợp lệ. Hợp lệ: ${[...VALID_ROLES].join(', ')}`)
+  }
   await assertUserExists(targetId)
-  return prisma.user.update({
-    where: { id: targetId },
-    data: { role: role as UserRole },
-    select: ADMIN_USER_DETAIL_SELECT,
-  })
+  // Đổi role + revoke session cũ trong 1 transaction — nếu tách rời, revoke lỗi
+  // giữa chừng sẽ để lại đúng lỗ hổng mà thay đổi này sinh ra để vá.
+  const [user] = await prisma.$transaction([
+    prisma.user.update({
+      where: { id: targetId },
+      data: { role: role as UserRole },
+      select: ADMIN_USER_DETAIL_SELECT,
+    }),
+    revokeUserSessions(targetId),
+  ])
+  return user
 }
 
 export async function toggleUserStatus(actorId: string, targetId: string) {
   assertNotSelf(actorId, targetId, 'khóa tài khoản')
   const user = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true, isActive: true } })
   if (!user) throw new AppError(404, 'Người dùng không tồn tại')
-  return prisma.user.update({
-    where: { id: targetId },
-    data: { isActive: !user.isActive },
-    select: ADMIN_USER_DETAIL_SELECT,
-  })
+  const [updated] = await prisma.$transaction([
+    prisma.user.update({
+      where: { id: targetId },
+      data: { isActive: !user.isActive },
+      select: ADMIN_USER_DETAIL_SELECT,
+    }),
+    revokeUserSessions(targetId),
+  ])
+  return updated
 }
 
 export async function deleteUser(actorId: string, targetId: string) {
