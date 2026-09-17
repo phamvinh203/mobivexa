@@ -40,7 +40,7 @@ export function validateChangePassword(req: Request, res: Response, next: NextFu
 }
 
 export function validateAddress(req: Request, res: Response, next: NextFunction): void {
-  const { fullName, phone, province, district, ward, streetDetail } = req.body
+  const { fullName, phone, province, district, ward, streetDetail, isDefault } = req.body
 
   if (!fullName || String(fullName).trim().length < 2) {
     sendError(res, 400, 'Họ tên người nhận phải có ít nhất 2 ký tự')
@@ -54,6 +54,10 @@ export function validateAddress(req: Request, res: Response, next: NextFunction)
     sendError(res, 400, 'Vui lòng điền đầy đủ thông tin địa chỉ')
     return
   }
+
+  // Chỉ giữ lại đúng các field được phép — loại bỏ mọi key thừa (vd userId, id)
+  // để tránh mass assignment khi service spread req.body vào Prisma.
+  req.body = { fullName, phone, province, district, ward, streetDetail, isDefault }
 
   next()
 }

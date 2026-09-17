@@ -120,7 +120,12 @@ export async function createAddress(userId: string, body: AddressBody) {
 
 export async function updateAddress(userId: string, addressId: string, body: UpdateAddressBody) {
   const address = await findOwnedAddress(userId, addressId)
-  const { isDefault, ...fields } = body
+  // Loại bỏ isDefault khỏi payload ghi trực tiếp, đồng thời chặn userId/id lạ
+  // (nếu lọt qua validator) để không thể đổi chủ sở hữu địa chỉ qua mass assignment.
+  const { isDefault, userId: _ignoredUserId, id: _ignoredId, ...fields } = body as UpdateAddressBody & {
+    userId?: string
+    id?: string
+  }
 
   if (isDefault && !address.isDefault) {
     return prisma.$transaction(async (tx) => {
