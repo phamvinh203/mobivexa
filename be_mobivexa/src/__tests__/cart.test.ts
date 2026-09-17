@@ -2,6 +2,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import request from 'supertest'
 
 const mockPrisma = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   cart: {
     upsert:     vi.fn(),
     findUnique: vi.fn(),
@@ -54,7 +55,12 @@ describe('GET /api/cart', () => {
 // ─── POST /api/cart/items ─────────────────────────────────────────────────────
 
 describe('POST /api/cart/items', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+  })
 
   it('201 - thêm sản phẩm mới vào giỏ', async () => {
     mockPrisma.productVariant.findUnique.mockResolvedValue(VARIANT)
@@ -129,7 +135,12 @@ describe('POST /api/cart/items', () => {
 // ─── PUT /api/cart/items/:itemId ──────────────────────────────────────────────
 
 describe('PUT /api/cart/items/:itemId', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+  })
 
   it('200 - cập nhật số lượng thành công', async () => {
     mockPrisma.cart.findUnique.mockResolvedValue(CART)
@@ -178,10 +189,9 @@ describe('DELETE /api/cart/items/:itemId', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('200 - xóa item khỏi giỏ', async () => {
-    mockPrisma.cart.findUnique.mockResolvedValue(CART)
-    mockPrisma.cartItem.findFirst.mockResolvedValue(ITEM)
-    mockPrisma.cartItem.delete.mockResolvedValue({})
-    mockPrisma.cartItem.count.mockResolvedValue(0)
+    // Luồng gộp: một deleteMany theo ownership, rồi fetchCartSummary đếm lại
+    mockPrisma.cartItem.deleteMany.mockResolvedValue({ count: 1 })
+    mockPrisma.cart.findUnique.mockResolvedValue({ id: 'cart-1', _count: { items: 0 } })
 
     const res = await request(app)
       .delete('/api/cart/items/item-1')
@@ -191,6 +201,7 @@ describe('DELETE /api/cart/items/:itemId', () => {
   })
 
   it('404 - giỏ hàng chưa tồn tại', async () => {
+    mockPrisma.cartItem.deleteMany.mockResolvedValue({ count: 0 })
     mockPrisma.cart.findUnique.mockResolvedValue(null)
 
     const res = await request(app)
