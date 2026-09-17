@@ -21,9 +21,27 @@ async function assertNameAvailable(name: string, excludeId?: string) {
 
 // ─── Public ─────────────────────────────────────────────────────────────────
 
+// Cache in-memory một entry cho nhánh public của getBrands: storefront gọi danh
+// sách này trên mọi trang trong khi dữ liệu gần như đứng yên — TTL 60s cắt bớt
+// round-trip Postgres (mô phỏng inventorySummaryCache ở product.service). Chỉ
+// cache nhánh public; mọi mutation admin của service này set null ngay.
+let publicBrandsCache: { data: Awaited<ReturnType<typeof findPublicBrands>>; expiresAt: number } | null = null
+const PUBLIC_BRANDS_TTL_MS = 60_000
+// Cache tắt hẳn trong test — cùng logic skip của rate limiter: các case trong
+// cùng file mock findMany khác nhau, cache sống qua các case sẽ khiến case sau
+// đọc kết quả của case trước.
+const CACHE_SKIP_IN_TEST = process.env.NODE_ENV === 'test'
+
+function findPublicBrands() {
+  return prisma.brand.findMany({
+    where: { isActive: true },
+    orderBy: { name: 'asc' },
+  })
+}
+
 // Bản admin kèm _count products để UI khoá sẵn nút xoá cho thương hiệu còn sản phẩm,
 // thay vì để người dùng bấm xoá rồi mới nhận 409 từ deleteBrand.
-export function getBrands(includeInactive = false) {
+export async function getBrands(includeInactive = false) {
   if (includeInactive) {
     return prisma.brand.findMany({
       orderBy: { name: 'asc' },
@@ -31,10 +49,13 @@ export function getBrands(includeInactive = false) {
     })
   }
 
-  return prisma.brand.findMany({
-    where: { isActive: true },
-    orderBy: { name: 'asc' },
-  })
+  const now = Date.now()
+  if (!CACHE_SKIP_IN_TEST && publicBrandsCache && now < publicBrandsCache.expiresAt) {
+    return publicBrandsCache.data
+  }
+  const data = await findPublicBrands()
+  publicBrandsCache = { data, expiresAt: now + PUBLIC_BRANDS_TTL_MS }
+  return data
 }
 
 export async function getBrandBySlug(slug: string) {
@@ -55,16 +76,24 @@ export async function createBrand(body: CreateBrandBody, file?: Express.Multer.F
   let logo: { url: string; publicId: string } | null = null
   if (file) logo = await uploadEntityImage(file.buffer, 'brands')
 
-  return prisma.brand.create({
-    data: {
-      name: trimmedName,
-      slug: finalSlug,
-      description,
-      isActive: isActive != null ? String(isActive) !== 'false' : true,
-      logoUrl: logo?.url,
-      logoPublicId: logo?.publicId,
-    },
-  })
+  try {
+    const brand = await prisma.brand.create({
+      data: {
+        name: trimmedName,
+        slug: finalSlug,
+        description,
+        isActive: isActive != null ? String(isActive) !== 'false' : true,
+        logoUrl: logo?.url,
+        logoPublicId: logo?.publicId,
+      },
+    })
+    publicBrandsCache = null
+    return brand
+  } catch (err) {
+    // create hỏng thì dọn logo đã upload — để lại là ảnh mồ côi trên Cloudinary
+    if (logo) void destroyImage(logo.publicId)
+    throw err
+  }
 }
 
 export async function updateBrand(id: string, body: UpdateBrandBody, file?: Express.Multer.File) {
@@ -95,7 +124,9 @@ export async function updateBrand(id: string, body: UpdateBrandBody, file?: Expr
     if (brand.logoPublicId) void destroyImage(brand.logoPublicId)
   }
 
-  return prisma.brand.update({ where: { id }, data })
+  const updated = await prisma.brand.update({ where: { id }, data })
+  publicBrandsCache = null
+  return updated
 }
 
 export async function deleteBrand(id: string) {
@@ -106,12 +137,15 @@ export async function deleteBrand(id: string) {
 
   await prisma.brand.delete({ where: { id } })
   if (brand.logoPublicId) void destroyImage(brand.logoPublicId)
+  publicBrandsCache = null
 }
 
 export async function toggleBrandStatus(id: string) {
   const brand = await findBrandOrThrow(id)
-  return prisma.brand.update({
+  const updated = await prisma.brand.update({
     where: { id },
     data: { isActive: !brand.isActive },
   })
+  publicBrandsCache = null
+  return updated
 }
