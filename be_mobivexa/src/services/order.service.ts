@@ -41,7 +41,9 @@ const ORDER_INCLUDE = {
 
 function generateOrderCode(): string {
   const ymd  = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const rand = randomBytes(3).toString('hex').toUpperCase()
+  // 4 byte (8 ký tự hex): 3 byte chỉ ~16 triệu mã/ngày là đã dễ đụng độ trên
+  // @unique, mà đụng độ là P2002 thành 500 cho khách.
+  const rand = randomBytes(4).toString('hex').toUpperCase()
   return `ORD-${ymd}-${rand}`
 }
 
@@ -111,8 +113,15 @@ async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: str
     // Promise.all ở đây sẽ là ảo tưởng: interactive transaction chạy trên đúng
     // một connection nên các lệnh vẫn nối đuôi nhau — gom lại mới thật sự bớt
     // round-trip, và đơn thường toàn quantity=1 nên còn đúng MỘT lệnh.
+    //
+    // Sắp theo variantId tăng dần trước khi khoá dòng: hai đơn cùng chạm bộ biến
+    // thể mà giữ khoá theo thứ tự ngược nhau sẽ deadlock ở Postgres. Cùng một thứ
+    // tự tăng dần như lúc trừ kho (createOrder) thì request sau chỉ chờ, không chết.
+    const sortedItems = [...order.items].sort(
+      (a, b) => (a.variantId ?? '').localeCompare(b.variantId ?? '')
+    )
     const idsByQuantity = new Map<number, string[]>()
-    for (const { variantId, quantity } of order.items) {
+    for (const { variantId, quantity } of sortedItems) {
       // null khi biến thể đã bị xoá (onDelete: SetNull) — không còn kho để hoàn
       if (variantId === null) continue
       idsByQuantity.set(quantity, [...(idsByQuantity.get(quantity) ?? []), variantId])
@@ -148,12 +157,24 @@ async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: str
 // Export để coupon.service dùng lại: preview mã phải tính subtotal từ ĐÚNG bộ
 // hàng mà createOrder sẽ tính, nếu không preview và đặt hàng ra hai con số khác nhau.
 export async function resolveItems(userId: string, itemsInput?: OrderItemInput[]) {
-  if (itemsInput && itemsInput.length > 0) return itemsInput
+  let items: OrderItemInput[]
+  if (itemsInput && itemsInput.length > 0) {
+    items = itemsInput
+  } else {
+    const cart = await prisma.cart.findUnique({ where: { userId }, include: { items: true } })
+    if (!cart || cart.items.length === 0) throw new AppError(400, 'Giỏ hàng trống, không thể đặt hàng')
+    items = cart.items.map((i) => ({ variantId: i.variantId, quantity: i.quantity }))
+  }
 
-  const cart = await prisma.cart.findUnique({ where: { userId }, include: { items: true } })
-  if (!cart || cart.items.length === 0) throw new AppError(400, 'Giỏ hàng trống, không thể đặt hàng')
-
-  return cart.items.map((i) => ({ variantId: i.variantId, quantity: i.quantity }))
+  // Gộp các dòng trùng variantId (cộng dồn quantity): client gửi hai dòng cùng
+  // một SKU mà không gộp thì đơn sinh hai OrderItem cho một phiên bản — đếm sai,
+  // trừ kho hai lần theo cách khó đọc. Nhánh giỏ hàng không bao giờ trùng (unique
+  // cartId_variantId) nhưng gộp ở đây để cả hai nguồn vào ra một dạng.
+  const merged = new Map<string, number>()
+  for (const { variantId, quantity } of items) {
+    merged.set(variantId, (merged.get(variantId) ?? 0) + quantity)
+  }
+  return [...merged.entries()].map(([variantId, quantity]) => ({ variantId, quantity }))
 }
 
 export async function createOrder(userId: string, body: CreateOrderBody) {
@@ -238,7 +259,7 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   // admin xác nhận như mọi đơn khác.
   const settled = total === 0
 
-  return prisma.$transaction(async (tx) => {
+  const runOrderTx = () => prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
         ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
@@ -264,8 +285,16 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
 
     // Atomic check-and-decrement: updateMany với WHERE stock >= quantity
     // Nếu count === 0 → stock vừa bị lấy bởi request song song → rollback
+    //
+    // Trừ kho theo thứ tự variantId tăng dần: nếu giữ nguyên thứ tự client gửi,
+    // hai đơn cùng mua cặp biến thể theo thứ tự ngược nhau sẽ giữ khoá chéo nhau
+    // → Postgres deadlock, cả hai request cùng ăn 500. Cùng thứ tự tăng dần (và
+    // cả hoàn kho ở cancelAndRestoreStock) thì request sau chỉ chờ, không chết.
+    const lockOrderedItems = [...resolvedItems].sort(
+      (a, b) => a.variantId.localeCompare(b.variantId)
+    )
     await Promise.all(
-      resolvedItems.map(async ({ variantId, quantity }) => {
+      lockOrderedItems.map(async ({ variantId, quantity }) => {
         const result = await tx.productVariant.updateMany({
           where: { id: variantId, stock: { gte: quantity } },
           data:  { stock: { decrement: quantity } },
@@ -311,6 +340,19 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
 
     return order
   })
+
+  // orderCode là chuỗi ngẫu nhiên trên cột @unique nên vẫn có thể đụng độ dưới
+  // tải cao (P2002 → 500 cho khách). Lỗi đã làm HỎNG transaction đang mở nên
+  // không retry từng lệnh bên trong được — chạy lại TOÀN BỘ transaction với mã
+  // mới. P2002 duy nhất có thể thoát ra đây là orderCode: couponUsage đã được
+  // bắt và dịch thành 409 ở trên. Đúng một lần — trùng hai lần liền với 8 ký tự
+  // ngẫu nhiên là dấu hiệu của vấn đề khác, để bung ra mà thấy.
+  try {
+    return await runOrderTx()
+  } catch (err) {
+    if (!isPrismaError(err, 'P2002')) throw err
+    return runOrderTx()
+  }
 }
 
 // ─── Customer ─────────────────────────────────────────────────────────────────
