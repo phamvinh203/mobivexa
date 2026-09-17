@@ -29,6 +29,9 @@ import { signAccessToken } from '../utils/token_manager'
 const app         = createApp()
 const ADMIN_TOKEN = `Bearer ${signAccessToken({ userId: 'admin-1', email: 'admin@test.com', role: 'ADMIN' })}`
 
+const COUPON_START = new Date(Date.now() - 24 * 60 * 60 * 1000)
+const COUPON_END = new Date(Date.now() + 24 * 60 * 60 * 1000)
+
 const BASE_COUPON = {
   id:            'coupon-1',
   code:          'SALE10',
@@ -39,8 +42,8 @@ const BASE_COUPON = {
   minOrderValue: 500_000,
   usageLimit:    100,
   usedCount:     0,
-  startsAt:      new Date('2026-08-01T00:00:00.000Z'),
-  endsAt:        new Date('2026-09-01T00:00:00.000Z'),
+  startsAt:      COUPON_START,
+  endsAt:        COUPON_END,
   isActive:      true,
   createdAt:     new Date(),
   updatedAt:     new Date(),
@@ -53,8 +56,8 @@ const VALID_BODY = {
   maxDiscount:   200_000,
   minOrderValue: 500_000,
   usageLimit:    100,
-  startsAt:      '2026-08-01T00:00:00.000Z',
-  endsAt:        '2026-09-01T00:00:00.000Z',
+  startsAt:      COUPON_START.toISOString(),
+  endsAt:        COUPON_END.toISOString(),
 }
 
 const duplicateKeyError = () =>
@@ -143,7 +146,7 @@ describe('POST /api/admin/coupons', () => {
     const res = await request(app)
       .post('/api/admin/coupons')
       .set('Authorization', ADMIN_TOKEN)
-      .send({ ...VALID_BODY, endsAt: '2026-08-01T00:00:00.000Z' })
+      .send({ ...VALID_BODY, endsAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() })
 
     expect(res.status).toBe(400)
   })

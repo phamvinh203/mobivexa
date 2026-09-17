@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    exclude: ['**/node_modules/**', 'dist/**'],
     env: {
       NODE_ENV: 'test',
       CLIENT_URL: 'http://localhost:3000',
