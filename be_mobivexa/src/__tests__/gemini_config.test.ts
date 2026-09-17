@@ -12,11 +12,16 @@ describe('config/gemini', () => {
     vi.resetModules()
   })
 
-  it('ném lỗi ngay khi import nếu thiếu GEMINI_API_KEY', async () => {
+  it('thiếu GEMINI_API_KEY: import vẫn thành công, lỗi chỉ ném khi dùng client', async () => {
+    // Init lười có chủ đích: module nằm trong chuỗi import của toàn bộ app, ném
+    // lúc import sẽ làm thiếu key giết cả API — giờ chỉ chatbot nhận 503.
     vi.stubEnv('GEMINI_API_KEY', '')
     vi.resetModules()
 
-    await expect(import('../config/gemini')).rejects.toThrow(/GEMINI_API_KEY/)
+    const gemini = await import('../config/gemini')
+
+    expect(gemini.isGeminiConfigured()).toBe(false)
+    expect(() => gemini.getGemini()).toThrow(/GEMINI_API_KEY/)
   })
 
   it('dùng gemini-2.5-flash khi không set GEMINI_MODEL', async () => {
