@@ -6,6 +6,7 @@ import {
   validateCreateReview,
   validateUpdateReview,
   validateReplyReview,
+  validateUpdateReviewStatus,
 } from '../validators/review.validator'
 import * as controller from '../controllers/review.controller'
 
@@ -37,6 +38,7 @@ const adminRouter: Router = Router()
 adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 adminRouter.get(   '/',                                            controller.adminList)
 adminRouter.post(  '/:id/reply',  validateReplyReview,             controller.adminReply)
+adminRouter.patch( '/:id/status', validateUpdateReviewStatus,      controller.adminUpdateStatus)
 adminRouter.delete('/:id',                                         controller.adminDelete)
 
 export const reviewPublicRoutes    = publicRouter

@@ -143,6 +143,9 @@ export async function getPendingReviews(userId: string) {
       },
     },
     orderBy: { order: { updatedAt: 'desc' } },
+    // take: 50 — chặn query không giới hạn: tài khoản mua sỉ dồn hàng trăm mục
+    // chưa đánh giá, kéo hết thì payload phình to vô ích
+    take: 50,
   })
 }
 
@@ -244,7 +247,10 @@ export async function updateReview(
     throw new AppError(400, 'Đã quá 30 ngày, không thể chỉnh sửa đánh giá')
   }
 
-  const data: Prisma.ReviewUpdateInput = { status: ReviewStatus.APPROVED }
+  // KHÔNG đụng status khi người dùng sửa: đánh giá bị từ chối (REJECTED) mà
+  // chỉnh sửa lại là tự bật APPROVED — đăng thẳng nội dung admin đã chặn. Giữ
+  // nguyên trạng thái hiện có, duyệt lại là việc của admin.
+  const data: Prisma.ReviewUpdateInput = {}
   if (body.rating  !== undefined) data.rating  = body.rating
   if (body.content !== undefined) data.content = body.content.trim()
 
@@ -288,7 +294,15 @@ export async function toggleHelpful(userId: string, reviewId: string) {
   if (existing) {
     await prisma.reviewHelpful.delete({ where: { userId_reviewId: { userId, reviewId } } })
   } else {
-    await prisma.reviewHelpful.create({ data: { userId, reviewId } })
+    try {
+      await prisma.reviewHelpful.create({ data: { userId, reviewId } })
+    } catch (err) {
+      // P2002 = hai cú like trúng nhau cùng lúc, cả hai đều thấy chưa tồn tại
+      // (check-then-act) rồi cùng create: khoá chính (userId, reviewId) chặn
+      // một bên. Trạng thái mong muốn ("đã helpful") vẫn đúng — nuốt lỗi, con số
+      // đếm phía dưới đã gồm dòng của request kia. Giống addFavorite.
+      if (!isPrismaError(err, 'P2002')) throw err
+    }
   }
 
   const updated = await prisma.review.findUnique({
@@ -320,6 +334,16 @@ export async function listReviewsAdmin(query: AdminReviewListQuery) {
   ])
 
   return { reviews, pagination: paginationMeta(page, limit, total) }
+}
+
+// Đổi trạng thái duyệt của đánh giá (APPROVED ⇄ REJECTED/PENDING) cho admin.
+// updateMany WHERE id: count === 0 nghĩa là review không tồn tại → 404 rõ ràng,
+// thay vì P2025 từ update thường bung thành 500. Trả full review cùng include
+// như list để FE replace cả dòng — nhất quán với replyReview.
+export async function updateReviewStatusService(reviewId: string, status: ReviewStatus) {
+  const { count } = await prisma.review.updateMany({ where: { id: reviewId }, data: { status } })
+  if (count === 0) throw new AppError(404, 'Đánh giá không tồn tại')
+  return prisma.review.findUnique({ where: { id: reviewId }, include: REVIEW_ADMIN_INCLUDE })
 }
 
 export async function replyReview(reviewId: string, content: string) {

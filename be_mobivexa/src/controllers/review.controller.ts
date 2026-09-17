@@ -65,6 +65,12 @@ export const adminReply = asyncHandler(async (req, res) => {
   sendSuccess(res, data)
 })
 
+export const adminUpdateStatus = asyncHandler(async (req, res) => {
+  const { status } = req.body
+  const data = await service.updateReviewStatusService(req.params.id as string, status)
+  sendSuccess(res, data)
+})
+
 export const adminDelete = asyncHandler(async (req, res) => {
   await service.deleteReview(req.params.id as string)
   sendSuccess(res, null, 204)
