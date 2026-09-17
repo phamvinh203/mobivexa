@@ -30,6 +30,29 @@ export function errorHandler(
     return
   }
 
+  // body-parser (express.json) ném lỗi thô SyntaxError kèm type/status chứ không
+  // phải AppError — không map riêng thì client gửi JSON hỏng hoặc body quá lớn
+  // nhận về 500 "Lỗi server" mà không biết lỗi nằm ở phía mình.
+  const raw = err as { status?: unknown; type?: unknown; message?: string }
+  const status = typeof raw.status === 'number' ? raw.status : undefined
+
+  if ((err instanceof SyntaxError && status === 400) || raw.type === 'entity.parse.failed') {
+    sendError(res, 400, 'Dữ liệu JSON không hợp lệ')
+    return
+  }
+
+  if (raw.type === 'entity.too.large' || status === 413) {
+    sendError(res, 413, 'Dữ liệu gửi lên quá lớn')
+    return
+  }
+
+  // Lỗi từ thư viện khác tự mang status 4xx (http-errors...) — giữ nguyên status
+  // thay vì dồn về 500 che mất thông tin.
+  if (status !== undefined && status >= 400 && status <= 499) {
+    sendError(res, status, raw.message ?? 'Yêu cầu không hợp lệ')
+    return
+  }
+
   console.error('[Error]', err)
   sendError(res, 500, 'Lỗi server, vui lòng thử lại')
 }
