@@ -101,10 +101,14 @@ function txBaseData(tx: NormalizedSePayTx) {
 // Đánh dấu đơn đã thanh toán theo cách chống race: chỉ update khi còn UNPAID.
 // count === 0 nghĩa là một giao dịch khác vừa thanh toán đơn này trước đó.
 // PENDING → CONFIRMED đi kèm để không phải update status ở bước riêng.
+//
+// Guard thêm `status != CANCELLED`: webhook đua với admin huỷ đơn thì webhook
+// THUA — count === 0 và giao dịch rơi xuống hàng UNMATCHED để admin xử lý tay,
+// thay vì lật đơn đã huỷ thành CONFIRMED + PAID (kho đã hoàn, tiền "đã thu" ảo).
 type OrderPaidCtx = { id: string; status: OrderStatus }
 function markOrderPaid(t: Prisma.TransactionClient, order: OrderPaidCtx, paidAt: Date) {
   return t.order.updateMany({
-    where: { id: order.id, paymentStatus: PaymentStatus.UNPAID },
+    where: { id: order.id, paymentStatus: PaymentStatus.UNPAID, status: { not: OrderStatus.CANCELLED } },
     data:  {
       paymentStatus: PaymentStatus.PAID,
       paidAt,
@@ -387,7 +391,11 @@ export async function syncFromSePay(opts: { limit?: number; from?: string; to?: 
 // - unmatchedTransactions: tiền đã về nhưng chưa gán được đơn — cần admin xử lý
 export async function getPaymentStats() {
   const [paidAgg, unpaidAgg, refundedAgg, awaitingAgg, unmatchedAgg] = await Promise.all([
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.PAID }, _sum: { total: true }, _count: true }),
+    // Loại đơn CANCELLED khỏi doanh thu: đơn đã thu rồi bị huỷ (đã hoàn kho,
+    // sẽ hoàn tiền) mà vẫn cộng vào revenue thì dashboard thổi phồng doanh thu
+    prisma.order.aggregate(
+      { where: { paymentStatus: PaymentStatus.PAID, status: { not: OrderStatus.CANCELLED } }, _sum: { total: true }, _count: true },
+    ),
     prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.UNPAID }, _sum: { total: true }, _count: true }),
     prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.REFUNDED }, _sum: { total: true }, _count: true }),
     prisma.order.aggregate(

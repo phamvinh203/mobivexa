@@ -228,10 +228,11 @@ describe('POST /api/webhooks/sepay (xử lý)', () => {
     expect(res.body.handled).toBe(true)
     expect(res.body.orderCode).toBe('ORD-20240101-AABBCC')
 
-    // Cập nhật có điều kiện paymentStatus=UNPAID để tránh ghi đè khi race
+    // Cập nhật có điều kiện paymentStatus=UNPAID + chưa huỷ để tránh ghi đè khi
+    // race với admin huỷ đơn (webhook thua thì giao dịch rơi vào UNMATCHED)
     expect(mockPrisma.order.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'order-1', paymentStatus: 'UNPAID' },
+        where: { id: 'order-1', paymentStatus: 'UNPAID', status: { not: 'CANCELLED' } },
         data:  expect.objectContaining({ paymentStatus: 'PAID', status: 'CONFIRMED' }),
       })
     )
