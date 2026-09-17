@@ -1,12 +1,14 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
+import { catalogLimiter } from '../middlewares/rate_limit.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { validateCreateCategory, validateUpdateCategory } from '../validators/category.validator'
 import * as controller from '../controllers/category.controller'
 
 // ─── Public routes: /api/categories ──────────────────────────────────────────
 const publicRouter: Router = Router()
+publicRouter.use(catalogLimiter)
 publicRouter.get('/', controller.listCategories)
 publicRouter.get('/:slug', controller.getCategory)
 

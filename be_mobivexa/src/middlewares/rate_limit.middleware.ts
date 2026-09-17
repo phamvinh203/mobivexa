@@ -1,10 +1,16 @@
+import type { Request } from 'express'
 import rateLimit, { type Options } from 'express-rate-limit'
 
 // Rate limit bị tắt trong test — nếu không các test chạy liên tiếp trên cùng
 // process sẽ dùng chung counter và bắt đầu trả 429 giữa chừng.
 const skipInTest = () => process.env.NODE_ENV === 'test'
 
-function makeLimiter(limit: number, windowMs: number, message: string): Partial<Options> {
+function makeLimiter(
+  limit: number,
+  windowMs: number,
+  message: string,
+  keyGenerator?: (req: Request) => string,
+): Partial<Options> {
   return {
     windowMs,
     limit,
@@ -12,6 +18,7 @@ function makeLimiter(limit: number, windowMs: number, message: string): Partial<
     legacyHeaders: false,
     skip: skipInTest,
     message: { message },
+    ...(keyGenerator && { keyGenerator }),
   }
 }
 
@@ -54,7 +61,15 @@ export const syncLimiter = rateLimit(
 
 // Mỗi tin nhắn tốn quota Gemini chứ không chỉ tốn CPU, nên siết chặt hơn các
 // limiter khác. 15 tin/phút vẫn thoải mái cho người gõ thật — nhanh hơn thế là
-// script.
+// script. Key theo userId khi đã đăng nhập (optionalAuthenticate chạy trước
+// chatLimiter): người dùng sau NAT công ty không phải chung bucket với người lạ.
 export const chatLimiter = rateLimit(
-  makeLimiter(15, 60_000, 'Bạn nhắn quá nhanh, vui lòng chờ một lát')
+  makeLimiter(15, 60_000, 'Bạn nhắn quá nhanh, vui lòng chờ một lát', (req) => req.user?.userId ?? req.ip ?? '')
+)
+
+// Danh mục sản phẩm/category/brand/banner/tag: đọc công khai, không tốn gì đặc
+// biệt (không gọi API ngoài, không ghi DB), nên chỉ cần chặn scraping/DoS thô —
+// 120/phút vẫn thoải mái cho một trang duyệt web bấm liên tục.
+export const catalogLimiter = rateLimit(
+  makeLimiter(120, 60_000, 'Bạn thao tác quá nhanh, vui lòng thử lại sau')
 )

@@ -1,12 +1,14 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
+import { catalogLimiter } from '../middlewares/rate_limit.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { validateCreateBanner, validateUpdateBanner } from '../validators/banner.validator'
 import * as controller from '../controllers/banner.controller'
 
 // ─── Public routes: /api/banners ──────────────────────────────────────────────
 const publicRouter: Router = Router()
+publicRouter.use(catalogLimiter)
 publicRouter.get('/', controller.listBanners)                  // ?position=HERO|LEFT|RIGHT|HORIZONTAL
 publicRouter.get('/positions', controller.listBannerPositions) // danh sách vị trí
 

@@ -1,11 +1,13 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
+import { catalogLimiter } from '../middlewares/rate_limit.middleware'
 import { validateCreateTag } from '../validators/tag.validator'
 import * as controller from '../controllers/tag.controller'
 
 // ─── Public routes: /api/tags ─────────────────────────────────────────────────
 const publicRouter: Router = Router()
+publicRouter.use(catalogLimiter)
 publicRouter.get('/', controller.listTags)
 
 // ─── Admin routes: /api/admin/tags ────────────────────────────────────────────

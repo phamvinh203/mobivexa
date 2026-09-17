@@ -12,6 +12,7 @@ router.use(optionalAuthenticate)
 
 router.post('/sessions',              chatLimiter,                        controller.create)
 router.post('/messages',              chatLimiter, validateSendMessage,   controller.send)
-router.get('/sessions/:id/messages',                                      controller.messages)
+// GET cũng tốn DB và là đường đọc không giới hạn duy nhất của chat nếu bỏ trống
+router.get('/sessions/:id/messages',  chatLimiter,                        controller.messages)
 
 export const chatRoutes: Router = router

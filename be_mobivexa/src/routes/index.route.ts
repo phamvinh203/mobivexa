@@ -1,4 +1,5 @@
 import { Express } from 'express'
+import { catalogLimiter } from '../middlewares/rate_limit.middleware'
 import { authRoutes } from './auth.route'
 import { userRoutes } from './user.route'
 import { categoryRoutes, categoryAdminRoutes } from './category.route'
@@ -32,7 +33,9 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/brands`, brandRoutes)
   app.use(`${v}/banners`, bannerRoutes)
   app.use(`${v}/products`, productRoutes)
-  app.use(`${v}/products/:slug/reviews`, reviewPublicRoutes)
+  // Mount review public chưa tự gắn limiter như các router catalog khác —
+  // bọc catalogLimiter tại mount để chặn scraping/DoS như products/categories.
+  app.use(`${v}/products/:slug/reviews`, catalogLimiter, reviewPublicRoutes)
   app.use(`${v}/tags`, tagRoutes)
   app.use(`${v}/cart`, cartRoutes)
   app.use(`${v}/favorites`, favoriteRoutes)
