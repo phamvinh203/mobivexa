@@ -1,5 +1,5 @@
 import type { Request } from 'express'
-import rateLimit, { type Options } from 'express-rate-limit'
+import rateLimit, { ipKeyGenerator, type Options } from 'express-rate-limit'
 
 // Rate limit bị tắt trong test — nếu không các test chạy liên tiếp trên cùng
 // process sẽ dùng chung counter và bắt đầu trả 429 giữa chừng.
@@ -63,8 +63,11 @@ export const syncLimiter = rateLimit(
 // limiter khác. 15 tin/phút vẫn thoải mái cho người gõ thật — nhanh hơn thế là
 // script. Key theo userId khi đã đăng nhập (optionalAuthenticate chạy trước
 // chatLimiter): người dùng sau NAT công ty không phải chung bucket với người lạ.
+// Khách vãng lai key theo IP qua ipKeyGenerator: IPv6 gom theo dải /56 — dùng
+// req.ip trần thì mỗi địa chỉ trong dải ISP cấp là một bucket riêng, đổi địa chỉ
+// là lách được giới hạn.
 export const chatLimiter = rateLimit(
-  makeLimiter(15, 60_000, 'Bạn nhắn quá nhanh, vui lòng chờ một lát', (req) => req.user?.userId ?? req.ip ?? '')
+  makeLimiter(15, 60_000, 'Bạn nhắn quá nhanh, vui lòng chờ một lát', (req) => req.user?.userId ?? ipKeyGenerator(req.ip ?? ''))
 )
 
 // Danh mục sản phẩm/category/brand/banner/tag: đọc công khai, không tốn gì đặc
