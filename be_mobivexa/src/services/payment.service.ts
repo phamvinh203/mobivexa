@@ -98,13 +98,15 @@ function txBaseData(tx: NormalizedSePayTx) {
   }
 }
 
-// Đánh dấu đơn đã thanh toán theo cách chống race: chỉ update khi còn UNPAID.
-// count === 0 nghĩa là một giao dịch khác vừa thanh toán đơn này trước đó.
+// Đánh dấu đơn đã thanh toán theo cách chống race: chỉ update khi còn UNPAID và
+// chưa bị hủy. count === 0 nghĩa là giữa lúc đọc và lúc ghi, đơn vừa được một
+// giao dịch khác thanh toán hoặc vừa bị hủy. Thiếu guard hủy thì `order.status`
+// đọc từ trước (PENDING) sẽ kéo đơn đã hủy — kho đã hoàn — ngược lên CONFIRMED.
 // PENDING → CONFIRMED đi kèm để không phải update status ở bước riêng.
 type OrderPaidCtx = { id: string; status: OrderStatus }
 function markOrderPaid(t: Prisma.TransactionClient, order: OrderPaidCtx, paidAt: Date) {
   return t.order.updateMany({
-    where: { id: order.id, paymentStatus: PaymentStatus.UNPAID },
+    where: { id: order.id, paymentStatus: PaymentStatus.UNPAID, status: { not: OrderStatus.CANCELLED } },
     data:  {
       paymentStatus: PaymentStatus.PAID,
       paidAt,
@@ -146,6 +148,11 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
   if (!order) {
     return recordUnresolved(tx, SePayTxStatus.UNMATCHED, `Không tìm thấy đơn hàng ${orderCode}`, orderCode)
   }
+  // Tiền về cho đơn đã hủy: không đánh PAID vì kho đã hoàn. Ghi UNMATCHED để giao
+  // dịch nằm trong hàng chờ của admin, thay vì MATCHED rồi không ai biết mà hoàn tiền.
+  if (order.status === OrderStatus.CANCELLED) {
+    return recordUnresolved(tx, SePayTxStatus.UNMATCHED, 'Đơn hàng đã bị hủy — cần hoàn tiền cho khách', orderCode)
+  }
   if (order.paymentStatus === PaymentStatus.PAID) {
     return recordUnresolved(tx, SePayTxStatus.UNMATCHED, 'Đơn hàng đã được thanh toán trước đó', orderCode)
   }
@@ -169,7 +176,7 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
           ...txBaseData(tx),
           status:    SePayTxStatus.UNMATCHED,
           orderCode,
-          note:      'Đơn vừa được thanh toán bởi giao dịch khác',
+          note:      'Đơn vừa được thanh toán hoặc bị hủy trong lúc xử lý',
         },
       })
       return { handled: false, status: SePayTxStatus.UNMATCHED, orderCode }
@@ -215,10 +222,11 @@ async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
 export async function getOrderPaymentInfo(userId: string, orderId: string) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, userId },
-    select: { id: true, orderCode: true, total: true, paymentMethod: true, paymentStatus: true },
+    select: { id: true, orderCode: true, total: true, paymentMethod: true, paymentStatus: true, status: true },
   })
 
   if (!order) throw new AppError(404, 'Đơn hàng không tồn tại')
+  if (order.status === OrderStatus.CANCELLED) throw new AppError(400, 'Đơn hàng đã bị hủy')
   if (order.paymentMethod !== PaymentMethod.BANK_TRANSFER) {
     throw new AppError(400, 'Đơn hàng không dùng phương thức chuyển khoản ngân hàng')
   }
@@ -306,6 +314,7 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
     select: { id: true, total: true, paymentStatus: true, status: true },
   })
   if (!order) throw new AppError(404, `Không tìm thấy đơn hàng ${orderCode}`)
+  if (order.status === OrderStatus.CANCELLED) throw new AppError(400, 'Đơn hàng đã bị hủy, không thể gán giao dịch')
   if (order.paymentStatus === PaymentStatus.PAID) throw new AppError(400, 'Đơn hàng đã được thanh toán')
 
   const amount   = Number(tx.transferAmount)
@@ -319,7 +328,7 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
 
   return prisma.$transaction(async (t) => {
     const { count } = await markOrderPaid(t, order, tx.transactionDate)
-    if (count === 0) throw new AppError(409, 'Đơn hàng vừa được thanh toán bởi giao dịch khác')
+    if (count === 0) throw new AppError(409, 'Đơn hàng vừa được thanh toán hoặc bị hủy, vui lòng tải lại')
 
     const updated = await t.sePayTransaction.update({
       where: { id: txId },

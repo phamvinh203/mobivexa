@@ -105,6 +105,17 @@ describe('GET /api/orders/:id/payment', () => {
     expect(res.body.message).toMatch(/đã.*thanh toán/i)
   })
 
+  it('400 - đơn đã hủy thì không cấp QR', async () => {
+    mockPrisma.order.findFirst.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
+
+    const res = await request(app)
+      .get('/api/orders/order-1/payment')
+      .set('Authorization', USER_TOKEN)
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/đã bị hủy/i)
+  })
+
   it('404 - đơn hàng không tồn tại', async () => {
     mockPrisma.order.findFirst.mockResolvedValue(null)
 
@@ -228,10 +239,10 @@ describe('POST /api/webhooks/sepay (xử lý)', () => {
     expect(res.body.handled).toBe(true)
     expect(res.body.orderCode).toBe('ORD-20240101-AABBCC')
 
-    // Cập nhật có điều kiện paymentStatus=UNPAID để tránh ghi đè khi race
+    // Cập nhật có điều kiện: còn UNPAID và chưa bị hủy, để tránh ghi đè khi race
     expect(mockPrisma.order.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'order-1', paymentStatus: 'UNPAID' },
+        where: { id: 'order-1', paymentStatus: 'UNPAID', status: { not: 'CANCELLED' } },
         data:  expect.objectContaining({ paymentStatus: 'PAID', status: 'CONFIRMED' }),
       })
     )
@@ -309,6 +320,21 @@ describe('POST /api/webhooks/sepay (xử lý)', () => {
     expect(res.status).toBe(200)
     expect(res.body.handled).toBe(false)
     expect(mockPrisma.order.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('200 - đơn đã hủy thì ghi UNMATCHED để admin hoàn tiền, KHÔNG set PAID', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
+
+    const res = await postWebhook(VALID_PAYLOAD)
+
+    expect(res.status).toBe(200)
+    expect(res.body.handled).toBe(false)
+    expect(mockPrisma.order.updateMany).not.toHaveBeenCalled()
+    expect(mockPrisma.sePayTransaction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'UNMATCHED', note: expect.stringMatching(/đã bị hủy/i) }),
+      })
+    )
   })
 
   it('200 - race: đơn bị giao dịch khác thanh toán giữa chừng (updateMany count=0)', async () => {
@@ -470,6 +496,17 @@ describe('POST /api/admin/payment/transactions/:txId/match', () => {
 
     const res = await match({ orderCode: 'ORD-20240101-AABBCC' })
     expect(res.status).toBe(404)
+  })
+
+  it('400 - đơn đã hủy thì không cho gán', async () => {
+    mockPrisma.sePayTransaction.findUnique.mockResolvedValue(UNMATCHED_TX)
+    mockPrisma.order.findUnique.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
+
+    const res = await match({ orderCode: 'ORD-20240101-AABBCC' })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/đã bị hủy/i)
+    expect(mockPrisma.order.updateMany).not.toHaveBeenCalled()
   })
 
   it('403 - customer không được gán', async () => {
