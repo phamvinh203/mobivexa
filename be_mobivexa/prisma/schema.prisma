@@ -1,8 +1,8 @@
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
 }
 
 datasource db {
@@ -79,6 +79,8 @@ model User {
   reviewHelpful ReviewHelpful[]
   couponUsages  CouponUsage[]
   favorites     Favorite[]
+  blogPostsAuthored BlogPost[] @relation("BlogPostAuthor")
+  blogPostsUpdated  BlogPost[] @relation("BlogPostUpdater")
 
   @@index([role])
   @@index([isActive])
@@ -196,6 +198,7 @@ model Product {
   specs       ProductSpec[]
   reviews     Review[]
   favorites   Favorite[]
+  blogPostLinks BlogPostProduct[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -567,4 +570,174 @@ model Banner {
 
   @@index([isActive, position, sortOrder])
   @@map("banners")
+}
+
+// ─── Blog / Content SEO (ADR-blog-001) ───────────────────────────────────────
+// Domain riêng, KHÔNG dùng chung Category/Tag của sản phẩm. Mọi bảng có tiền tố
+// blog_, mọi khoá ngoại nằm ở bảng mới — không thêm cột nào vào bảng cũ.
+
+enum BlogPostStatus {
+  DRAFT
+  SCHEDULED // chờ tới scheduledAt; lần đọc đầu tiên sau giờ hẹn sẽ chuyển thành PUBLISHED (ADR-blog-002)
+  PUBLISHED
+  ARCHIVED
+}
+
+// 14 giá trị cố định (DEC-blog-01). Thêm giá trị = sửa enum + áp schema (NFR-blog-010).
+enum BlogContentType {
+  NEWS
+  SMARTPHONE_NEWS
+  REVIEW
+  COMPARISON
+  GUIDE
+  TIP_ANDROID
+  TIP_IPHONE
+  BUYING_ADVICE
+  TOP_LIST
+  PROMOTION
+  BRAND_NEWS
+  ACCESSORY
+  KNOWLEDGE
+  FAQ
+}
+
+// Danh mục bài viết, tối đa 2 cấp (service chặn cấp 3). Tên và slug đều duy nhất
+// (E-blog-008) — DB chặn cả trường hợp 2 request tạo trùng cùng lúc.
+model BlogCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  parentId    String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Restrict: service trả 409 trước khi tới đây nếu còn danh mục con.
+  parent   BlogCategory?  @relation("BlogCategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children BlogCategory[] @relation("BlogCategoryTree")
+  posts    BlogPost[]
+
+  @@index([parentId])
+  @@map("blog_categories")
+}
+
+// Tag bài viết — tách hẳn khỏi Tag sản phẩm (OQ-blog-04 → ADR-blog-001).
+model BlogTag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  posts BlogPostTag[]
+
+  @@map("blog_tags")
+}
+
+model BlogPost {
+  id                  String           @id @default(uuid())
+  title               String
+  // Duy nhất toàn bảng, KỂ CẢ bài đã xoá mềm — slug đã xoá vẫn giữ chỗ (BR-blog-002).
+  slug                String           @unique
+  excerpt             String?
+  contentHtml         String           @default("") // HTML ĐÃ sanitize ở server (ADR-blog-005)
+  coverImageUrl       String?
+  coverImagePublicId  String? // null khi ảnh không do blog upload (vd seed dùng lại URL ảnh sản phẩm) → không bao giờ destroy
+  // Nullable vì bản nháp được phép thiếu; bắt buộc khi PUBLISHED/SCHEDULED (BR-blog-007, service kiểm).
+  categoryId          String?
+  contentType         BlogContentType?
+  status              BlogPostStatus   @default(DRAFT)
+  scheduledAt         DateTime? // khác null KHI VÀ CHỈ KHI status = SCHEDULED
+  publishedAt         DateTime? // lần công khai đầu tiên; không đổi khi gỡ rồi xuất bản lại
+  authorId            String? // người tạo bài (audit); SetNull nếu tài khoản bị xoá cứng
+  authorDisplayName   String // tên hiển thị; mặc định = fullName người tạo (BR-blog-015)
+  readingTimeMinutes  Int              @default(1)
+  isReadingTimeManual Boolean          @default(false) // true = admin ghi đè, không tự tính lại khi sửa nội dung
+  seoTitle            String?
+  seoDescription      String?
+  seoKeywords         String?
+  canonicalUrl        String?
+  viewCount           Int              @default(0)
+  updatedById         String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  deletedAt           DateTime? // xoá mềm (BR-blog-013)
+
+  // Restrict: DB chặn xoá danh mục còn bài sống (BR-blog-005); bài đã xoá mềm được service gỡ categoryId trước khi xoá.
+  category     BlogCategory?     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  author       User?             @relation("BlogPostAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  updatedBy    User?             @relation("BlogPostUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  tags         BlogPostTag[]
+  products     BlogPostProduct[]
+  relatedPosts BlogRelatedPost[] @relation("BlogRelatedFrom")
+  relatedFrom  BlogRelatedPost[] @relation("BlogRelatedTo")
+  faqs         BlogPostFaq[]
+
+  // Danh sách công khai: status = PUBLISHED sắp publishedAt desc
+  @@index([status, publishedAt])
+  // Trang danh mục + tự bổ sung "bài liên quan cùng danh mục"
+  @@index([categoryId, status, publishedAt])
+  // Truy vấn "bài hẹn giờ đã tới hạn" chạy ở đầu mỗi lượt đọc (ADR-blog-002)
+  @@index([status, scheduledAt])
+  @@index([authorId])
+  @@index([updatedById])
+  @@map("blog_posts")
+}
+
+model BlogPostTag {
+  postId String
+  tagId  String
+
+  post BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Xoá tag → tự gỡ khỏi mọi bài (BR-blog-006)
+  tag  BlogTag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@index([tagId]) // trang /tin-tuc/tag/:slug đi từ tag sang bài
+  @@map("blog_post_tags")
+}
+
+model BlogPostProduct {
+  postId    String
+  productId String
+  sortOrder Int    @default(0)
+
+  post    BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Sản phẩm bị xoá cứng → gỡ liên kết, không làm hỏng bài (NFR-blog-009)
+  product Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([postId, productId])
+  @@index([productId])
+  @@map("blog_post_products")
+}
+
+// Bài liên quan do admin chọn tay, KHÔNG đối xứng: A chọn B không làm B hiện A.
+// postId <> relatedPostId và tối đa 6 dòng/bài do service kiểm (E-blog-010).
+model BlogRelatedPost {
+  postId        String
+  relatedPostId String
+  sortOrder     Int    @default(0)
+
+  post        BlogPost @relation("BlogRelatedFrom", fields: [postId], references: [id], onDelete: Cascade)
+  relatedPost BlogPost @relation("BlogRelatedTo", fields: [relatedPostId], references: [id], onDelete: Cascade)
+
+  @@id([postId, relatedPostId])
+  @@index([relatedPostId])
+  @@map("blog_related_posts")
+}
+
+// FAQ trong bài, tối đa 15 dòng/bài (service kiểm, E-blog-011). Luôn thay cả danh
+// sách trong 1 transaction cùng lúc lưu bài — cùng cách ProductSpec đang làm.
+model BlogPostFaq {
+  id        String @id @default(uuid())
+  postId    String
+  question  String
+  answer    String
+  sortOrder Int    @default(0)
+
+  post BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, sortOrder])
+  @@map("blog_post_faqs")
 }

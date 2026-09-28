@@ -61,6 +61,22 @@ export async function ensureSearchIndexes(): Promise<void> {
   } catch (error) {
     console.warn("[DB] Could not create order code index:", error);
   }
+
+  // Tìm kiếm bài viết blog (ADR-blog-007): title trọng số A + excerpt trọng số B.
+  // Biểu thức PHẢI giống hệt câu truy vấn ở blog.service.searchPosts thì planner
+  // mới dùng được index này.
+  try {
+    await prisma.$executeRaw`
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_fts
+      ON blog_posts USING GIN ((
+        setweight(to_tsvector('simple', title), 'A') ||
+        setweight(to_tsvector('simple', coalesce(excerpt, '')), 'B')
+      ))
+    `;
+    console.log("[DB] Blog posts FTS index ready");
+  } catch (error) {
+    console.warn("[DB] Could not create blog posts FTS index:", error);
+  }
 }
 
 export default prisma;

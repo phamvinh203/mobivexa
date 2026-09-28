@@ -4,6 +4,8 @@ export const LIMITS = {
   INVENTORY:     20,
   MAX:           50,
   MAX_INVENTORY: 100,
+  BLOG_PUBLIC:   12,
+  BLOG_ADMIN:    20,
 } as const
 
 export function parsePagination(
