@@ -19,7 +19,19 @@ const mockPrisma = vi.hoisted(() => ({
   $transaction: vi.fn(),
 }))
 
+// Mock module email ở RANH GIỚI service: hook trong order.service gọi các hàm
+// này fire-and-forget, test chỉ cần assert "được gọi với đúng orderId" hay
+// "reject mà luồng vẫn sống". mockResolvedValue đặt NGAY LÚC TẠO để mọi test cũ
+// trong file (tạo/huỷ đơn) không văng TypeError khi hook gọi .catch() trên
+// undefined — vi.clearAllMocks() chỉ xoá call history, không xoá implementation.
+const mockOrderEmail = vi.hoisted(() => ({
+  sendOrderCreatedEmail:   vi.fn().mockResolvedValue(undefined),
+  sendOrderPaidEmail:      vi.fn().mockResolvedValue(undefined),
+  sendOrderCancelledEmail: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../config/db', () => ({ default: mockPrisma }))
+vi.mock('../services/order_email.service', () => mockOrderEmail)
 
 import { createApp } from '../app'
 import { Prisma } from '../generated/prisma/client'
@@ -812,5 +824,133 @@ describe('PATCH /api/orders/:id/cancel - hoàn lại mã', () => {
 
     expect(res.status).toBe(200)
     expect(mockPrisma.coupon.updateMany).not.toHaveBeenCalled()
+  })
+})
+
+// ─── Email thông báo đơn hàng (fire-and-forget) ───────────────────────────────
+//
+// Hook nằm trong order.service SAU khi transaction commit, nên assert được gọi
+// là đồng bộ với response: hook chạy trước controller trả 200/201. Case mailer
+// reject không cần chờ gì thêm — nếu hook quên .catch(), vitest bắt unhandled
+// rejection và fail test.
+
+describe('Email thông báo đơn hàng', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation((ops: any) =>
+      Array.isArray(ops) ? Promise.all(ops) : ops(mockPrisma)
+    )
+    mockOrderEmail.sendOrderCreatedEmail.mockResolvedValue(undefined)
+    mockOrderEmail.sendOrderPaidEmail.mockResolvedValue(undefined)
+    mockOrderEmail.sendOrderCancelledEmail.mockResolvedValue(undefined)
+  })
+
+  // Dựng lại đúng mock của ca đặt hàng 201 ở đầu file
+  function mockSuccessfulCheckout() {
+    mockPrisma.address.findFirst.mockResolvedValue({
+      id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001',
+      province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC',
+    })
+    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
+    mockPrisma.order.create.mockResolvedValue(BASE_ORDER)
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+  }
+
+  function checkout() {
+    return request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', paymentMethod: 'COD', items: [{ variantId: 'var-1', quantity: 1 }] })
+  }
+
+  it('đặt hàng 201 → sendOrderCreatedEmail đúng 1 lần với đúng orderId', async () => {
+    mockSuccessfulCheckout()
+
+    const res = await checkout()
+
+    expect(res.status).toBe(201)
+    expect(mockOrderEmail.sendOrderCreatedEmail).toHaveBeenCalledTimes(1)
+    expect(mockOrderEmail.sendOrderCreatedEmail).toHaveBeenCalledWith('order-1')
+  })
+
+  it('mailer/service reject → đặt hàng vẫn 201, không unhandled rejection', async () => {
+    mockSuccessfulCheckout()
+    mockOrderEmail.sendOrderCreatedEmail.mockRejectedValueOnce(new Error('SMTP chết'))
+
+    const res = await checkout()
+
+    expect(res.status).toBe(201)
+    expect(mockOrderEmail.sendOrderCreatedEmail).toHaveBeenCalledTimes(1)
+  })
+
+  it('hủy đơn 200 → sendOrderCancelledEmail đúng 1 lần với đúng orderId', async () => {
+    mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({})
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderCancelledEmail).toHaveBeenCalledTimes(1)
+    expect(mockOrderEmail.sendOrderCancelledEmail).toHaveBeenCalledWith('order-1')
+    // Mốc hủy không được kích hoạt mail mốc khác
+    expect(mockOrderEmail.sendOrderCreatedEmail).not.toHaveBeenCalled()
+    expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
+  })
+
+  it('hủy đua thua cuộc (P2025 → 409) → KHÔNG gửi mail hủy', async () => {
+    mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockRejectedValue(conflictError())
+
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({})
+
+    expect(res.status).toBe(409)
+    expect(mockOrderEmail.sendOrderCancelledEmail).not.toHaveBeenCalled()
+  })
+
+  it('admin PATCH payment UNPAID→PAID → sendOrderPaidEmail đúng 1 lần', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER) // paymentStatus: UNPAID
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
+
+    const res = await request(app)
+      .patch('/api/admin/orders/order-1/payment')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ paymentStatus: 'PAID' })
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledTimes(1)
+    expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledWith('order-1')
+  })
+
+  it('admin PATCH payment khi đơn đã PAID sẵn → không gửi lại mail', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
+
+    const res = await request(app)
+      .patch('/api/admin/orders/order-1/payment')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ paymentStatus: 'PAID' })
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
+  })
+
+  it('admin PATCH payment sang REFUNDED → không gửi mail đã thanh toán', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'REFUNDED' })
+
+    const res = await request(app)
+      .patch('/api/admin/orders/order-1/payment')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ paymentStatus: 'REFUNDED' })
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
   })
 })

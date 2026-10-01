@@ -23,6 +23,15 @@ const mockPrisma = vi.hoisted(() => ({
 
 vi.mock('../config/db', () => ({ default: mockPrisma }))
 
+// Hook mail "đã thanh toán" nằm trong payment.service SAU khi transaction commit
+// — mock ở ranh giới service để assert được gọi đúng orderId, và để case reject
+// chứng minh webhook không bị mail làm đổ. mockResolvedValue đặt lúc tạo để
+// mọi test cũ không văng TypeError khi hook gọi .catch() trên undefined.
+const mockOrderEmail = vi.hoisted(() => ({
+  sendOrderPaidEmail: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../services/order_email.service', () => ({ sendOrderPaidEmail: mockOrderEmail.sendOrderPaidEmail }))
+
 import { createApp } from '../app'
 import { signAccessToken } from '../utils/token_manager'
 
@@ -628,5 +637,73 @@ describe('GET /api/admin/payment/stats', () => {
       .set('Authorization', USER_TOKEN)
 
     expect(res.status).toBe(403)
+  })
+})
+
+// ─── Email thông báo "đã thanh toán" ──────────────────────────────────────────
+//
+// Hook nằm SAU guard chống double-pay (markOrderPaid count === 1) và SAU khi
+// transaction commit, nên mọi đường tới PAID (webhook, gán tay, sync) phải phủ
+// qua đây đúng một lần; các đường KHÔNG chuyển trạng thái phải không gọi.
+
+describe('Email thông báo đã thanh toán', () => {
+  it('webhook xử lý đơn UNPAID → sendOrderPaidEmail đúng 1 lần với đúng orderId', async () => {
+    // beforeEach chung của file đã đặt: findUnique → null, updateMany → count 1
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+
+    const res = await postWebhook(VALID_PAYLOAD)
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledTimes(1)
+    expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledWith('order-1')
+  })
+
+  it('webhook đua thua cuộc (updateMany count=0) → KHÔNG gửi mail', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.updateMany.mockResolvedValue({ count: 0 })
+
+    const res = await postWebhook(VALID_PAYLOAD)
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
+  })
+
+  it('webhook trùng (giao dịch đã ghi nhận) → KHÔNG gửi mail', async () => {
+    mockPrisma.sePayTransaction.findUnique.mockResolvedValue({
+      status: 'MATCHED', orderCode: 'ORD-20240101-AABBCC',
+    })
+
+    const res = await postWebhook(VALID_PAYLOAD)
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
+  })
+
+  it('service mail reject → webhook vẫn 200, không unhandled rejection', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    mockOrderEmail.sendOrderPaidEmail.mockRejectedValueOnce(new Error('SMTP chết'))
+
+    const res = await postWebhook(VALID_PAYLOAD)
+
+    expect(res.status).toBe(200)
+    expect(res.body.handled).toBe(true)
+  })
+
+  it('admin gán tay giao dịch matchTransaction → sendOrderPaidEmail đúng 1 lần', async () => {
+    mockPrisma.sePayTransaction.findUnique.mockResolvedValue({
+      id: 'tx-1', sepayId: 123456, transferType: 'in', transferAmount: 500000,
+      status: 'UNMATCHED', transactionDate: new Date('2024-01-01T10:00:00Z'),
+    })
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    mockPrisma.sePayTransaction.update.mockResolvedValue({ id: 'tx-1', status: 'MATCHED' })
+
+    const res = await request(app)
+      .post('/api/admin/payment/transactions/tx-1/match')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ orderCode: 'ORD-20240101-AABBCC' })
+
+    expect(res.status).toBe(200)
+    expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledTimes(1)
+    expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledWith('order-1')
   })
 })

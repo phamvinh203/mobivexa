@@ -7,6 +7,7 @@ import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
 import { parseSearch, firstQueryValue } from '../utils/search'
 import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
+import { sendOrderCancelledEmail, sendOrderCreatedEmail, sendOrderPaidEmail } from './order_email.service'
 import type {
   CreateOrderBody,
   OrderItemInput,
@@ -94,7 +95,7 @@ type CancellableOrder = {
 // xuống phần increment. Không có guard thì cả hai cùng cộng kho, tồn kho phình
 // lên so với thực tế.
 async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: string) {
-  return prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.order
       .update({
         where:   { id: order.id, status: order.status },
@@ -137,6 +138,17 @@ async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: str
 
     return updated
   })
+
+  // Mail "đã hủy" — fire-and-forget SAU khi transaction đã commit. Đây là điểm
+  // chuyển trạng thái CHUNG nên cả hai đường hủy (khách tự hủy qua cancelMyOrder
+  // lẫn admin qua updateOrderStatus) tự phủ ở đây; guard `status` trong WHERE của
+  // lệnh update đảm bảo chỉ request hủy THẬT SỰ thành công mới tới được dòng này
+  // (request đua sau nhận P2025 → asConflict ném ra trước khi tới hook).
+  void sendOrderCancelledEmail(updated.id).catch((err) => {
+    console.error('[Email] Gửi mail hủy đơn lỗi (không ảnh hưởng việc hủy đơn):', err)
+  })
+
+  return updated
 }
 
 // ─── Tạo đơn hàng ─────────────────────────────────────────────────────────────
@@ -240,7 +252,7 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   // admin xác nhận như mọi đơn khác.
   const settled = total === 0
 
-  return prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     // orderCode có đuôi random 6 ký tự hex — trùng là hiếm nhưng có thật khi ngày
     // đó có nhiều đơn. P2002 ở đây là xui, không phải lỗi nghiệp vụ: regenerate
     // và thử lại, tối đa 3 lần. Hết lượt vẫn trùng (hay lỗi khác) thì thả gốc bay
@@ -330,6 +342,17 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
 
     return order
   })
+
+  // Mail "đơn mới" — fire-and-forget SAU khi transaction đã commit: hỏng SMTP
+  // hay timeout mailer chỉ log lỗi, không bao giờ được rollback đơn đã đặt.
+  // Đơn 0đ tự động PAID ngay lúc sinh ra (settled) — mail này hiện sẵn trạng
+  // thái "Đã thanh toán" nên KHÔNG phát thêm mail mốc 2, tránh khách nhận hai
+  // mail cho một sự kiện.
+  void sendOrderCreatedEmail(created.id).catch((err) => {
+    console.error('[Email] Gửi mail đơn mới lỗi (không ảnh hưởng việc đặt hàng):', err)
+  })
+
+  return created
 }
 
 // ─── Customer ─────────────────────────────────────────────────────────────────
@@ -432,13 +455,27 @@ export async function updateOrderStatus(orderId: string, body: UpdateOrderStatus
 }
 
 export async function updatePaymentStatus(orderId: string, body: UpdatePaymentStatusBody) {
-  // Lean existence check — không cần load items
-  const exists = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } })
-  if (!exists) throw new AppError(404, 'Đơn hàng không tồn tại')
+  // Lean existence check — kèm paymentStatus hiện tại để mail chỉ đi khi trạng
+  // thái THẬT SỰ chuyển sang PAID (endpoint này không có guard chống double-pay
+  // sẵn như markOrderPaid của luồng SePay).
+  const existing = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true, paymentStatus: true } })
+  if (!existing) throw new AppError(404, 'Đơn hàng không tồn tại')
 
-  return prisma.order.update({
+  const updated = await prisma.order.update({
     where: { id: orderId },
     data:  { paymentStatus: body.paymentStatus },
     include: ORDER_INCLUDE,
   })
+
+  // Mail "đã thanh toán" — chỉ khi chuyển thực sự sang PAID (trước đó chưa PAID);
+  // UNPAID/REFUNDED không sinh mail. Hai admin PATCH song song vẫn còn khe hở nhỏ
+  // vì đây là đường admin tần suất thấp và không có guard CAS — chấp nhận được,
+  // hàm gửi mail tự kiểm lại trạng thái PAID trước khi gửi.
+  if (body.paymentStatus === PaymentStatus.PAID && existing.paymentStatus !== PaymentStatus.PAID) {
+    void sendOrderPaidEmail(orderId).catch((err) => {
+      console.error('[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng cập nhật):', err)
+    })
+  }
+
+  return updated
 }

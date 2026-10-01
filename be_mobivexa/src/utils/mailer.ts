@@ -10,6 +10,13 @@ const transporter = nodemailer.createTransport({
   },
 })
 
+// Gửi email chung — tái dụng đúng transporter phía trên, không tạo transport
+// mới. Các thông báo giao dịch (đơn hàng) đi qua đây; người gọi chịu trách nhiệm
+// fire-and-forget (`void sendXxx(...).catch()`) để lỗi SMTP không chạm response.
+export async function sendMail(options: { to: string; subject: string; html: string }): Promise<void> {
+  await transporter.sendMail({ from: process.env.SMTP_FROM, ...options })
+}
+
 export async function sendResetPasswordEmail(to: string, otp: string): Promise<void> {
   await transporter.sendMail({
     from: process.env.SMTP_FROM,

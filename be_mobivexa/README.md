@@ -55,6 +55,7 @@ Xem chú thích đầy đủ trong [.env.example](.env.example):
 - **Chatbot** — đặt `CHATBOT_ENABLED=false` để tắt hoàn toàn (app không cần `GEMINI_API_KEY` vẫn chạy; endpoint chat trả 503). Khi bật: model chính + chuỗi fallback qua `GEMINI_MODEL` / `GEMINI_MODEL_FALLBACKS` — chỉ rơi model kế khi 429/503.
 - **SePay** — webhook trỏ tới `https://<domain>/api/webhooks/sepay`, secret phải khớp `SEPAY_WEBHOOK_SECRET`. Khi deploy sau nginx, nginx **phải** cấu hình `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — nếu không, client tự gắn header giả là bypass được mọi rate limiter theo IP (xem comment tại `app.ts`).
 - **Google OAuth / SMTP / Cloudinary** — đăng nhập Google, email quên mật khẩu, upload ảnh.
+- **Email thông báo đơn hàng** — đặt mới / đã thanh toán / đã hủy, dùng chung SMTP; đặt `EMAIL_ORDER_ENABLED=false` để tắt (mặc định bật, thiếu `SMTP_HOST` cũng tự tắt). Gửi fire-and-forget — lỗi mail không ảnh hưởng luồng đặt hàng hay webhook SePay.
 
 ## Cấu trúc chính
 

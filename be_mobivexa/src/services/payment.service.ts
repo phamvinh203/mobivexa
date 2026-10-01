@@ -4,6 +4,7 @@ import { isPrismaError } from '../helpers/prisma_error'
 import { Prisma, PaymentStatus, OrderStatus, PaymentMethod, SePayTxStatus } from '../generated/prisma/client'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { ORDER_CODE_RE } from '../utils/order_code'
+import { sendOrderPaidEmail } from './order_email.service'
 import { dateRange } from '../utils/date_range'
 import type {
   SePayWebhookPayload,
@@ -167,7 +168,7 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
     )
   }
 
-  return prisma.$transaction(async (t) => {
+  const result = await prisma.$transaction(async (t) => {
     const { count } = await markOrderPaid(t, order, tx.transactionDate)
 
     if (count === 0) {
@@ -187,6 +188,17 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
     })
     return { handled: true, status: SePayTxStatus.MATCHED, orderCode }
   })
+
+  // Mail "đã thanh toán" — fire-and-forget SAU khi transaction commit. `handled`
+  // chỉ true khi markOrderPaid đếm count === 1, tức guard chống double-pay đã qua:
+  // webhook retry, giao dịch trùng hay đơn vừa bị hủy đều không chạm được tới đây.
+  if (result.handled) {
+    void sendOrderPaidEmail(order.id).catch((err) => {
+      console.error('[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng webhook):', err)
+    })
+  }
+
+  return result
 }
 
 async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
@@ -326,7 +338,7 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
     )
   }
 
-  return prisma.$transaction(async (t) => {
+  const matched = await prisma.$transaction(async (t) => {
     const { count } = await markOrderPaid(t, order, tx.transactionDate)
     if (count === 0) throw new AppError(409, 'Đơn hàng vừa được thanh toán hoặc bị hủy, vui lòng tải lại')
 
@@ -345,6 +357,15 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
 
     return serializeTx(updated)
   })
+
+  // Mail "đã thanh toán" — cùng cơ chế với resolveAndRecord: chỉ đặt SAU commit,
+  // và transaction ở trên đã qua guard count === 1 của markOrderPaid nên đây là
+  // đường transition THẬT SỰ, gán tay lặp lại không thể tới được.
+  void sendOrderPaidEmail(order.id).catch((err) => {
+    console.error('[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng gán giao dịch):', err)
+  })
+
+  return matched
 }
 
 // Kéo lại giao dịch từ SePay UserAPI — dùng khi nghi ngờ webhook bị rớt.
