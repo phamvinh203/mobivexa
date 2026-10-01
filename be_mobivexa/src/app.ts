@@ -7,6 +7,11 @@ import { errorHandler } from './middlewares/error.middleware'
 export function createApp() {
   const app = express()
 
+  // Deploy sau nginx (1 hop): Express phải tin đúng số hop proxy mới suy ra IP
+  // thật từ X-Forwarded-For. Thiếu nó, rate-limit gom mọi guest vào chung 1 bucket
+  // (IP của nginx) và express-rate-limit v8 log lỗi mỗi request khi thấy XFF.
+  app.set('trust proxy', 1)
+
   // Header bảo mật mặc định (HSTS, noSniff, frameguard, ẩn X-Powered-By...).
   // Đặt trước cors để áp cho cả preflight lẫn response lỗi.
   app.use(helmet())

@@ -81,6 +81,7 @@ model User {
   favorites     Favorite[]
   blogPostsAuthored BlogPost[] @relation("BlogPostAuthor")
   blogPostsUpdated  BlogPost[] @relation("BlogPostUpdater")
+  chatSessions      ChatSession[]
 
   @@index([role])
   @@index([isActive])
@@ -740,4 +741,43 @@ model BlogPostFaq {
 
   @@index([postId, sortOrder])
   @@map("blog_post_faqs")
+}
+
+// ─── Chatbot (plan chatbot v1.0 — Phase 1) ───────────────────────────────────
+// Phiên chat của user ĐÃ ĐĂNG NHẬP lẫn guest. userId nullable: guest vẫn được
+// chat và lưu lịch sử theo session tạm (sessionId do FE giữ), chỉ khi đăng nhập
+// mới gắn được ownership — dùng để liệt kê/tiếp tục phiên của chính mình.
+
+enum ChatRole {
+  USER      // tin nhắn khách gõ
+  ASSISTANT // tin nhắn bot trả lời (kèm toolName = tool cuối đã dùng, nếu có)
+}
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  userId    String? // null = guest; Cascade: xoá user thì dọn phiên của user
+  title     String // lấy từ tin nhắn đầu của phiên, cắt 60 ký tự
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  sessionId String
+  role      ChatRole
+  content   String
+  toolName  String? // tool cuối phiên bot đã gọi để trả lời tin này — chỉ để debug/đối chiếu
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Context = N tin nhắn cuối của session: luôn đọc theo session rồi sort thời gian
+  @@index([sessionId, createdAt])
+  @@map("chat_messages")
 }
