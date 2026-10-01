@@ -199,6 +199,20 @@ describe('GET /api/products', () => {
     expect(res.status).toBe(400)
     expect(mockPrisma.product.findMany).not.toHaveBeenCalled()
   })
+
+  // Express 5 trả MẢNG khi một key lặp (?search=a&search=b): đẩy mảng thẳng vào
+  // toTsQuery là TypeError, vào where là PrismaClientValidationError — đều 500.
+  // Key lặp là lỗi client, lấy phần tử đầu là đủ.
+  it('200 - query lặp key (search/category/brand/tag/minPrice) không bị 500', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: 'prod-1' }])
+    mockPrisma.product.findMany.mockResolvedValue([BASE_PRODUCT])
+    mockPrisma.product.count.mockResolvedValue(1)
+
+    const res = await request(app)
+      .get('/api/products?search=iphone&search=15&category=a&category=b&brand=a&brand=b&tag=x&tag=y&minPrice=1&minPrice=2&maxPrice=3&maxPrice=4')
+
+    expect(res.status).toBe(200)
+  })
 })
 
 describe('GET /api/products/featured', () => {
@@ -319,6 +333,39 @@ describe('POST /api/admin/products', () => {
 
     expect(res.status).toBe(400)
     expect(res.body.message).toMatch(/giá bán/i)
+  })
+
+  // stock là tuỳ chọn trên đường tạo, nhưng CÓ thì phải nguyên không âm — cùng
+  // luật với PUT variant (checkVariantPatch): -1 lọt xuống DB là kho âm, "5" là
+  // chuỗi lan ra inventory report.
+  it('400 - variant có stock âm', async () => {
+    const res = await request(app)
+      .post('/api/admin/products')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({
+        name: 'iPhone 15',
+        categoryId: 'cat-1',
+        brandId: 'brand-1',
+        variants: [{ ...VALID_VARIANT_BODY, stock: -1 }],
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/Tồn kho/)
+  })
+
+  it('400 - variant có stock dạng chuỗi', async () => {
+    const res = await request(app)
+      .post('/api/admin/products')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({
+        name: 'iPhone 15',
+        categoryId: 'cat-1',
+        brandId: 'brand-1',
+        variants: [{ ...VALID_VARIANT_BODY, stock: '5' }],
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/Tồn kho/)
   })
 
   it('409 - SKU đã tồn tại trong DB', async () => {

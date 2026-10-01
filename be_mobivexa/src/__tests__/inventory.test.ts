@@ -70,6 +70,19 @@ describe('GET /api/admin/inventory', () => {
     expect(res.status).toBe(200)
   })
 
+  // Express 5 trả MẢNG khi key lặp (?search=a&search=b) — ném mảng vào toTsQuery
+  // là TypeError thành 500. Lấy phần tử đầu là đủ.
+  it('200 - search lặp key vẫn chạy, không phải 500', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: 'prod-1' }])
+    setupInventoryMocks()
+
+    const res = await request(app)
+      .get('/api/admin/inventory?search=iphone&search=15&brandSlug=a&brandSlug=b')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+  })
+
   it('200 - STAFF cũng có quyền xem tồn kho', async () => {
     setupInventoryMocks()
 
