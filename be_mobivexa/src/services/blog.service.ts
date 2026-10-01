@@ -624,11 +624,13 @@ export async function generateRssXml(): Promise<string> {
     take: 20,
     select: {
       id: true, title: true, slug: true, excerpt: true, contentHtml: true,
-      seoTitle: true, seoDescription: true, canonicalUrl: true, publishedAt: true,
+      seoTitle: true, seoDescription: true, canonicalUrl: true, publishedAt: true, updatedAt: true,
       category: { select: { name: true } },
     },
   })
 
+  // publishedAt có thể null với bài status=PUBLISHED dữ liệu legacy (dù luồng đăng
+  // bài thường luôn set) — fallback về updatedAt thay vì cast ép kiểu gây TypeError.
   const items = posts.map((p) => {
     const seo = buildSeo(p)
     const link = seo.canonicalUrl ?? `${SITE_URL}/tin-tuc/${p.slug}`
@@ -637,14 +639,14 @@ export async function generateRssXml(): Promise<string> {
       `      <title>${escapeXml(seo.title)}</title>`,
       `      <link>${escapeXml(link)}</link>`,
       `      <guid isPermaLink="false">${escapeXml(p.id)}</guid>`,
-      `      <pubDate>${(p.publishedAt as Date).toUTCString()}</pubDate>`,
+      `      <pubDate>${(p.publishedAt ?? p.updatedAt).toUTCString()}</pubDate>`,
       `      <description>${escapeXml(seo.description)}</description>`,
       `      <category>${escapeXml(p.category?.name ?? '')}</category>`,
       '    </item>',
     ].join('\n')
   })
 
-  const lastBuildDate = posts[0]?.publishedAt ? (posts[0].publishedAt as Date).toUTCString() : new Date().toUTCString()
+  const lastBuildDate = (posts[0]?.publishedAt ?? posts[0]?.updatedAt ?? new Date()).toUTCString()
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',

@@ -59,6 +59,13 @@ export const blogSearchLimiter = rateLimit(
   makeLimiter(20, 60_000, 'Bạn tìm kiếm quá nhanh, vui lòng thử lại sau ít phút'),
 )
 
+// Đếm view bài viết là endpoint public và mỗi lượt là 1 UPDATE DB — không chặn thì
+// một script loop POST là đẩy viewCount lên tùy ý, sai luôn số liệu đọc của admin
+// (NFR-blog-007). 30/phút dư cho người thật mở vài bài, đủ chặn spam lặp.
+export const viewLimiter = rateLimit(
+  makeLimiter(30, 60_000, 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút'),
+)
+
 // ─── Chatbot (NFR-chat-001) ───────────────────────────────────────────────────
 //
 // Mỗi tin nhắn chat tốn MỘT lượt gọi LLM trả phí theo token — guest spam được
