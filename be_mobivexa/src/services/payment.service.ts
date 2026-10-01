@@ -352,7 +352,10 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
 export async function syncFromSePay(opts: { limit?: number; from?: string; to?: string } = {}) {
   if (!SEPAY_API_TOKEN) throw new AppError(500, 'Chưa cấu hình SEPAY_API_TOKEN')
 
-  const params = new URLSearchParams({ limit: String(Math.min(opts.limit ?? 50, 200)) })
+  // Guard `?limit=abc`: Number() ra NaN thì gửi 'NaN' lên SePay là bẻ API — về mặc định 50
+  const requested = Number(opts.limit)
+  const limit = Number.isFinite(requested) && requested > 0 ? requested : 50
+  const params = new URLSearchParams({ limit: String(Math.min(limit, 200)) })
   if (ACCOUNT_NO) params.set('account_number', ACCOUNT_NO)
   if (opts.from)  params.set('transaction_date_min', opts.from)
   if (opts.to)    params.set('transaction_date_max', opts.to)

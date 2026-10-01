@@ -5,7 +5,7 @@ import { checkName, parseJsonField } from './common.validator'
 // Kiểm tra 1 variant hợp lệ — trả về message lỗi hoặc null nếu OK
 function checkVariant(v: unknown): string | null {
   if (!v || typeof v !== 'object') return 'Phiên bản sản phẩm không hợp lệ'
-  const { sku, originalPrice, salePrice } = v as Record<string, unknown>
+  const { sku, originalPrice, salePrice, stock } = v as Record<string, unknown>
 
   if (!sku || String(sku).trim().length === 0) return 'SKU không được để trống'
   // Giá gốc 0 nghĩa là phiên bản lên storefront với giá 0đ — chặn ngay từ đây.
@@ -17,6 +17,9 @@ function checkVariant(v: unknown): string | null {
   if (typeof originalPrice !== 'number' || !Number.isInteger(originalPrice) || originalPrice <= 0) return 'Giá gốc phải là số nguyên lớn hơn 0'
   if (typeof salePrice !== 'number' || !Number.isInteger(salePrice) || salePrice < 0) return 'Giá bán phải là số nguyên không âm'
   if (salePrice > originalPrice) return 'Giá bán không được lớn hơn giá gốc'
+  // stock là tuỳ chọn (service tự mặc định 0), nhưng CÓ thì phải là số nguyên
+  // không âm — cùng luật với checkVariantPatch, để "5" hay -1 không lọt xuống DB.
+  if (stock !== undefined && (!Number.isInteger(stock) || (stock as number) < 0)) return 'Tồn kho phải là số nguyên không âm'
   return null
 }
 

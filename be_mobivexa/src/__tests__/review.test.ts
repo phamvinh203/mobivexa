@@ -31,6 +31,7 @@ vi.mock('../config/cloudinary', () => ({
 }))
 
 import { createApp } from '../app'
+import { Prisma } from '../generated/prisma/client'
 import { signAccessToken } from '../utils/token_manager'
 
 const app = createApp()
@@ -226,6 +227,21 @@ describe('POST /api/order-items/:id/review', () => {
     expect(res.status).toBe(409)
   })
 
+  it('409 - race: hai request tạo review song song, unique index chặn ở DB', async () => {
+    arrangeReviewableItem() // check-then-create lọt qua (chưa có review)
+    mockPrisma.review.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' })
+    )
+
+    const res = await request(app)
+      .post('/api/order-items/item-1/review')
+      .set('Authorization', USER_TOKEN)
+      .send({ rating: 5, content: 'Sản phẩm tốt lắm' })
+
+    expect(res.status).toBe(409)
+    expect(res.body.message).toMatch(/đã đánh giá/i)
+  })
+
   it('401 - không có token', async () => {
     const res = await request(app)
       .post('/api/order-items/item-1/review')
@@ -339,6 +355,24 @@ describe('POST /api/reviews/:id/helpful', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.helpful).toBe(false)
+  })
+
+  it('200 - race: hai request vote song song, request thua coi như đã vote (idempotent)', async () => {
+    mockPrisma.review.findUnique
+      .mockResolvedValueOnce({ id: 'review-1', status: 'APPROVED' })
+      .mockResolvedValueOnce({ _count: { helpful: 1 } })
+    mockPrisma.reviewHelpful.findUnique.mockResolvedValue(null) // cả hai đều thấy chưa vote
+    mockPrisma.reviewHelpful.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' })
+    )
+
+    const res = await request(app)
+      .post('/api/reviews/review-1/helpful')
+      .set('Authorization', USER_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(res.body.helpful).toBe(true)
+    expect(res.body.count).toBe(1)
   })
 
   it('404 - đánh giá không tồn tại', async () => {

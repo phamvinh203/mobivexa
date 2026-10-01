@@ -1,11 +1,11 @@
 import { randomBytes } from 'crypto'
 import prisma from '../config/db'
-import { Prisma, OrderStatus, PaymentStatus, type OrderItem } from '../generated/prisma/client'
+import { Prisma, OrderStatus, PaymentMethod, PaymentStatus, type OrderItem } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
-import { parseSearch } from '../utils/search'
+import { parseSearch, firstQueryValue } from '../utils/search'
 import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
 import type {
   CreateOrderBody,
@@ -62,6 +62,19 @@ function asConflict(err: unknown): never {
     throw new AppError(409, 'Đơn hàng vừa được cập nhật ở nơi khác, vui lòng tải lại')
   }
   throw err
+}
+
+// Whitelist tham số enum từ query string (?status, ?paymentMethod, ?paymentStatus).
+//
+// Kiểu TS trên OrderListQuery chỉ là nói mồm — runtime client gửi gì cũng nhận:
+// ?status=GARBAGE rơi thẳng vào where làm Prisma nổ lỗi enum không ai bắt, thành
+// 500. Sai giá trị là lỗi của client → 400 kèm danh sách giá trị hợp lệ để tự sửa;
+// rỗng/chuỗi trắng coi như không lọc, giữ hành vi cũ.
+function parseEnumParam<T extends string>(raw: unknown, allowed: readonly T[], label: string): T | undefined {
+  const value = firstQueryValue(raw)?.trim()
+  if (value === undefined || value === '') return undefined
+  if ((allowed as readonly string[]).includes(value)) return value as T
+  throw new AppError(400, `${label} không hợp lệ. Giá trị hợp lệ: ${allowed.join(', ')}`)
 }
 
 // Đơn tối thiểu để huỷ: id để ghi, status làm guard, items để hoàn kho. Nhận cả
@@ -152,14 +165,20 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   const variantIds = resolvedItems.map((i) => i.variantId)
   const variants = await prisma.productVariant.findMany({
     where: { id: { in: variantIds } },
-    include: { product: { select: { name: true } } },
+    include: { product: { select: { name: true, isActive: true } } },
   })
 
   const variantMap = new Map(variants.map((v) => [v.id, v]))
   for (const { variantId } of resolvedItems) {
     const v = variantMap.get(variantId)
-    if (!v)          throw new AppError(400, `Sản phẩm không tồn tại: ${variantId}`)
-    if (!v.isActive) throw new AppError(400, `Sản phẩm đã ngừng bán: ${v.sku}`)
+    if (!v) throw new AppError(400, `Sản phẩm không tồn tại: ${variantId}`)
+    // Ẩn ở cấp product hay cấp variant đều là ngừng bán: product ẩn thì mọi
+    // variant của nó không được mua nữa, variant ẩn chỉ chặn riêng nó.
+    if (!v.product.isActive || !v.isActive) throw new AppError(400, `Sản phẩm đã ngừng bán: ${v.sku}`)
+    // salePrice = 0 là quy ước "chưa có giá bán" (validator admin vẫn chấp nhận):
+    // để lọt thì unitPrice = 0 → total = 0 → đơn tự động PAID mà không thu được
+    // đồng nào. Chặn ở biên mua hàng, KHÔNG fallback về originalPrice.
+    if (Number(v.salePrice) <= 0) throw new AppError(400, `Sản phẩm chưa có giá bán: ${v.product.name}`)
     // Stock sẽ được kiểm tra atomic bên trong transaction — không check ở đây để tránh race condition
   }
 
@@ -222,28 +241,40 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   const settled = total === 0
 
   return prisma.$transaction(async (tx) => {
-    const order = await tx.order.create({
-      data: {
-        ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
-        orderCode:        generateOrderCode(),
-        userId,
-        shippingName:     address.fullName,
-        shippingPhone:    address.phone,
-        shippingProvince: address.province,
-        shippingDistrict: address.district,
-        shippingWard:     address.ward,
-        shippingDetail:   address.streetDetail,
-        subtotal,
-        shippingFee,
-        discount,
-        total,
-        paymentMethod,
-        note,
-        couponCode: coupon?.code ?? null,
-        items: { create: orderItems },
-      },
-      include: ORDER_INCLUDE,
-    })
+    // orderCode có đuôi random 6 ký tự hex — trùng là hiếm nhưng có thật khi ngày
+    // đó có nhiều đơn. P2002 ở đây là xui, không phải lỗi nghiệp vụ: regenerate
+    // và thử lại, tối đa 3 lần. Hết lượt vẫn trùng (hay lỗi khác) thì thả gốc bay
+    // lên như mọi lỗi hệ thống khác.
+    let order
+    for (let attempt = 1; ; attempt++) {
+      try {
+        order = await tx.order.create({
+          data: {
+            ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
+            orderCode:        generateOrderCode(),
+            userId,
+            shippingName:     address.fullName,
+            shippingPhone:    address.phone,
+            shippingProvince: address.province,
+            shippingDistrict: address.district,
+            shippingWard:     address.ward,
+            shippingDetail:   address.streetDetail,
+            subtotal,
+            shippingFee,
+            discount,
+            total,
+            paymentMethod,
+            note,
+            couponCode: coupon?.code ?? null,
+            items: { create: orderItems },
+          },
+          include: ORDER_INCLUDE,
+        })
+        break
+      } catch (err) {
+        if (!isPrismaError(err, 'P2002') || attempt >= 3) throw err
+      }
+    }
 
     // Atomic check-and-decrement: updateMany với WHERE stock >= quantity
     // Nếu count === 0 → stock vừa bị lấy bởi request song song → rollback
@@ -289,7 +320,12 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
     }
 
     if (!itemsInput || itemsInput.length === 0) {
-      await tx.cartItem.deleteMany({ where: { cart: { userId } } })
+      // Chỉ xoá đúng những item đã vào đơn: đặt "mua ngay" một món từ giỏ (hoặc
+      // giỏ có món hết hàng bị chặn ở bước validate) thì các món còn lại trong
+      // giỏ phải nguyên vẹn, không bị cuốn theo mất hết.
+      await tx.cartItem.deleteMany({
+        where: { cart: { userId }, variantId: { in: resolvedItems.map((i) => i.variantId) } },
+      })
     }
 
     return order
@@ -302,7 +338,8 @@ export async function listMyOrders(userId: string, query: OrderListQuery) {
   const { page, limit } = parsePagination(query)
 
   const where: Prisma.OrderWhereInput = { userId }
-  if (query.status) where.status = query.status
+  const status = parseEnumParam(query.status, Object.values(OrderStatus), 'Trạng thái đơn hàng')
+  if (status) where.status = status
 
   const [orders, total] = await Promise.all([
     prisma.order.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit, include: ORDER_INCLUDE }),
@@ -339,10 +376,13 @@ export async function listOrders(query: AdminOrderListQuery) {
   const search = parseSearch(query.search)
   if (search)              where.orderCode     = { contains: search, mode: 'insensitive' }
 
-  if (query.status)        where.status        = query.status
-  if (query.userId)        where.userId        = query.userId
-  if (query.paymentMethod) where.paymentMethod = query.paymentMethod
-  if (query.paymentStatus) where.paymentStatus = query.paymentStatus
+  const status        = parseEnumParam(query.status,        Object.values(OrderStatus),   'Trạng thái đơn hàng')
+  const paymentMethod = parseEnumParam(query.paymentMethod, Object.values(PaymentMethod), 'Phương thức thanh toán')
+  const paymentStatus = parseEnumParam(query.paymentStatus, Object.values(PaymentStatus), 'Trạng thái thanh toán')
+  if (status)        where.status        = status
+  if (query.userId)  where.userId        = query.userId
+  if (paymentMethod) where.paymentMethod = paymentMethod
+  if (paymentStatus) where.paymentStatus = paymentStatus
   const range = dateRange(query.from, query.to)
   if (range)               where.createdAt     = range
 

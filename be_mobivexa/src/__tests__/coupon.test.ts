@@ -40,7 +40,8 @@ const BASE_COUPON = {
   usageLimit:    100,
   usedCount:     0,
   startsAt:      new Date('2026-08-01T00:00:00.000Z'),
-  endsAt:        new Date('2026-09-01T00:00:00.000Z'),
+  // endsAt phải là tương lai động: seed cứng ngày cụ thể sẽ tự hỏng khi lịch trôi (time-bomb).
+  endsAt:        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   isActive:      true,
   createdAt:     new Date(),
   updatedAt:     new Date(),
@@ -315,7 +316,8 @@ describe('PUT /api/admin/coupons/:id', () => {
     const res = await request(app)
       .put('/api/admin/coupons/coupon-1')
       .set('Authorization', ADMIN_TOKEN)
-      .send({ startsAt: '2026-10-01T00:00:00.000Z' })
+      // vượt endsAt đang lưu (BASE_COUPON = hôm nay + 30 ngày) nên phải là tương lai xa hơn 30 ngày
+      .send({ startsAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString() })
 
     expect(res.status).toBe(400)
     expect(res.body.message).toBe('Thời gian kết thúc phải sau thời gian bắt đầu')
@@ -501,7 +503,7 @@ const VARIANT = {
   color:     null,
   storage:   null,
   ram:       null,
-  product:   { name: 'iPhone 15' },
+  product:   { name: 'iPhone 15', isActive: true },
 }
 
 describe('POST /api/coupons/preview', () => {
@@ -763,5 +765,22 @@ describe('POST /api/coupons/preview', () => {
     expect(res.body.valid).toBe(false)
     expect(res.body.discount).toBe(0)
     expect(res.body.reason).toMatch(/không còn bán/)
+  })
+
+  // salePrice = 0 là "chưa có giá bán" — chặn 400 cùng thông điệp với createOrder:
+  // giỏ thế này không bao giờ đặt được, để preview tính tiếp là hứa suông số giảm.
+  it('400 - variant chưa có giá bán (salePrice = 0) chặn cùng message với đặt hàng', async () => {
+    mockPrisma.coupon.findUnique.mockResolvedValue(BASE_COUPON)
+    mockPrisma.couponUsage.findFirst.mockResolvedValue(null)
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ ...VARIANT, salePrice: 0 }])
+
+    const res = await request(app)
+      .post('/api/coupons/preview')
+      .set('Authorization', USER_TOKEN)
+      .send({ code: 'SALE10', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/chưa có giá bán/)
+    expect(res.body.message).toContain('iPhone 15')
   })
 })

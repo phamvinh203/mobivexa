@@ -580,6 +580,17 @@ describe('POST /api/admin/payment/sync', () => {
     expect(res.body.message).toMatch(/SePay API/i)
   })
 
+  it('200 - limit không phải số (?limit=abc) thì dùng mặc định thay vì gửi NaN lên SePay', async () => {
+    const fetchFn = mockFetch({ transactions: [] })
+
+    const res = await request(app)
+      .post('/api/admin/payment/sync?limit=abc')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(fetchFn.mock.calls[0][0]).toContain('limit=50')
+  })
+
   it('502 - không kết nối được tới SePay', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
 

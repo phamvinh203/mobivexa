@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
 
@@ -16,7 +17,19 @@ function extractSecret(req: Request): string | undefined {
 // Xác thực webhook SePay — dùng làm middleware trên route /webhooks/sepay.
 export function verifySePaySecret(req: Request, res: Response, next: NextFunction): void {
   const secret = process.env.SEPAY_WEBHOOK_SECRET
-  if (!secret || extractSecret(req) !== secret) {
+  const provided = extractSecret(req)
+
+  if (!secret || !provided) {
+    sendError(res, 401, 'Webhook secret không hợp lệ')
+    return
+  }
+
+  // So timing-safe: hash SHA-256 hai bên để cố định độ dài (tránh lệch độ dài
+  // làm timingSafeEqual ném lỗi) rồi so bằng nhau từng byte, không lộ thông tin
+  // qua thời gian so sánh như phép `===` thường.
+  const expected = crypto.createHash('sha256').update(secret).digest()
+  const actual = crypto.createHash('sha256').update(provided).digest()
+  if (!crypto.timingSafeEqual(expected, actual)) {
     sendError(res, 401, 'Webhook secret không hợp lệ')
     return
   }

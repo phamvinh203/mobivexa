@@ -18,7 +18,12 @@ const mockPrisma = vi.hoisted(() => ({
     updateMany: vi.fn(),
     delete:     vi.fn(),
   },
-  $transaction: vi.fn(),
+  refreshToken: {
+    updateMany: vi.fn(),
+  },
+  $transaction: vi.fn().mockImplementation((ops: unknown) =>
+    Array.isArray(ops) ? Promise.all(ops) : (ops as () => Promise<unknown>)()
+  ),
 }))
 
 const mockVerifyPassword = vi.hoisted(() => vi.fn())
@@ -148,6 +153,21 @@ describe('PUT /api/users/me', () => {
     expect(res.status).toBe(400)
   })
 
+  it('200 - xóa số điện thoại (phone: null)', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue(null)
+    mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, phone: null })
+
+    const res = await request(app)
+      .put('/api/users/me')
+      .set('Authorization', AUTH_HEADER)
+      .send({ phone: null })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ phone: null }) })
+    )
+  })
+
   it('401 - không có token', async () => {
     const res = await request(app).put('/api/users/me').send({ fullName: 'Test' })
     expect(res.status).toBe(401)
@@ -161,6 +181,7 @@ describe('PUT /api/users/me/password', () => {
     mockPrisma.user.findUnique.mockResolvedValue(BASE_USER_WITH_HASH)
     mockVerifyPassword.mockResolvedValue(true)
     mockPrisma.user.update.mockResolvedValue({})
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 2 })
 
     const res = await request(app)
       .put('/api/users/me/password')
@@ -169,6 +190,11 @@ describe('PUT /api/users/me/password', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.message).toMatch(/thành công/)
+    // Đổi mật khẩu phải revoke hết refresh token đang sống
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', isRevoked: false },
+      data: { isRevoked: true },
+    })
   })
 
   it('400 - thiếu mật khẩu hiện tại', async () => {

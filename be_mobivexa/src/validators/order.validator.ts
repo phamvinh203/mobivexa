@@ -82,3 +82,25 @@ export function validateUpdatePayment(req: Request, res: Response, next: NextFun
   }
   next()
 }
+
+const MAX_CANCEL_REASON_LENGTH = 500
+
+// PATCH /:id/cancel thường được gửi KHÔNG body — Express 5 không đảm bảo req.body
+// tồn tại khi request không mang JSON, nên đọc qua `req.body ?? {}` thay vì để
+// controller truy cập req.body.reason nổ TypeError thành 500. reason là tuỳ chọn:
+// thiếu thì service tự ghép lý do mặc định, nhưng CÓ thì phải là chuỗi và có trần
+// độ dài — cancelReason được admin nhìn lại, không phải bãi rác vô hạn.
+export function validateCancelOrder(req: Request, res: Response, next: NextFunction): void {
+  const { reason } = req.body ?? {}
+
+  if (reason === undefined) return next()
+  if (typeof reason !== 'string') {
+    sendError(res, 400, 'Lý do hủy đơn không hợp lệ')
+    return
+  }
+  if (reason.trim().length > MAX_CANCEL_REASON_LENGTH) {
+    sendError(res, 400, `Lý do hủy đơn không được dài quá ${MAX_CANCEL_REASON_LENGTH} ký tự`)
+    return
+  }
+  next()
+}

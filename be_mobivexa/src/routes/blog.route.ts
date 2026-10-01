@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
-import { blogSearchLimiter } from '../middlewares/rate_limit.middleware'
+import { blogSearchLimiter, viewLimiter } from '../middlewares/rate_limit.middleware'
 import * as validator from '../validators/blog.validator'
 import * as controller from '../controllers/blog.controller'
 
@@ -11,7 +11,7 @@ const publicRouter: Router = Router()
 publicRouter.get('/posts', controller.listPosts)
 publicRouter.get('/search', blogSearchLimiter, controller.search)
 publicRouter.get('/posts/:slug', controller.getPostBySlug)
-publicRouter.post('/posts/:slug/view', controller.viewPost)
+publicRouter.post('/posts/:slug/view', viewLimiter, controller.viewPost)
 publicRouter.get('/preview/:token', controller.getPreview)
 publicRouter.get('/categories', controller.listPublicCategories)
 publicRouter.get('/content-types', controller.listContentTypes)

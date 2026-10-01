@@ -3,7 +3,7 @@ import { Prisma } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { generateUniqueSlug, slugTaken } from '../utils/slug'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
-import { toTsQuery } from '../utils/search'
+import { toTsQuery, parseSearch, firstQueryValue } from '../utils/search'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type {
   CreateProductBody,
@@ -91,12 +91,16 @@ const PRODUCT_DETAIL_INCLUDE = {
 // nhánh catch-all của errorHandler. Người dùng gõ sai một tham số thì phải nhận
 // 400 kèm lý do, không phải "Lỗi server, vui lòng thử lại".
 //
+// firstQueryValue chặn thêm ca key lặp (?minPrice=1&minPrice=2) — Express 5 trả
+// mảng, `.trim()` trên mảng là TypeError thành 500.
+//
 // Chuỗi rỗng (?minPrice=) coi như không lọc — giữ nguyên hành vi cũ, vì form bên
 // client hay gửi key rỗng khi người dùng chưa chọn gì.
-function parsePriceParam(raw: string | undefined, label: string): number | undefined {
-  if (raw === undefined || raw.trim() === '') return undefined
+function parsePriceParam(raw: unknown, label: string): number | undefined {
+  const str = firstQueryValue(raw)
+  if (str === undefined || str.trim() === '') return undefined
 
-  const value = Number(raw)
+  const value = Number(str)
   if (!Number.isFinite(value)) throw new AppError(400, `${label} phải là một số`)
   if (value < 0) throw new AppError(400, `${label} không được là số âm`)
 
@@ -117,11 +121,16 @@ export async function listProducts(
 
   const where: Prisma.ProductWhereInput = admin ? {} : { isActive: true }
 
-  if (query.category) where.category = { slug: query.category }
-  if (query.brand) where.brand = { slug: query.brand }
+  // Mọi tham số lọc đều đi qua firstQueryValue/parseSearch: Express 5 trả mảng khi
+  // key lặp, đẩy mảng thẳng vào where là Prisma nổ lỗi validation thành 500.
+  const category = firstQueryValue(query.category)
+  if (category) where.category = { slug: category }
+  const brand = firstQueryValue(query.brand)
+  if (brand) where.brand = { slug: brand }
 
-  if (query.search) {
-    const tsQuery = toTsQuery(query.search)
+  const search = parseSearch(query.search)
+  if (search) {
+    const tsQuery = toTsQuery(search)
     if (!tsQuery) {
       return { products: [], pagination: paginationMeta(page, limit, 0) }
     }
@@ -143,7 +152,8 @@ export async function listProducts(
     if (query.isFeatured === 'true') where.isFeatured = true
     else if (query.isFeatured === 'false') where.isFeatured = false
   } else {
-    if (query.tag) where.productTags = { some: { tag: { slug: query.tag } } }
+    const tag = firstQueryValue(query.tag)
+    if (tag) where.productTags = { some: { tag: { slug: tag } } }
 
     // Lọc theo khoảng giá: sản phẩm có ít nhất 1 variant nằm trong khoảng
     const minPrice = parsePriceParam(query.minPrice, 'Giá tối thiểu')
@@ -542,15 +552,18 @@ async function getInventorySummary(threshold: number): Promise<InventorySummary>
 
 export async function getInventory(query: InventoryQuery) {
   const { page, limit } = parsePagination(query, LIMITS.INVENTORY, LIMITS.MAX_INVENTORY)
-  const threshold = Math.max(1, Number(query.lowThreshold) || DEFAULT_LOW_THRESHOLD)
+  const threshold = Math.max(1, Number(firstQueryValue(query.lowThreshold)) || DEFAULT_LOW_THRESHOLD)
 
   // Khởi động song song với FTS query — không cần chờ nhau
   const summaryPromise = getInventorySummary(threshold)
 
   const where: Prisma.ProductVariantWhereInput = {}
 
-  if (query.search) {
-    const tsQuery = toTsQuery(query.search)
+  // firstQueryValue/parseSearch: key lặp (?search=a&search=b) trả mảng — ném thẳng
+  // vào toTsQuery là TypeError thành 500.
+  const search = parseSearch(query.search)
+  if (search) {
+    const tsQuery = toTsQuery(search)
     if (!tsQuery) {
       return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
     }
@@ -564,8 +577,9 @@ export async function getInventory(query: InventoryQuery) {
     where.productId = { in: rows.map((r) => r.id) }
   }
 
-  if (query.brandSlug) {
-    where.product = { brand: { slug: query.brandSlug } }
+  const brandSlug = firstQueryValue(query.brandSlug)
+  if (brandSlug) {
+    where.product = { brand: { slug: brandSlug } }
   }
 
   switch (query.stockStatus) {

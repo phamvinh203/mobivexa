@@ -71,7 +71,15 @@ export async function changePassword(userId: string, body: ChangePasswordBody) {
   if (!valid) throw new AppError(400, 'Mật khẩu hiện tại không đúng')
 
   const passwordHash = await hashPassword(body.newPassword)
-  await prisma.user.update({ where: { id: userId }, data: { passwordHash } })
+  // Đổi mật khẩu xong revoke toàn bộ refresh token — giống nhánh resetPassword:
+  // phiên đăng nhập trên thiết bị khác không được còn hiệu lực sau khi mật khẩu đổi.
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
+    prisma.refreshToken.updateMany({
+      where: { userId, isRevoked: false },
+      data: { isRevoked: true },
+    }),
+  ])
 }
 
 export async function uploadAvatar(userId: string, buffer: Buffer, mimetype: string) {

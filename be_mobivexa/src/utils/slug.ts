@@ -1,12 +1,18 @@
 import { AppError } from '../helpers/app_error'
 
-// Chuyển text (kể cả tiếng Việt có dấu) thành slug an toàn cho URL
-export function slugify(text: string): string {
+// Bỏ dấu tiếng Việt: NFD tách ký tự gốc + dấu thanh, xoá range dấu combining;
+// 'đ' không nằm trong range đó nên xử lý riêng.
+export function removeVietnameseDiacritics(text: string): string {
   return text
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '') // bỏ dấu thanh (combining diacritics)
     .replace(/đ/g, 'd')
     .replace(/Đ/g, 'D')
+}
+
+// Chuyển text (kể cả tiếng Việt có dấu) thành slug an toàn cho URL
+export function slugify(text: string): string {
+  return removeVietnameseDiacritics(text)
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9\s-]/g, '') // bỏ ký tự đặc biệt

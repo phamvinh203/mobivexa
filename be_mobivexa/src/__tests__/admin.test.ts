@@ -9,11 +9,18 @@ const mockPrisma = vi.hoisted(() => ({
     update:     vi.fn(),
     delete:     vi.fn(),
   },
+  refreshToken: {
+    updateMany: vi.fn(),
+  },
+  $transaction: vi.fn().mockImplementation((ops: unknown) =>
+    Array.isArray(ops) ? Promise.all(ops) : (ops as () => Promise<unknown>)()
+  ),
 }))
 
 vi.mock('../config/db', () => ({ default: mockPrisma }))
 
 import { createApp } from '../app'
+import { Prisma } from '../generated/prisma/client'
 import { signAccessToken } from '../utils/token_manager'
 
 const app = createApp()
@@ -102,6 +109,7 @@ describe('PATCH /api/admin/users/:id/role', () => {
   it('200 - đổi role thành công', async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2' })
     mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, role: 'STAFF', _count: { addresses: 0, refreshTokens: 0 } })
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .patch('/api/admin/users/user-2/role')
@@ -109,6 +117,11 @@ describe('PATCH /api/admin/users/:id/role', () => {
       .send({ role: 'STAFF' })
 
     expect(res.status).toBe(200)
+    // Đổi role phải revoke hết refresh token của user đó
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-2', isRevoked: false },
+      data: { isRevoked: true },
+    })
   })
 
   it('400 - không thể đổi role của chính mình', async () => {
@@ -150,12 +163,30 @@ describe('PATCH /api/admin/users/:id/status', () => {
   it('200 - khóa tài khoản người dùng', async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2', isActive: true })
     mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, isActive: false, _count: { addresses: 0, refreshTokens: 0 } })
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
 
     const res = await request(app)
       .patch('/api/admin/users/user-2/status')
       .set('Authorization', ADMIN_TOKEN)
 
     expect(res.status).toBe(200)
+    // Khóa tài khoản phải revoke hết refresh token của user đó
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-2', isRevoked: false },
+      data: { isRevoked: true },
+    })
+  })
+
+  it('200 - mở khóa tài khoản thì không đụng đến token', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2', isActive: false })
+    mockPrisma.user.update.mockResolvedValue({ ...BASE_USER, isActive: true, _count: { addresses: 0, refreshTokens: 0 } })
+
+    const res = await request(app)
+      .patch('/api/admin/users/user-2/status')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.refreshToken.updateMany).not.toHaveBeenCalled()
   })
 
   it('400 - không thể khóa tài khoản của chính mình', async () => {
@@ -192,6 +223,20 @@ describe('DELETE /api/admin/users/:id', () => {
       .set('Authorization', ADMIN_TOKEN)
 
     expect(res.status).toBe(200)
+  })
+
+  it('409 - xóa người dùng đã có đơn hàng (FK restrict P2003)', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-2' })
+    mockPrisma.user.delete.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('FK constraint failed', { code: 'P2003', clientVersion: 'test' })
+    )
+
+    const res = await request(app)
+      .delete('/api/admin/users/user-2')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(409)
+    expect(res.body.message).toMatch(/không thể xóa/i)
   })
 
   it('400 - không thể xóa tài khoản của chính mình', async () => {

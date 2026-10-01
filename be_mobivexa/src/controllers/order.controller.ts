@@ -30,7 +30,9 @@ export const getMine = asyncHandler(async (req: Request, res: Response) => {
 })
 
 export const cancel = asyncHandler(async (req: Request, res: Response) => {
-  const order = await cancelMyOrder(req.user!.userId, req.params.id as string, req.body.reason)
+  // req.body có thể không tồn tại (Express 5 không parse body khi không phải JSON)
+  // — optional chaining thay vì req.body.reason là TypeError tiềm ẩn thành 500.
+  const order = await cancelMyOrder(req.user!.userId, req.params.id as string, req.body?.reason)
   sendSuccess(res, { message: 'Hủy đơn hàng thành công', order })
 })
 
