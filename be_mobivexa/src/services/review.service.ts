@@ -173,21 +173,31 @@ export async function createReview(
 
   const [productId, uploadedPhotos] = await Promise.all([productIdPromise, uploadPromise])
 
-  return prisma.review.create({
-    data: {
-      orderItemId,
-      userId,
-      productId,
-      variantId: orderItem.variantId,
-      rating:    body.rating,
-      content:   body.content.trim(),
-      status:  ReviewStatus.APPROVED,
-      photos: uploadedPhotos.length
-        ? { create: uploadedPhotos.map((p, i) => ({ url: p.url, publicId: p.publicId, sortOrder: i })) }
-        : undefined,
-    },
-    include: { photos: { orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } } },
-  })
+  try {
+    return await prisma.review.create({
+      data: {
+        orderItemId,
+        userId,
+        productId,
+        variantId: orderItem.variantId,
+        rating:    body.rating,
+        content:   body.content.trim(),
+        status:  ReviewStatus.APPROVED,
+        photos: uploadedPhotos.length
+          ? { create: uploadedPhotos.map((p, i) => ({ url: p.url, publicId: p.publicId, sortOrder: i })) }
+          : undefined,
+      },
+      include: { photos: { orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } } },
+    })
+  } catch (err) {
+    // Race: hai request tạo review cùng order item lọt qua check ở trên —
+    // unique orderItemId chặn ở DB. Dọn ảnh vừa upload để không thành mồ côi.
+    if (isPrismaError(err, 'P2002')) {
+      uploadedPhotos.forEach((p) => void destroyImage(p.publicId))
+      throw new AppError(409, 'Bạn đã đánh giá sản phẩm này rồi')
+    }
+    throw err
+  }
 }
 
 async function resolveProductIdFromOrderItem(orderItem: { productName: string; sku: string }) {
@@ -248,25 +258,28 @@ export async function updateReview(
   if (body.rating  !== undefined) data.rating  = body.rating
   if (body.content !== undefined) data.content = body.content.trim()
 
-  if (files?.length) {
-    // Start uploads and fire-and-forget old deletions concurrently
-    const uploadPromise = Promise.all(
-      files.slice(0, MAX_PHOTOS).map((f) => uploadEntityImage(f.buffer, 'reviews'))
-    )
-    review.photos.forEach((p) => void destroyImage(p.publicId))
+  const uploaded = files?.length
+    ? await Promise.all(files.slice(0, MAX_PHOTOS).map((f) => uploadEntityImage(f.buffer, 'reviews')))
+    : null
 
-    const uploaded = await uploadPromise
+  if (uploaded) {
     data.photos = {
       deleteMany: {},
       create: uploaded.map((p, i) => ({ url: p.url, publicId: p.publicId, sortOrder: i })),
     }
   }
 
-  return prisma.review.update({
+  const updated = await prisma.review.update({
     where: { id: reviewId },
     data,
     include: { photos: { orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } } },
   })
+
+  // Chỉ xóa ảnh cũ trên Cloudinary SAU khi update DB thành công — upload hay
+  // update fail giữa chừng thì ảnh cũ còn nguyên, không mất dữ liệu oan.
+  if (uploaded) review.photos.forEach((p) => void destroyImage(p.publicId))
+
+  return updated
 }
 
 export async function deleteMyReview(userId: string, reviewId: string) {
@@ -286,9 +299,21 @@ export async function toggleHelpful(userId: string, reviewId: string) {
   }
 
   if (existing) {
-    await prisma.reviewHelpful.delete({ where: { userId_reviewId: { userId, reviewId } } })
+    try {
+      await prisma.reviewHelpful.delete({ where: { userId_reviewId: { userId, reviewId } } })
+    } catch (err) {
+      // Race: hai request bỏ vote song song đều thấy bản ghi — request thua
+      // nhận P2025, coi như đã bỏ vote thành công (idempotent)
+      if (!isPrismaError(err, 'P2025')) throw err
+    }
   } else {
-    await prisma.reviewHelpful.create({ data: { userId, reviewId } })
+    try {
+      await prisma.reviewHelpful.create({ data: { userId, reviewId } })
+    } catch (err) {
+      // Race: hai request vote song song đều thấy chưa vote — request thua nhận
+      // P2002 (unique userId+reviewId), coi như đã vote thành công (idempotent)
+      if (!isPrismaError(err, 'P2002')) throw err
+    }
   }
 
   const updated = await prisma.review.findUnique({

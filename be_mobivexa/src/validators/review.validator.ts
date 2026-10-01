@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
 import { parseIntField } from './common.validator'
-import { ReviewStatus } from '../generated/prisma/client'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -49,14 +48,6 @@ export function validateUpdateReview(req: Request, res: Response, next: NextFunc
   }
   if (rating  !== undefined && !parseIntField(res, req.body, 'rating', RATING_FIELD)) return
   if (content !== undefined && !validateContent(res, content))                        return
-  next()
-}
-
-export function validateUpdateReviewStatus(req: Request, res: Response, next: NextFunction): void {
-  if (!Object.values(ReviewStatus).includes(req.body.status)) {
-    sendError(res, 400, 'Trạng thái không hợp lệ')
-    return
-  }
   next()
 }
 
