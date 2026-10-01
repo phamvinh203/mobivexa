@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import request from 'supertest'
+import { Prisma } from '../generated/prisma/client'
 
 const mockPrisma = vi.hoisted(() => ({
   cart: {
@@ -29,8 +30,20 @@ const app        = createApp()
 const USER_TOKEN = `Bearer ${signAccessToken({ userId: 'user-1', email: 'user@test.com', role: 'CUSTOMER' })}`
 
 const CART    = { id: 'cart-1', userId: 'user-1' }
-const VARIANT = { id: 'var-1', isActive: true, stock: 10 }
+const VARIANT = {
+  id:        'var-1',
+  isActive:  true,
+  stock:     10,
+  salePrice: 1000000,
+  product:   { name: 'iPhone 15', isActive: true },
+}
 const ITEM    = { id: 'item-1', cartId: 'cart-1', variantId: 'var-1', quantity: 2 }
+
+const uniqueError = () =>
+  new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+  })
 
 // ─── GET /api/cart ────────────────────────────────────────────────────────────
 
@@ -118,6 +131,86 @@ describe('POST /api/cart/items', () => {
       .send({ quantity: 1 })
 
     expect(res.status).toBe(400)
+  })
+
+  // salePrice = 0 là quy ước "chưa có giá bán" — thêm giỏ được thì đặt đơn ra
+  // total 0 tự PAID. Cùng thông điệp với createOrder.
+  it('400 - variant chưa có giá bán (salePrice = 0)', async () => {
+    mockPrisma.productVariant.findUnique.mockResolvedValue({ ...VARIANT, salePrice: 0 })
+    mockPrisma.cart.upsert.mockResolvedValue(CART)
+
+    const res = await request(app)
+      .post('/api/cart/items')
+      .set('Authorization', USER_TOKEN)
+      .send({ variantId: 'var-1', quantity: 1 })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/chưa có giá bán/)
+    expect(mockPrisma.cartItem.create).not.toHaveBeenCalled()
+  })
+
+  // Product bị admin ẩn thì mọi variant của nó không thêm vào giỏ được.
+  it('400 - product bị ẩn thì không thêm vào giỏ được', async () => {
+    mockPrisma.productVariant.findUnique.mockResolvedValue({
+      ...VARIANT,
+      product: { name: 'iPhone 15', isActive: false },
+    })
+    mockPrisma.cart.upsert.mockResolvedValue(CART)
+
+    const res = await request(app)
+      .post('/api/cart/items')
+      .set('Authorization', USER_TOKEN)
+      .send({ variantId: 'var-1', quantity: 1 })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/ngừng bán/)
+    expect(mockPrisma.cartItem.create).not.toHaveBeenCalled()
+  })
+
+  // Hai request addItem song song cùng thấy giỏ trống rồi cùng create: request
+  // thua ăn P2002 (unique cartId_variantId). Đúng ra là ca "đã có trong giỏ" —
+  // fallback đọc lại rồi increment, không được phép 500 hay mất số lượng.
+  it('201 - thua race P2002 thì fallback gộp số lượng như luồng update', async () => {
+    mockPrisma.productVariant.findUnique.mockResolvedValue(VARIANT)
+    mockPrisma.cart.upsert.mockResolvedValue(CART)
+    // Lần 1 (check existing): chưa có. Lần 2 (sau P2002): request kia vừa ghi.
+    mockPrisma.cartItem.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'item-1', quantity: 2 })
+    mockPrisma.cartItem.create.mockRejectedValueOnce(uniqueError())
+    mockPrisma.cartItem.update.mockResolvedValue({ ...ITEM, quantity: 4 })
+    mockPrisma.cartItem.count.mockResolvedValue(1)
+
+    const res = await request(app)
+      .post('/api/cart/items')
+      .set('Authorization', USER_TOKEN)
+      .send({ variantId: 'var-1', quantity: 2 })
+
+    expect(res.status).toBe(201)
+    // 2 (đã có) + 2 (thêm) = 4, không ghi đè mất phần của request kia
+    expect(mockPrisma.cartItem.update).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+      data: { quantity: 4 },
+    })
+  })
+
+  // Fallback increment vẫn phải check stock: gộp xong vượt tồn kho thì 400.
+  it('400 - fallback sau P2002 vẫn không được vượt tồn kho', async () => {
+    mockPrisma.productVariant.findUnique.mockResolvedValue(VARIANT) // stock 10
+    mockPrisma.cart.upsert.mockResolvedValue(CART)
+    mockPrisma.cartItem.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'item-1', quantity: 9 })
+    mockPrisma.cartItem.create.mockRejectedValueOnce(uniqueError())
+
+    const res = await request(app)
+      .post('/api/cart/items')
+      .set('Authorization', USER_TOKEN)
+      .send({ variantId: 'var-1', quantity: 2 })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/vượt quá tồn kho/)
+    expect(mockPrisma.cartItem.update).not.toHaveBeenCalled()
   })
 
   it('401 - không có token', async () => {

@@ -1,5 +1,6 @@
 import prisma from '../config/db'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import type { AddCartItemBody, UpdateCartItemBody } from '../types/cart.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,11 +62,26 @@ export async function addItem(userId: string, body: AddCartItemBody) {
   const { variantId, quantity } = body
 
   const [variant, cart] = await Promise.all([
-    prisma.productVariant.findUnique({ where: { id: variantId }, select: { id: true, isActive: true, stock: true } }),
+    prisma.productVariant.findUnique({
+      where: { id: variantId },
+      select: {
+        id: true,
+        isActive: true,
+        stock: true,
+        salePrice: true,
+        product: { select: { isActive: true, name: true } },
+      },
+    }),
     prisma.cart.upsert({ where: { userId }, create: { userId }, update: {}, select: { id: true } }),
   ])
 
   if (!variant || !variant.isActive) throw new AppError(404, 'Sản phẩm không tồn tại hoặc đã ngừng bán')
+  // Product bị admin ẩn thì mọi variant của nó không mua được nữa — cùng thông
+  // điệp với createOrder, khác ở chỗ ẩn cấp variant thì giữ nguyên 404 cũ.
+  if (!variant.product.isActive) throw new AppError(400, 'Sản phẩm đã ngừng bán')
+  // salePrice = 0 là quy ước "chưa có giá bán" — thêm giỏ được thì đặt đơn ra
+  // total 0. Cùng thông điệp với createOrder để FE hiện một câu duy nhất.
+  if (Number(variant.salePrice) <= 0) throw new AppError(400, `Sản phẩm chưa có giá bán: ${variant.product.name}`)
   if (variant.stock < quantity) throw new AppError(400, `Sản phẩm không đủ hàng (còn ${variant.stock})`)
 
   const existing = await prisma.cartItem.findUnique({
@@ -78,7 +94,25 @@ export async function addItem(userId: string, body: AddCartItemBody) {
     if (newQty > variant.stock) throw new AppError(400, `Số lượng vượt quá tồn kho (còn ${variant.stock})`)
     await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity: newQty } })
   } else {
-    await prisma.cartItem.create({ data: { cartId: cart.id, variantId, quantity } })
+    try {
+      await prisma.cartItem.create({ data: { cartId: cart.id, variantId, quantity } })
+    } catch (err) {
+      // Hai request addItem song song cùng thấy giỏ trống rồi cùng create: request
+      // thua ăn P2002 (unique cartId_variantId) thành 500 vô nghĩa. Đúng ra nó là
+      // ca "đã có trong giỏ" — đọc lại số lượng request kia vừa ghi rồi đi tiếp
+      // nhánh update như luồng thường, vẫn check stock trước khi increment.
+      if (!isPrismaError(err, 'P2002')) throw err
+
+      const raced = await prisma.cartItem.findUnique({
+        where: { cartId_variantId: { cartId: cart.id, variantId } },
+        select: { id: true, quantity: true },
+      })
+      if (!raced) throw err
+
+      const newQty = raced.quantity + quantity
+      if (newQty > variant.stock) throw new AppError(400, `Số lượng vượt quá tồn kho (còn ${variant.stock})`)
+      await prisma.cartItem.update({ where: { id: raced.id }, data: { quantity: newQty } })
+    }
   }
 
   return fetchCartSummary(cart.id)
