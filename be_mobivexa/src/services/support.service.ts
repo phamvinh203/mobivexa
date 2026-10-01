@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { SupportSender, SupportTicketStatus } from '../generated/prisma/client'
+import { Prisma, SupportSender, SupportTicketStatus } from '../generated/prisma/client'
 import prisma from '../config/db'
 import { AppError } from '../helpers/app_error'
 import { JwtPayload } from '../types/auth.type'
@@ -48,7 +48,7 @@ function toTicketDto(ticket: TicketRow): SupportTicketDto {
 // Đọc hội thoại: messages theo thứ tự thời gian tăng dần cho render xuôi.
 const TICKET_INCLUDE_MESSAGES = {
   messages: { orderBy: { createdAt: 'asc' as const } },
-}
+} satisfies Prisma.SupportTicketInclude
 
 async function getTicketWithMessages(id: string) {
   const ticket = await prisma.supportTicket.findUnique({ where: { id }, include: TICKET_INCLUDE_MESSAGES })
@@ -59,9 +59,10 @@ async function getTicketWithMessages(id: string) {
 // ─── Phân quyền truy cập ticket phía khách ────────────────────────────────────
 
 // Khách đọc/ghi phiên của mình qua một trong hai kênh: JWT khớp chủ ticket, hoặc
-// header x-ticket-code khớp accessCode (kênh của guest). Staff đi qua được tất cả
-// vì dùng endpoint admin, nhưng cho qua ở đây luôn để FE admin nhất quán một endpoint.
-// Sai cả hai → 404 thay vì 403: không xác nhận cho người lạ rằng ticket đó có tồn tại.
+// header x-ticket-code khớp accessCode (kênh của guest). LƯU Ý: staff KHÔNG đi
+// qua được ticket guest bằng endpoint khách (userId null không khớp JWT nào) —
+// staff đọc phiên qua endpoint admin (getTicketForAdmin). Sai cả hai kênh → 404
+// thay vì 403: không xác nhận cho người lạ rằng ticket đó có tồn tại.
 function assertTicketAccess(ticket: { userId: string | null; accessCode: string | null }, user: JwtPayload | undefined, accessCode: string | undefined): void {
   if (ticket.accessCode && accessCode === ticket.accessCode) return
   if (user && ticket.userId === user.userId) return
@@ -83,8 +84,9 @@ export async function createTicket(input: { user?: JwtPayload; customerName?: st
   }
   if (!customerName) throw new AppError(400, 'Vui lòng cho biết tên của bạn')
 
-  // Rào "1 ticket mở/khách": chỉ chặn được với khách đã đăng nhập (truy theo userId).
-  // Guest không có định danh bền vững — chặn bằng supportTicketLimiter theo IP.
+  // Rào "1 ticket mở/khách": chỉ chặn được với khách đã đăng nhập (truy theo userId) và
+  // là biện pháp best-effort — guest không có định danh bền vững (chặn bằng
+  // supportTicketLimiter theo IP), và guest tạo ticket rồi đăng nhập vẫn tạo thêm được.
   if (user) {
     const openTicket = await prisma.supportTicket.findFirst({
       where: { userId: user.userId, status: { in: [SupportTicketStatus.OPEN, SupportTicketStatus.IN_PROGRESS] } },
@@ -183,26 +185,40 @@ export async function claimTicket(id: string, admin: JwtPayload): Promise<Suppor
   if (ticket.status === SupportTicketStatus.IN_PROGRESS && ticket.claimedById !== admin.userId) {
     throw new AppError(409, `${ticket.claimedByName ?? 'Nhân viên khác'} đã nhận phiên này`)
   }
-
-  if (ticket.status === SupportTicketStatus.OPEN) {
-    const name = await staffFullName(admin.userId)
-    await prisma.supportTicket.update({
-      where: { id: ticket.id },
-      data: {
-        status: SupportTicketStatus.IN_PROGRESS,
-        claimedById: admin.userId,
-        claimedByName: name,
-        messages: { create: { sender: SupportSender.SYSTEM, senderName: name, content: `Nhân viên ${name} đã tham gia hỗ trợ bạn.` } },
-      },
-    })
-    return toTicketDto(await getTicketWithMessages(id))
+  if (ticket.status === SupportTicketStatus.IN_PROGRESS) {
+    return toTicketDto(ticket) // phiên của chính mình
   }
 
-  return toTicketDto(ticket)
+  const name = await staffFullName(admin.userId)
+  // Guard `status: OPEN` ngay trong WHERE: hai staff bấm Nhận song song đều thấy
+  // phiên còn OPEN nhưng chỉ MỘT lượt update ghi được (read-then-write không guard
+  // là last-writer-wins — hai system message "đã tham gia" trùng nhau). Chốt chặn
+  // cùng kiểu với huỷ đơn ở order.service (update where: { id, status }).
+  const claimed = await prisma.supportTicket.updateMany({
+    where: { id, status: SupportTicketStatus.OPEN },
+    data: { status: SupportTicketStatus.IN_PROGRESS, claimedById: admin.userId, claimedByName: name },
+  })
+  if (claimed.count === 0) {
+    // Thua race: staff khác vừa chốt claim (hoặc phiên vừa bị đóng) giữa lúc đọc
+    // và lúc ghi — đọc lại để trả 409 đúng người thay vì ghi đè kết quả của họ.
+    const latest = await getTicketWithMessages(id)
+    if (latest.status === SupportTicketStatus.CLOSED) throw new AppError(409, 'Phiên hỗ trợ đã kết thúc')
+    if (latest.status === SupportTicketStatus.IN_PROGRESS && latest.claimedById !== admin.userId) {
+      throw new AppError(409, `${latest.claimedByName ?? 'Nhân viên khác'} đã nhận phiên này`)
+    }
+    return toTicketDto(latest)
+  }
+
+  await prisma.supportMessage.create({
+    data: { ticketId: id, sender: SupportSender.SYSTEM, senderName: name, content: `Nhân viên ${name} đã tham gia hỗ trợ bạn.` },
+  })
+  return toTicketDto(await getTicketWithMessages(id))
 }
 
 // Staff trả lời. Nhắn khi phiên vẫn OPEN là hành vi "nhận" — claim luôn tại đây
 // để khách không phải chờ staff bấm nhận rồi mới thấy tin (tránh race claim/nhắn).
+// v1 cho phép MỌI staff nhắn vào phiên đang IN_PROGRESS (trực chung một queue như
+// shop thật) — hành vi được test chốt; muốn "một người phụ trách" thì siết ở đây.
 export async function sendStaffMessage(id: string, admin: JwtPayload, content: string): Promise<SupportTicketDto> {
   const ticket = await getTicketWithMessages(id)
 
@@ -227,14 +243,19 @@ export async function closeTicket(id: string, admin: JwtPayload): Promise<Suppor
   if (ticket.status === SupportTicketStatus.CLOSED) return toTicketDto(ticket) // idempotent cho polling
 
   const name = await staffFullName(admin.userId)
-  await prisma.supportTicket.update({
-    where: { id: ticket.id },
-    data: {
-      status: SupportTicketStatus.CLOSED,
-      closedAt: new Date(),
-      messages: { create: { sender: SupportSender.SYSTEM, senderName: name, content: 'Phiên hỗ trợ đã kết thúc. Chúc bạn mua sắm vui vẻ!' } },
-    },
+  // Guard `not: CLOSED` trong WHERE: claim và close đua song song thì lượt close
+  // phải thắng — nếu claim ghi đè CLOSED thành IN_PROGRESS mà quên clear closedAt,
+  // ticket rơi vào trạng thái mâu thuẫn và khách bị chặn nhắn 409 vĩnh viễn.
+  const closed = await prisma.supportTicket.updateMany({
+    where: { id, status: { not: SupportTicketStatus.CLOSED } },
+    data: { status: SupportTicketStatus.CLOSED, closedAt: new Date() },
   })
+  if (closed.count > 0) {
+    // Chỉ lượt close thắng race mới chèn system message — không trùng thông báo.
+    await prisma.supportMessage.create({
+      data: { ticketId: id, sender: SupportSender.SYSTEM, senderName: name, content: 'Phiên hỗ trợ đã kết thúc. Chúc bạn mua sắm vui vẻ!' },
+    })
+  }
   return toTicketDto(await getTicketWithMessages(id))
 }
 

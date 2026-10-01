@@ -12,6 +12,7 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     groupBy: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   supportMessage: { create: vi.fn() },
   user: { findUnique: vi.fn() },
@@ -74,6 +75,7 @@ beforeEach(() => {
   mockPrisma.supportTicket.findMany.mockResolvedValue([])
   mockPrisma.supportTicket.groupBy.mockResolvedValue([])
   mockPrisma.supportTicket.update.mockResolvedValue(makeTicket())
+  mockPrisma.supportTicket.updateMany.mockResolvedValue({ count: 1 })
   mockPrisma.supportMessage.create.mockResolvedValue({})
   mockPrisma.user.findUnique.mockResolvedValue(null)
 })
@@ -230,6 +232,50 @@ describe('GET /api/admin/support-tickets — queue admin', () => {
   })
 })
 
+// ─── GET /api/admin/support-tickets/:id — staff đọc một phiên ─────────────────
+
+describe('GET /api/admin/support-tickets/:id', () => {
+  it('401/403 - chỉ STAFF_ROLES', async () => {
+    expect((await get(`/api/admin/support-tickets/${TICKET_ID}`)).status).toBe(401)
+    expect((await get(`/api/admin/support-tickets/${TICKET_ID}`, CUSTOMER)).status).toBe(403)
+  })
+
+  it('200 - staff đọc được, DTO che accessCode/userId', async () => {
+    const res = await get(`/api/admin/support-tickets/${TICKET_ID}`, STAFF)
+    expect(res.status).toBe(200)
+    expect(res.body.id).toBe(TICKET_ID)
+    expect(res.body.accessCode).toBeUndefined()
+    expect(res.body.userId).toBeUndefined()
+  })
+
+  it('404 - phiên không tồn tại', async () => {
+    mockPrisma.supportTicket.findUnique.mockResolvedValue(null)
+    const res = await get(`/api/admin/support-tickets/${TICKET_ID}`, STAFF)
+    expect(res.status).toBe(404)
+  })
+})
+
+// ─── Giới hạn độ dài (validator) ──────────────────────────────────────────────
+
+describe('Giới hạn độ dài nội dung', () => {
+  it('400 - tin nhắn khách vượt 2000 ký tự', async () => {
+    const res = await post(`/api/support-tickets/${TICKET_ID}/messages`, { content: 'a'.repeat(2001) }).set('x-ticket-code', ACCESS_CODE)
+    expect(res.status).toBe(400)
+    expect(mockPrisma.supportMessage.create).not.toHaveBeenCalled()
+  })
+
+  it('400 - tin staff vượt 2000 ký tự', async () => {
+    const res = await post(`/api/admin/support-tickets/${TICKET_ID}/messages`, { content: 'a'.repeat(2001) }, STAFF)
+    expect(res.status).toBe(400)
+  })
+
+  it('400 - tên khai vượt 60 ký tự', async () => {
+    const res = await post('/api/support-tickets', { customerName: 'a'.repeat(61), message: 'Cần hỗ trợ' })
+    expect(res.status).toBe(400)
+    expect(mockPrisma.supportTicket.create).not.toHaveBeenCalled()
+  })
+})
+
 // ─── POST /:id/claim — nhận phiên ─────────────────────────────────────────────
 
 describe('POST /api/admin/support-tickets/:id/claim', () => {
@@ -243,12 +289,30 @@ describe('POST /api/admin/support-tickets/:id/claim', () => {
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/claim`, {}, STAFF)
 
     expect(res.status).toBe(200)
-    const updateArg = mockPrisma.supportTicket.update.mock.calls[0][0]
-    expect(updateArg.where).toEqual({ id: TICKET_ID })
-    expect(updateArg.data).toMatchObject({ status: 'IN_PROGRESS', claimedById: 'u-1', claimedByName: 'Nhân viên B' })
-    expect(updateArg.data.messages.create).toMatchObject({ sender: 'SYSTEM', content: expect.stringContaining('Nhân viên B') })
+    // Guard status nằm trong WHERE của updateMany — hai staff claim song song chỉ một lượt ghi được
+    const updateArg = mockPrisma.supportTicket.updateMany.mock.calls[0][0]
+    expect(updateArg.where).toEqual({ id: TICKET_ID, status: 'OPEN' })
+    expect(updateArg.data).toEqual({ status: 'IN_PROGRESS', claimedById: 'u-1', claimedByName: 'Nhân viên B' })
+    // System message tạo riêng sau khi claim ghi thành công
+    expect(mockPrisma.supportMessage.create).toHaveBeenCalledWith({
+      data: { ticketId: TICKET_ID, sender: 'SYSTEM', senderName: 'Nhân viên B', content: expect.stringContaining('Nhân viên B') },
+    })
     // Sau claim, service đọc lại ticket → findUnique gọi lần 2
     expect(mockPrisma.supportTicket.findUnique).toHaveBeenCalledTimes(2)
+  })
+
+  it('409 - thua race claim: updateMany count 0 và staff khác đã chốt', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ fullName: 'Nhân viên B' })
+    mockPrisma.supportTicket.updateMany.mockResolvedValue({ count: 0 })
+    // Lần đọc lại: staff khác đã claim
+    mockPrisma.supportTicket.findUnique
+      .mockResolvedValueOnce(makeTicket()) // lần đầu claimTicket đọc
+      .mockResolvedValueOnce(makeTicket({ status: 'IN_PROGRESS', claimedById: 'staff-2', claimedByName: 'Nhân viên 2' })) // đọc lại sau race
+    const res = await post(`/api/admin/support-tickets/${TICKET_ID}/claim`, {}, STAFF)
+
+    expect(res.status).toBe(409)
+    expect(res.body.message).toContain('Nhân viên 2')
+    expect(mockPrisma.supportMessage.create).not.toHaveBeenCalled()
   })
 
   it('409 - staff khác đã nhận phiên', async () => {
@@ -257,7 +321,7 @@ describe('POST /api/admin/support-tickets/:id/claim', () => {
     )
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/claim`, {}, STAFF)
     expect(res.status).toBe(409)
-    expect(mockPrisma.supportTicket.update).not.toHaveBeenCalled()
+    expect(mockPrisma.supportTicket.updateMany).not.toHaveBeenCalled()
   })
 
   it('200 idempotent - nhận lại phiên của chính mình không update lần 2', async () => {
@@ -266,7 +330,7 @@ describe('POST /api/admin/support-tickets/:id/claim', () => {
     )
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/claim`, {}, STAFF)
     expect(res.status).toBe(200)
-    expect(mockPrisma.supportTicket.update).not.toHaveBeenCalled()
+    expect(mockPrisma.supportTicket.updateMany).not.toHaveBeenCalled()
   })
 
   it('409 - phiên đã đóng', async () => {
@@ -284,8 +348,8 @@ describe('POST /api/admin/support-tickets/:id/messages — staff trả lời', (
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/messages`, { content: 'Dạ em hỗ trợ ngay' }, STAFF)
 
     expect(res.status).toBe(200)
-    // Lần 1: update claim; lần 2: không update nữa — nhưng có supportMessage.create STAFF
-    expect(mockPrisma.supportTicket.update).toHaveBeenCalledTimes(1)
+    // Lượt claim ghi bằng updateMany (guard status OPEN); system message tạo kèm
+    expect(mockPrisma.supportTicket.updateMany).toHaveBeenCalledTimes(1)
     expect(mockPrisma.supportMessage.create).toHaveBeenCalledWith({
       data: { ticketId: TICKET_ID, sender: 'STAFF', senderName: 'Nhân viên B', content: 'Dạ em hỗ trợ ngay' },
     })
@@ -299,13 +363,27 @@ describe('POST /api/admin/support-tickets/:id/messages — staff trả lời', (
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/messages`, { content: 'Dạ' }, STAFF)
 
     expect(res.status).toBe(200)
-    expect(mockPrisma.supportTicket.update).not.toHaveBeenCalled()
+    expect(mockPrisma.supportTicket.updateMany).not.toHaveBeenCalled()
   })
 
   it('409 - phiên đã đóng', async () => {
     mockPrisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ status: 'CLOSED', closedAt: new Date() }))
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/messages`, { content: 'Dạ' }, STAFF)
     expect(res.status).toBe(409)
+  })
+
+  it('200 - staff khác được nhắn vào phiên IN_PROGRESS (v1: hỗ trợ chung một queue)', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ fullName: 'Nhân viên 2' })
+    mockPrisma.supportTicket.findUnique.mockResolvedValue(
+      makeTicket({ status: 'IN_PROGRESS', claimedById: 'u-1', claimedByName: 'Nhân viên 1' }),
+    )
+    const res = await post(`/api/admin/support-tickets/${TICKET_ID}/messages`, { content: 'Em hỗ trợ thêm nhé' }, STAFF2)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.supportTicket.updateMany).not.toHaveBeenCalled() // không claim lại phiên người khác
+    expect(mockPrisma.supportMessage.create).toHaveBeenCalledWith({
+      data: { ticketId: TICKET_ID, sender: 'STAFF', senderName: 'Nhân viên 2', content: 'Em hỗ trợ thêm nhé' },
+    })
   })
 })
 
@@ -317,16 +395,20 @@ describe('POST /api/admin/support-tickets/:id/close', () => {
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/close`, {}, STAFF)
 
     expect(res.status).toBe(200)
-    const updateArg = mockPrisma.supportTicket.update.mock.calls[0][0]
-    expect(updateArg.data).toMatchObject({ status: 'CLOSED' })
+    // Guard "not CLOSED" trong WHERE: lượt close phải thắng race với claim
+    const updateArg = mockPrisma.supportTicket.updateMany.mock.calls[0][0]
+    expect(updateArg.where).toEqual({ id: TICKET_ID, status: { not: 'CLOSED' } })
+    expect(updateArg.data.status).toBe('CLOSED')
     expect(updateArg.data.closedAt).toBeInstanceOf(Date)
-    expect(updateArg.data.messages.create).toMatchObject({ sender: 'SYSTEM', content: expect.stringContaining('kết thúc') })
+    expect(mockPrisma.supportMessage.create).toHaveBeenCalledWith({
+      data: { ticketId: TICKET_ID, sender: 'SYSTEM', senderName: 'Nhân viên B', content: expect.stringContaining('kết thúc') },
+    })
   })
 
   it('200 idempotent - đóng phiên đã đóng không tạo message lần 2', async () => {
     mockPrisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ status: 'CLOSED', closedAt: new Date() }))
     const res = await post(`/api/admin/support-tickets/${TICKET_ID}/close`, {}, STAFF)
     expect(res.status).toBe(200)
-    expect(mockPrisma.supportTicket.update).not.toHaveBeenCalled()
+    expect(mockPrisma.supportTicket.updateMany).not.toHaveBeenCalled()
   })
 })

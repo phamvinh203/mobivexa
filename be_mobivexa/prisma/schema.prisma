@@ -808,6 +808,9 @@ model SupportTicket {
   // này để tiếp tục phiên sau khi reload (FE lưu localStorage, gửi qua X-Ticket-Code).
   accessCode   String?
   status       SupportTicketStatus @default(OPEN)
+  // Không khai relation tới User (chỉ so sánh id trong code): chủ ý giữ đơn giản,
+  // xoá staff thì snapshot claimedByName vẫn còn để list đọc được. Relation đầy đủ
+  // chỉ cần khi dự án thêm tính năng "đếm số phiên staff đang phụ trách".
   claimedById   String? // staff đã nhận phiên
   claimedByName String? // snapshot tên staff lúc nhận — list không phải join user
   closedAt     DateTime?
