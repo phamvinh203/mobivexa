@@ -23,6 +23,7 @@ import { couponRoutes, couponAdminRoutes } from './coupon.route'
 import { blogRoutes, blogAdminRoutes } from './blog.route'
 import { chatRoutes } from './chat.route'
 import { dashboardRoutes } from './dashboard.route'
+import { supportRoutes, supportAdminRoutes } from './support.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -43,6 +44,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}`, paymentRoutes)
   app.use(`${v}/blog`, blogRoutes)
   app.use(`${v}/chat`, chatRoutes)
+  app.use(`${v}/support-tickets`, supportRoutes)
 
   // Review (user)
   app.use(`${v}/users/me/reviews`,                reviewUserRoutes)
@@ -63,4 +65,5 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/admin/coupons`, couponAdminRoutes)
   app.use(`${v}/admin/blog`, blogAdminRoutes)
   app.use(`${v}/admin/dashboard`, dashboardRoutes)
+  app.use(`${v}/admin/support-tickets`, supportAdminRoutes)
 }
