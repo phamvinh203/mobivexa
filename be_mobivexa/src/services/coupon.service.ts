@@ -245,12 +245,18 @@ async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<Car
   // `in: []` là một lượt truy vấn chắc chắn không trả về gì.
   if (resolved.length === 0) return { subtotal: 0, unavailable: false }
 
-  // Lấy kèm isActive: createOrder ném 400 cho biến thể đã ngừng bán, nên preview
-  // phải THẤY được điều đó mới nói không y hệt. Thiếu cột này thì hàng ngừng bán
-  // được tính nguyên giá và preview hứa một khoản giảm không đặt hàng nổi.
+  // Lấy kèm isActive (cả cấp product lẫn cấp variant) và product.name: createOrder
+  // ném 400 cho hàng ngừng bán lẫn hàng chưa có giá, nên preview phải THẤY được
+  // điều đó mới nói không y hệt. Thiếu các cột này thì hàng hỏng được tính nguyên
+  // giá (hoặc tính 0) và preview hứa một khoản giảm không đặt hàng nổi.
   const variants = await prisma.productVariant.findMany({
     where:  { id: { in: resolved.map((i) => i.variantId) } },
-    select: { id: true, salePrice: true, isActive: true },
+    select: {
+      id: true,
+      salePrice: true,
+      isActive: true,
+      product: { select: { isActive: true, name: true } },
+    },
   })
   const byId = new Map(variants.map((v) => [v.id, v]))
 
@@ -260,10 +266,22 @@ async function subtotalOf(userId: string, items?: OrderItemInput[]): Promise<Car
   for (const item of resolved) {
     const variant = byId.get(item.variantId)
 
-    // Đúng hai ca createOrder ném 400: biến thể không còn tồn tại, và biến thể đã
-    // ngừng bán. Ghi cờ rồi bỏ qua — KHÔNG cộng nguyên giá (nói dối về giỏ), cũng
-    // KHÔNG lặng lẽ tính 0 như `?? 0` cũ (giấu luôn việc có món hỏng).
-    if (!variant || !variant.isActive) {
+    // salePrice <= 0 là "chưa có giá bán" — cùng một thông điệp 400 với createOrder:
+    // giỏ thế này không bao giờ đặt được, để preview tính tiếp là hứa suông số giảm.
+    if (
+      variant &&
+      variant.isActive &&
+      variant.product.isActive &&
+      Number(variant.salePrice) <= 0
+    ) {
+      throw new AppError(400, `Sản phẩm chưa có giá bán: ${variant.product.name}`)
+    }
+
+    // Đúng các ca createOrder chặn 400 mà preview chỉ cần TỪ CHỐI cả giỏ: biến thể
+    // không còn tồn tại, biến thể hay product đã ngừng bán. Ghi cờ rồi bỏ qua —
+    // KHÔNG cộng nguyên giá (nói dối về giỏ), cũng KHÔNG lặng lẽ tính 0 như `?? 0`
+    // cũ (giấu luôn việc có món hỏng).
+    if (!variant || !variant.isActive || !variant.product.isActive) {
       unavailable = true
       continue
     }
