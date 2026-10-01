@@ -1,6 +1,7 @@
 import prisma from '../config/db'
 import { Prisma, UserRole } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
+import { isPrismaError } from '../helpers/prisma_error'
 import { USER_PUBLIC_SELECT } from './user.service'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type { AdminUserListQuery } from '../types/admin.type'
@@ -79,26 +80,65 @@ export async function updateUserRole(actorId: string, targetId: string, role: st
   assertNotSelf(actorId, targetId, 'đổi role')
   // role đã được validate ở middleware — chỉ cần kiểm tra user tồn tại
   await assertUserExists(targetId)
-  return prisma.user.update({
-    where: { id: targetId },
-    data: { role: role as UserRole },
-    select: ADMIN_USER_DETAIL_SELECT,
-  })
+  // Đổi role phải revoke hết refresh token: access token cũ vẫn mang quyền cũ
+  // đến khi hết hạn, không revoke thì user bị hạ role vẫn refresh tiếp quyền cũ.
+  const [, updated] = await prisma.$transaction([
+    prisma.refreshToken.updateMany({
+      where: { userId: targetId, isRevoked: false },
+      data: { isRevoked: true },
+    }),
+    prisma.user.update({
+      where: { id: targetId },
+      data: { role: role as UserRole },
+      select: ADMIN_USER_DETAIL_SELECT,
+    }),
+  ])
+  return updated
 }
 
 export async function toggleUserStatus(actorId: string, targetId: string) {
   assertNotSelf(actorId, targetId, 'khóa tài khoản')
   const user = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true, isActive: true } })
   if (!user) throw new AppError(404, 'Người dùng không tồn tại')
-  return prisma.user.update({
-    where: { id: targetId },
-    data: { isActive: !user.isActive },
-    select: ADMIN_USER_DETAIL_SELECT,
-  })
+
+  // Mở khóa — không cần đụng đến token
+  if (user.isActive === false) {
+    return prisma.user.update({
+      where: { id: targetId },
+      data: { isActive: true },
+      select: ADMIN_USER_DETAIL_SELECT,
+    })
+  }
+
+  // Khóa tài khoản phải đá hết phiên: nếu chỉ đổi cờ, refresh token còn hiệu lực
+  // vẫn cấp access token mới (dù refresh kiểm tra isActive, chặn ở nguồn vẫn chắc hơn).
+  const [, updated] = await prisma.$transaction([
+    prisma.refreshToken.updateMany({
+      where: { userId: targetId, isRevoked: false },
+      data: { isRevoked: true },
+    }),
+    prisma.user.update({
+      where: { id: targetId },
+      data: { isActive: false },
+      select: ADMIN_USER_DETAIL_SELECT,
+    }),
+  ])
+  return updated
 }
 
 export async function deleteUser(actorId: string, targetId: string) {
   assertNotSelf(actorId, targetId, 'xóa tài khoản')
   await assertUserExists(targetId)
-  await prisma.user.delete({ where: { id: targetId } })
+  try {
+    await prisma.user.delete({ where: { id: targetId } })
+  } catch (err) {
+    // FK restrict (đơn hàng, review...) chặn xóa — trả 409 nghiệp vụ thay vì 500
+    if (isPrismaError(err, 'P2003')) {
+      throw new AppError(
+        409,
+        'Không thể xóa người dùng đã có đơn hàng hoặc dữ liệu liên quan. Có thể khóa tài khoản thay vì xóa.'
+      )
+    }
+    throw err
+  }
 }

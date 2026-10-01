@@ -10,11 +10,13 @@ export function validateUpdateProfile(req: Request, res: Response, next: NextFun
     sendError(res, 400, 'Họ tên phải có ít nhất 2 ký tự')
     return
   }
-  if (phone !== undefined && !PHONE_RE.test(phone)) {
+  // phone: null là hợp lệ — service chủ đích hỗ trợ xóa số điện thoại
+  if (phone !== undefined && phone !== null && !PHONE_RE.test(phone)) {
     sendError(res, 400, 'Số điện thoại không hợp lệ')
     return
   }
-  if (!fullName && !phone) {
+  // Chỉ chặn khi cả hai trường đều không được gửi; { phone: null } là một update hợp lệ
+  if (fullName === undefined && phone === undefined) {
     sendError(res, 400, 'Vui lòng cung cấp ít nhất một trường cần cập nhật')
     return
   }
