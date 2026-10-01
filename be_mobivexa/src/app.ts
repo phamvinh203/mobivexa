@@ -20,6 +20,10 @@ export function createApp() {
       credentials: true,
     }),
   )
+  // Body bài viết blog (contentHtml) có thể vượt xa 100KB mặc định — giới hạn riêng 2MB
+  // CHỈ cho /api/admin/blog, đặt TRƯỚC express.json() toàn cục (body-parser bỏ qua
+  // request đã đọc body — api-contract.md 0.1, ADR-blog-005).
+  app.use('/api/admin/blog', express.json({ limit: '2mb' }))
   app.use(express.json())
 
   mountRoutes(app)

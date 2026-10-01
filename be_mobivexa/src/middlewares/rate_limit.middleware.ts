@@ -51,3 +51,10 @@ export const couponPreviewLimiter = rateLimit(
 export const syncLimiter = rateLimit(
   makeLimiter(10, 60_000, 'Đồng bộ quá thường xuyên, vui lòng thử lại sau')
 )
+
+// Tìm kiếm bài viết blog là endpoint public không cần đăng nhập — không chặn thì
+// một script quét từ điển vừa dò được từ khoá vừa kéo DB xuống (NFR-blog-007,
+// E-blog-014). Ngưỡng tham khảo couponPreviewLimiter — cùng lớp "tra cứu công khai".
+export const blogSearchLimiter = rateLimit(
+  makeLimiter(20, 60_000, 'Bạn tìm kiếm quá nhanh, vui lòng thử lại sau ít phút')
+)

@@ -20,6 +20,7 @@ import {
 import { bannerRoutes, bannerAdminRoutes } from './banner.route'
 import { favoriteRoutes } from './favorite.route'
 import { couponRoutes, couponAdminRoutes } from './coupon.route'
+import { blogRoutes, blogAdminRoutes } from './blog.route'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -38,6 +39,7 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/coupons`, couponRoutes)
   app.use(`${v}/orders`, orderRoutes)
   app.use(`${v}`, paymentRoutes)
+  app.use(`${v}/blog`, blogRoutes)
 
   // Review (user)
   app.use(`${v}/users/me/reviews`,                reviewUserRoutes)
@@ -56,4 +58,5 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/admin/reviews`, reviewAdminRoutes)
   app.use(`${v}/admin/banners`, bannerAdminRoutes)
   app.use(`${v}/admin/coupons`, couponAdminRoutes)
+  app.use(`${v}/admin/blog`, blogAdminRoutes)
 }

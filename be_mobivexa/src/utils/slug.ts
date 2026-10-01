@@ -1,3 +1,5 @@
+import { AppError } from '../helpers/app_error'
+
 // Chuyển text (kể cả tiếng Việt có dấu) thành slug an toàn cho URL
 export function slugify(text: string): string {
   return text
@@ -37,4 +39,37 @@ export function slugTaken(
     const found = await lookup(slug)
     return found !== null && found.id !== excludeId
   }
+}
+
+// Slug rỗng/không gửi → tự sinh (thêm hậu tố -1, -2… nếu đụng, như generateUniqueSlug).
+// Slug có gửi tường minh → slugify rồi kiểm tồn tại, đụng thì báo lỗi ngay (409) thay vì
+// tự đổi hậu tố — admin đã chọn một slug cụ thể, tự động đổi sang giá trị khác sẽ gây
+// bất ngờ. Dùng cho blog (post/category/tag) — khác hành vi generateUniqueSlug thuần của
+// product/category sản phẩm (luôn tự thêm hậu tố bất kể có gửi slug hay không).
+export async function resolveUniqueSlug(opts: {
+  base: string
+  provided: string | undefined
+  excludeId?: string
+  findBySlug: (slug: string) => Promise<{ id: string } | null>
+  conflictMessage: string
+  invalidMessage?: string
+  // RVW-014: tiêu đề/tên không có ký tự Latin nào (CJK thuần, emoji, "???") khiến
+  // slugify(base) ra chuỗi rỗng. Không có fallback thì bản ghi đầu tiên lưu slug ""
+  // và bản ghi thứ hai đụng nó sẽ được cấp "-1" — vẫn qua mọi kiểm tra "thiếu slug"
+  // (chuỗi "-1" không rỗng) nên có thể xuất bản với URL /tin-tuc/-1. Domain gọi hàm
+  // này PHẢI truyền fallbackBase phù hợp (vd 'bai-viet', 'danh-muc', 'tag').
+  fallbackBase: string
+}): Promise<string> {
+  const { base, provided, excludeId, findBySlug, conflictMessage, invalidMessage = 'Slug không hợp lệ', fallbackBase } = opts
+  const taken = slugTaken(findBySlug, excludeId)
+
+  if (!provided || !provided.trim()) {
+    const root = slugify(base) || fallbackBase
+    return generateUniqueSlug(root, taken)
+  }
+
+  const slug = slugify(provided)
+  if (!slug) throw new AppError(400, invalidMessage)
+  if (await taken(slug)) throw new AppError(409, conflictMessage)
+  return slug
 }
