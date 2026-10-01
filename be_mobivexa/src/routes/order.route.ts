@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
 import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
-import { validateCreateOrder, validateUpdateStatus, validateUpdatePayment } from '../validators/order.validator'
+import { validateCreateOrder, validateCancelOrder, validateUpdateStatus, validateUpdatePayment } from '../validators/order.validator'
 import * as controller from '../controllers/order.controller'
 
 // ─── Customer routes: /api/orders ─────────────────────────────────────────────
@@ -11,7 +11,7 @@ customerRouter.use(authenticate)
 customerRouter.post('/',           validateCreateOrder, controller.create)
 customerRouter.get('/',                                 controller.listMine)
 customerRouter.get('/:id',                              controller.getMine)
-customerRouter.patch('/:id/cancel',                     controller.cancel)
+customerRouter.patch('/:id/cancel', validateCancelOrder,  controller.cancel)
 
 // ─── Admin routes: /api/admin/orders ──────────────────────────────────────────
 const adminRouter: Router = Router()

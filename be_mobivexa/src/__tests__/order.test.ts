@@ -36,6 +36,12 @@ const conflictError = () =>
     clientVersion: 'test',
   })
 
+const uniqueError = () =>
+  new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+  })
+
 const BASE_VARIANT = {
   id:        'var-1',
   sku:       'SKU-001',
@@ -45,7 +51,7 @@ const BASE_VARIANT = {
   color:     null,
   storage:   null,
   ram:       null,
-  product:   { name: 'iPhone 15' },
+  product:   { name: 'iPhone 15', isActive: true },
 }
 
 const BASE_ORDER = {
@@ -149,6 +155,89 @@ describe('POST /api/orders', () => {
     expect(res.status).toBe(400)
   })
 
+  // salePrice = 0 là quy ước "chưa có giá bán". Để lọt thì subtotal = 0 → total = 0
+  // → nhánh `settled` đánh dấu đơn PAID ngay lúc sinh — đặt được hàng mà không thu
+  // được đồng nào. Chặn ở biên mua hàng, không fallback về originalPrice.
+  it('400 - variant chưa có giá bán (salePrice = 0), đơn 0đ không được tự PAID', async () => {
+    mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ ...BASE_VARIANT, salePrice: 0 }])
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/chưa có giá bán/)
+    expect(res.body.message).toContain('iPhone 15')
+    expect(mockPrisma.order.create).not.toHaveBeenCalled()
+  })
+
+  // Admin ẩn product thì mọi variant của nó phải chặn ở biên mua hàng — trước khi
+  // có guard này, chỉ variant.isActive được soi nên product ẩn vẫn đặt được.
+  it('400 - product bị ẩn (isActive = false) thì không đặt được', async () => {
+    mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
+    mockPrisma.productVariant.findMany.mockResolvedValue([
+      { ...BASE_VARIANT, product: { name: 'iPhone 15', isActive: false } },
+    ])
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/ngừng bán/)
+    expect(mockPrisma.order.create).not.toHaveBeenCalled()
+  })
+
+  // Đuôi orderCode là random — trùng là hiếm nhưng có thật. P2002 phải thành một
+  // lượt regenerate thay vì 500.
+  it('201 - orderCode trùng (P2002) thì regenerate, không 500', async () => {
+    mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
+    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.order.create
+      .mockRejectedValueOnce(uniqueError())
+      .mockResolvedValue(BASE_ORDER)
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(201)
+    expect(mockPrisma.order.create).toHaveBeenCalledTimes(2)
+  })
+
+  // Chỉ xoá đúng item đã vào đơn: các món còn lại trong giỏ phải nguyên vẹn.
+  it('201 - đặt từ giỏ chỉ xoá đúng các item đã vào đơn', async () => {
+    mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
+    mockPrisma.cart.findUnique.mockResolvedValue({
+      id: 'cart-1',
+      items: [
+        { variantId: 'var-1', quantity: 1 },
+        { variantId: 'var-2', quantity: 1 },
+      ],
+    })
+    mockPrisma.productVariant.findMany.mockResolvedValue([
+      BASE_VARIANT,
+      { ...BASE_VARIANT, id: 'var-2', sku: 'SKU-002' },
+    ])
+    mockPrisma.order.create.mockResolvedValue(BASE_ORDER)
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1' })
+
+    expect(res.status).toBe(201)
+    expect(mockPrisma.cartItem.deleteMany).toHaveBeenCalledWith({
+      where: { cart: { userId: 'user-1' }, variantId: { in: ['var-1', 'var-2'] } },
+    })
+  })
+
   it('401 - không có token', async () => {
     const res = await request(app).post('/api/orders').send({ addressId: 'addr-1' })
     expect(res.status).toBe(401)
@@ -168,6 +257,18 @@ describe('GET /api/orders', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.orders).toHaveLength(1)
+  })
+
+  // ?status=GARBAGE rơi thẳng vào where làm Prisma nổ lỗi enum — phải bị whitelist
+  // chặn lại thành 400 kèm danh sách giá trị hợp lệ.
+  it('400 - status không hợp lệ', async () => {
+    const res = await request(app)
+      .get('/api/orders?status=GARBAGE')
+      .set('Authorization', USER_TOKEN)
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/Trạng thái đơn hàng không hợp lệ/)
+    expect(res.body.message).toContain('PENDING')
   })
 
   it('401 - không có token', async () => {
@@ -248,6 +349,40 @@ describe('PATCH /api/orders/:id/cancel', () => {
 
     expect(res.status).toBe(409)
     expect(mockPrisma.productVariant.updateMany).not.toHaveBeenCalled()
+  })
+
+  // Express 5 không đảm bảo req.body tồn tại khi request không mang JSON —
+  // đọc req.body.reason không an toàn là TypeError thành 500.
+  it('200 - huỷ không gửi body vẫn chạy', async () => {
+    mockPrisma.order.findFirst.mockResolvedValue(BASE_ORDER)
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, status: 'CANCELLED' })
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+
+    expect(res.status).toBe(200)
+  })
+
+  it('400 - reason không phải chuỗi', async () => {
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({ reason: 123 })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.order.findFirst).not.toHaveBeenCalled()
+  })
+
+  it('400 - reason dài quá 500 ký tự', async () => {
+    const res = await request(app)
+      .patch('/api/orders/order-1/cancel')
+      .set('Authorization', USER_TOKEN)
+      .send({ reason: 'x'.repeat(501) })
+
+    expect(res.status).toBe(400)
+    expect(mockPrisma.order.findFirst).not.toHaveBeenCalled()
   })
 })
 
@@ -334,6 +469,34 @@ describe('GET /api/admin/orders', () => {
       .set('Authorization', ADMIN_TOKEN)
 
     expect(res.status).toBe(200)
+  })
+
+  // Ba tham số enum của list admin đều phải qua whitelist trước khi vào where.
+  it('400 - status không hợp lệ', async () => {
+    const res = await request(app)
+      .get('/api/admin/orders?status=GARBAGE')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/Trạng thái đơn hàng không hợp lệ/)
+  })
+
+  it('400 - paymentMethod không hợp lệ', async () => {
+    const res = await request(app)
+      .get('/api/admin/orders?paymentMethod=CRYPTO')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/Phương thức thanh toán không hợp lệ/)
+  })
+
+  it('400 - paymentStatus không hợp lệ', async () => {
+    const res = await request(app)
+      .get('/api/admin/orders?paymentStatus=MAYBE')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(400)
+    expect(res.body.message).toMatch(/Trạng thái thanh toán không hợp lệ/)
   })
 
   it('401 - không có token', async () => {
