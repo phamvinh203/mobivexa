@@ -1,0 +1,39 @@
+name: CI
+
+# Chỉ soát hồi quy tự động: mỗi push/PR vào main/dev đều build + chạy test suite.
+# Test dùng Prisma mock (không cần DB thật) — env test được set sẵn trong vitest.config.ts,
+# nên job không cần bất kỳ secret nào.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  backend:
+    name: Backend — build & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: be_mobivexa
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: be_mobivexa/package-lock.json
+
+      - name: Cài dependencies
+        run: npm ci
+
+      - name: Sinh Prisma Client
+        run: npx prisma generate
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Chạy test suite
+        run: npm test
