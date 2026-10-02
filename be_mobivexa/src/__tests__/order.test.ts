@@ -926,9 +926,14 @@ describe('Email thông báo đơn hàng', () => {
     expect(res.status).toBe(200)
     expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledTimes(1)
     expect(mockOrderEmail.sendOrderPaidEmail).toHaveBeenCalledWith('order-1')
+    // chuyển thực sự sang PAID → ghi mốc thanh toán như webhook / gán tay
+    expect(mockPrisma.order.update.mock.calls[0][0].data).toEqual({
+      paymentStatus: 'PAID',
+      paidAt: expect.any(Date),
+    })
   })
 
-  it('admin PATCH payment khi đơn đã PAID sẵn → không gửi lại mail', async () => {
+  it('admin PATCH payment khi đơn đã PAID sẵn → không gửi lại mail, không đè paidAt', async () => {
     mockPrisma.order.findUnique.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
     mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
 
@@ -939,6 +944,34 @@ describe('Email thông báo đơn hàng', () => {
 
     expect(res.status).toBe(200)
     expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
+    expect(mockPrisma.order.update.mock.calls[0][0].data).toEqual({ paymentStatus: 'PAID' })
+  })
+
+  it('admin PATCH payment PAID→UNPAID (sửa nhầm) → xoá paidAt, không gửi mail', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'UNPAID', paidAt: null })
+
+    const res = await request(app)
+      .patch('/api/admin/orders/order-1/payment')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ paymentStatus: 'UNPAID' })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.order.update.mock.calls[0][0].data).toEqual({ paymentStatus: 'UNPAID', paidAt: null })
+    expect(mockOrderEmail.sendOrderPaidEmail).not.toHaveBeenCalled()
+  })
+
+  it('admin PATCH payment PAID→REFUNDED → giữ nguyên paidAt', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'PAID' })
+    mockPrisma.order.update.mockResolvedValue({ ...BASE_ORDER, paymentStatus: 'REFUNDED' })
+
+    const res = await request(app)
+      .patch('/api/admin/orders/order-1/payment')
+      .set('Authorization', ADMIN_TOKEN)
+      .send({ paymentStatus: 'REFUNDED' })
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.order.update.mock.calls[0][0].data).toEqual({ paymentStatus: 'REFUNDED' })
   })
 
   it('admin PATCH payment sang REFUNDED → không gửi mail đã thanh toán', async () => {

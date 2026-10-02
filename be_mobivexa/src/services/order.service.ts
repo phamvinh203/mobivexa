@@ -474,17 +474,30 @@ export async function updatePaymentStatus(orderId: string, body: UpdatePaymentSt
   const existing = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true, paymentStatus: true } })
   if (!existing) throw new AppError(404, 'Đơn hàng không tồn tại')
 
+  // Chuyển THỰC SỰ sang PAID (trước đó chưa PAID). Chỉ lúc này mới ghi paidAt — như
+  // webhook SePay và gán tay giao dịch — còn PATCH PAID lặp lại không được đè mốc
+  // thanh toán gốc.
+  const becamePaid = body.paymentStatus === PaymentStatus.PAID && existing.paymentStatus !== PaymentStatus.PAID
+  // Admin lật PAID → UNPAID là sửa nhầm: xoá mốc thanh toán để màn đơn không hiện
+  // "Thanh toán lúc X" cạnh badge Chưa thanh toán. REFUNDED thì giữ — tiền đã thu
+  // rồi mới hoàn nên paidAt vẫn là sự thật.
+  const revertedToUnpaid = body.paymentStatus === PaymentStatus.UNPAID && existing.paymentStatus === PaymentStatus.PAID
+
   const updated = await prisma.order.update({
     where: { id: orderId },
-    data:  { paymentStatus: body.paymentStatus },
+    data:  {
+      paymentStatus: body.paymentStatus,
+      ...(becamePaid && { paidAt: new Date() }),
+      ...(revertedToUnpaid && { paidAt: null }),
+    },
     include: ORDER_INCLUDE,
   })
 
-  // Mail "đã thanh toán" — chỉ khi chuyển thực sự sang PAID (trước đó chưa PAID);
-  // UNPAID/REFUNDED không sinh mail. Hai admin PATCH song song vẫn còn khe hở nhỏ
-  // vì đây là đường admin tần suất thấp và không có guard CAS — chấp nhận được,
-  // hàm gửi mail tự kiểm lại trạng thái PAID trước khi gửi.
-  if (body.paymentStatus === PaymentStatus.PAID && existing.paymentStatus !== PaymentStatus.PAID) {
+  // Mail "đã thanh toán" — chỉ khi chuyển thực sự sang PAID; UNPAID/REFUNDED không
+  // sinh mail. Hai admin PATCH song song vẫn còn khe hở nhỏ vì đây là đường admin
+  // tần suất thấp và không có guard CAS — chấp nhận được, hàm gửi mail tự kiểm lại
+  // trạng thái PAID trước khi gửi.
+  if (becamePaid) {
     inBackground(sendOrderPaidEmail(orderId), '[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng cập nhật):')
   }
 
