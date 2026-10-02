@@ -81,17 +81,18 @@ export async function refreshTokenService(token: string) {
     throw new AppError(401, 'Refresh token không hợp lệ hoặc đã hết hạn')
   }
 
-  const stored = await prisma.refreshToken.findUnique({ where: { token: sha256Hex(token) } })
+  // Role/isActive phải đọc lại từ DB: JWT cũ có thể đã lỗi thời (user bị khóa,
+  // bị hạ role) — copy từ JWT thì user bị khóa vẫn refresh vô hạn với quyền cũ.
+  // Lấy luôn user bằng include để 1 round-trip thay vì 2 tuần tự.
+  const stored = await prisma.refreshToken.findUnique({
+    where: { token: sha256Hex(token) },
+    include: { user: { select: { id: true, email: true, role: true, isActive: true } } },
+  })
   if (!stored || stored.isRevoked || stored.expiresAt < new Date()) {
     throw new AppError(401, 'Refresh token không hợp lệ')
   }
 
-  // Role/isActive phải đọc lại từ DB: JWT cũ có thể đã lỗi thời (user bị khóa,
-  // bị hạ role) — copy từ JWT thì user bị khóa vẫn refresh vô hạn với quyền cũ.
-  const user = await prisma.user.findUnique({
-    where: { id: stored.userId },
-    select: { id: true, email: true, role: true, isActive: true },
-  })
+  const { user } = stored
   if (!user || !user.isActive) {
     // Tài khoản không còn khả dụng — thu hồi luôn token đang cầm
     await revokeRefreshTokens({ id: stored.id })
