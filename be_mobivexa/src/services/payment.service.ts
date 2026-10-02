@@ -5,6 +5,7 @@ import { Prisma, PaymentStatus, OrderStatus, PaymentMethod, SePayTxStatus } from
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { ORDER_CODE_RE } from '../utils/order_code'
 import { inBackground } from '../utils/background'
+import { isRevenueOrder } from '../utils/revenue'
 import { sendOrderPaidEmail } from './order_email.service'
 import { dateRange } from '../utils/date_range'
 import type {
@@ -410,32 +411,37 @@ export async function syncFromSePay(opts: { limit?: number; from?: string; to?: 
 // ─── Admin: thống kê thanh toán ──────────────────────────────────────────────
 
 // Tổng hợp số liệu thanh toán cho dashboard admin:
-// - revenue: tổng tiền đã thu (PAID)
+// - revenue: tổng tiền đã thu (PAID, không tính đơn đã hủy — xem utils/revenue)
 // - pending: chưa thanh toán (count + amount)
 // - refunded: đã hoàn tiền (count + amount)
 // - awaitingBankTransfer: chờ đối soát CK (BANK_TRANSFER + UNPAID — chờ webhook SePay)
 // - unmatchedTransactions: tiền đã về nhưng chưa gán được đơn — cần admin xử lý
 export async function getPaymentStats() {
-  const [paidAgg, unpaidAgg, refundedAgg, awaitingAgg, unmatchedAgg] = await Promise.all([
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.PAID }, _sum: { total: true }, _count: true }),
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.UNPAID }, _sum: { total: true }, _count: true }),
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.REFUNDED }, _sum: { total: true }, _count: true }),
-    prisma.order.aggregate(
-      { where: { paymentStatus: PaymentStatus.UNPAID, paymentMethod: PaymentMethod.BANK_TRANSFER }, _sum: { total: true }, _count: true },
-    ),
+  // 1 groupBy thay cho 4 aggregate chỉ khác điều kiện paymentStatus/paymentMethod;
+  // các chỉ số suy ra bằng JS. Cộng bằng Decimal để tổng khớp y hệt SUM ở DB.
+  const [byStatusMethod, unmatchedAgg] = await Promise.all([
+    prisma.order.groupBy({ by: ['paymentStatus', 'paymentMethod', 'status'], _sum: { total: true }, _count: true }),
     prisma.sePayTransaction.aggregate(
       { where: { status: SePayTxStatus.UNMATCHED }, _sum: { transferAmount: true }, _count: true },
     ),
   ])
 
-  // _sum.total là Prisma.Decimal (Money) → convert sang number.
-  const toAmount = (agg: { _sum: { total: unknown } }) => Number(agg._sum.total ?? 0)
+  const sumWhere = (match: (g: (typeof byStatusMethod)[number]) => boolean) => {
+    const rows = byStatusMethod.filter(match)
+    return {
+      count:  rows.reduce((n, g) => n + g._count, 0),
+      amount: Number(rows.reduce((sum, g) => sum.plus(g._sum.total ?? 0), new Prisma.Decimal(0))),
+    }
+  }
 
   return {
-    revenue: toAmount(paidAgg),
-    pending: { count: unpaidAgg._count, amount: toAmount(unpaidAgg) },
-    refunded: { count: refundedAgg._count, amount: toAmount(refundedAgg) },
-    awaitingBankTransfer: { count: awaitingAgg._count, amount: toAmount(awaitingAgg) },
+    // Cùng định nghĩa với dashboard (utils/revenue): PAID và chưa CANCELLED
+    revenue: sumWhere(isRevenueOrder).amount,
+    pending: sumWhere((g) => g.paymentStatus === PaymentStatus.UNPAID),
+    refunded: sumWhere((g) => g.paymentStatus === PaymentStatus.REFUNDED),
+    awaitingBankTransfer: sumWhere(
+      (g) => g.paymentStatus === PaymentStatus.UNPAID && g.paymentMethod === PaymentMethod.BANK_TRANSFER,
+    ),
     unmatchedTransactions: {
       count:  unmatchedAgg._count,
       amount: Number(unmatchedAgg._sum.transferAmount ?? 0),

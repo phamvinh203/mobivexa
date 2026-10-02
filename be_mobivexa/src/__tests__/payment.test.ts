@@ -7,7 +7,7 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     update:     vi.fn(),
     updateMany: vi.fn(),
-    aggregate:  vi.fn(),
+    groupBy:    vi.fn(),
   },
   sePayTransaction: {
     findUnique: vi.fn(),
@@ -33,6 +33,7 @@ const mockOrderEmail = vi.hoisted(() => ({
 vi.mock('../services/order_email.service', () => ({ sendOrderPaidEmail: mockOrderEmail.sendOrderPaidEmail }))
 
 import { createApp } from '../app'
+import { Prisma } from '../generated/prisma/client'
 import { signAccessToken } from '../utils/token_manager'
 
 const app         = createApp()
@@ -618,17 +619,92 @@ describe('POST /api/admin/payment/sync', () => {
 // ─── GET /api/admin/payment/stats ─────────────────────────────────────────────
 
 describe('GET /api/admin/payment/stats', () => {
+  const getStats = () => request(app).get('/api/admin/payment/stats').set('Authorization', ADMIN_TOKEN)
+
   it('200 - kèm số giao dịch chưa đối soát', async () => {
-    mockPrisma.order.aggregate.mockResolvedValue({ _sum: { total: 1000000 }, _count: 2 })
+    // 1 groupBy (paymentStatus x paymentMethod) — các chỉ số suy ra bằng JS
+    mockPrisma.order.groupBy.mockResolvedValue([
+      { paymentStatus: 'PAID', paymentMethod: 'COD', status: 'DELIVERED',           _sum: { total: 600000 }, _count: 2 },
+      { paymentStatus: 'PAID', paymentMethod: 'BANK_TRANSFER', status: 'DELIVERED', _sum: { total: 400000 }, _count: 1 },
+    ])
     mockPrisma.sePayTransaction.aggregate.mockResolvedValue({ _sum: { transferAmount: 250000 }, _count: 1 })
 
-    const res = await request(app)
-      .get('/api/admin/payment/stats')
-      .set('Authorization', ADMIN_TOKEN)
+    const res = await getStats()
 
     expect(res.status).toBe(200)
     expect(res.body.revenue).toBe(1000000)
     expect(res.body.unmatchedTransactions).toEqual({ count: 1, amount: 250000 })
+  })
+
+  it('200 - tách đúng revenue / pending / refunded / awaitingBankTransfer từ 1 groupBy', async () => {
+    mockPrisma.order.groupBy.mockResolvedValue([
+      { paymentStatus: 'PAID',     paymentMethod: 'COD', status: 'DELIVERED',           _sum: { total: 600000 }, _count: 2 },
+      { paymentStatus: 'PAID',     paymentMethod: 'BANK_TRANSFER', status: 'DELIVERED', _sum: { total: 400000 }, _count: 1 },
+      { paymentStatus: 'UNPAID',   paymentMethod: 'COD', status: 'PENDING',           _sum: { total: 300000 }, _count: 3 },
+      { paymentStatus: 'UNPAID',   paymentMethod: 'BANK_TRANSFER', status: 'PENDING', _sum: { total: 200000 }, _count: 2 },
+      { paymentStatus: 'REFUNDED', paymentMethod: 'BANK_TRANSFER', status: 'CANCELLED', _sum: { total: 100000 }, _count: 1 },
+    ])
+    mockPrisma.sePayTransaction.aggregate.mockResolvedValue({ _sum: { transferAmount: null }, _count: 0 })
+
+    const res = await getStats()
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      revenue: 1000000,
+      pending: { count: 5, amount: 500000 },
+      refunded: { count: 1, amount: 100000 },
+      awaitingBankTransfer: { count: 2, amount: 200000 },
+      unmatchedTransactions: { count: 0, amount: 0 },
+    })
+    expect(mockPrisma.order.groupBy).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.order.groupBy).toHaveBeenCalledWith({
+      by: ['paymentStatus', 'paymentMethod', 'status'], _sum: { total: true }, _count: true,
+    })
+  })
+
+  it('200 - doanh thu không tính đơn PAID đã bị CANCELLED (cùng định nghĩa với dashboard)', async () => {
+    mockPrisma.order.groupBy.mockResolvedValue([
+      { paymentStatus: 'PAID', paymentMethod: 'COD',           status: 'DELIVERED', _sum: { total: 600000 }, _count: 2 },
+      { paymentStatus: 'PAID', paymentMethod: 'BANK_TRANSFER', status: 'CANCELLED', _sum: { total: 400000 }, _count: 1 },
+    ])
+    mockPrisma.sePayTransaction.aggregate.mockResolvedValue({ _sum: { transferAmount: null }, _count: 0 })
+
+    const res = await getStats()
+
+    expect(res.status).toBe(200)
+    expect(res.body.revenue).toBe(600000)
+  })
+
+  it('200 - không có đơn nào thì mọi chỉ số về 0', async () => {
+    mockPrisma.order.groupBy.mockResolvedValue([])
+    mockPrisma.sePayTransaction.aggregate.mockResolvedValue({ _sum: { transferAmount: null }, _count: 0 })
+
+    const res = await getStats()
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      revenue: 0,
+      pending: { count: 0, amount: 0 },
+      refunded: { count: 0, amount: 0 },
+      awaitingBankTransfer: { count: 0, amount: 0 },
+      unmatchedTransactions: { count: 0, amount: 0 },
+    })
+  })
+
+  it('200 - _sum.total là Prisma.Decimal (và null) vẫn ra number, cộng không lệch dấu phẩy động', async () => {
+    mockPrisma.order.groupBy.mockResolvedValue([
+      { paymentStatus: 'PAID',   paymentMethod: 'COD', status: 'DELIVERED',           _sum: { total: new Prisma.Decimal('100.10') }, _count: 1 },
+      { paymentStatus: 'PAID',   paymentMethod: 'BANK_TRANSFER', status: 'DELIVERED', _sum: { total: new Prisma.Decimal('200.20') }, _count: 1 },
+      { paymentStatus: 'UNPAID', paymentMethod: 'COD', status: 'PENDING',           _sum: { total: null },                          _count: 0 },
+    ])
+    mockPrisma.sePayTransaction.aggregate.mockResolvedValue({ _sum: { transferAmount: new Prisma.Decimal('50.5') }, _count: 1 })
+
+    const res = await getStats()
+
+    expect(res.status).toBe(200)
+    expect(res.body.revenue).toBe(300.3) // 100.1 + 200.2 bằng số thực sẽ ra 300.29999999999995
+    expect(res.body.pending).toEqual({ count: 0, amount: 0 })
+    expect(res.body.unmatchedTransactions).toEqual({ count: 1, amount: 50.5 })
   })
 
   it('403 - customer không được xem', async () => {

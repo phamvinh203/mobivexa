@@ -1,6 +1,7 @@
 import prisma from '../config/db'
-import { Prisma, OrderStatus, PaymentStatus } from '../generated/prisma/client'
+import { OrderStatus } from '../generated/prisma/client'
 import { LOW_STOCK_THRESHOLD } from './product.service'
+import { REVENUE_ORDER_WHERE, isRevenueOrder } from '../utils/revenue'
 
 // ─── Hằng số nghiệp vụ ────────────────────────────────────────────────────────
 
@@ -11,14 +12,6 @@ const DAY_MS             = 86_400_000
 
 // VN = UTC+7 và không có DST nên offset cố định — cộng 7h là ra "đồng hồ VN"
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000
-
-// Đơn tính vào DOANH THU: đã thanh toán và chưa bị hủy. Đơn PAID rồi hủy nghĩa là
-// đã hoàn tiền / hoàn kho — nếu vẫn tính tiền thì doanh thu bị khai khống.
-// (Chốt cứng: paymentStatus = PAID và status != CANCELLED)
-const REVENUE_ORDER_WHERE: Prisma.OrderWhereInput = {
-  paymentStatus: PaymentStatus.PAID,
-  status: { not: OrderStatus.CANCELLED },
-}
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -36,11 +29,6 @@ function startOfVnDay(at: Date): Date {
 // Khóa ngày 'YYYY-MM-DD' theo giờ VN — định danh bucket trong revenue30d
 function vnDateKey(at: Date): string {
   return new Date(at.getTime() + VN_OFFSET_MS).toISOString().slice(0, 10)
-}
-
-// Đơn có được tính tiền không — dùng khi lọc trong JS sau khi fetch thô
-function isRevenueOrder(o: { paymentStatus: PaymentStatus; status: OrderStatus }): boolean {
-  return o.paymentStatus === PaymentStatus.PAID && o.status !== OrderStatus.CANCELLED
 }
 
 // ─── Types trả về (khớp hợp đồng FE) ──────────────────────────────────────────
