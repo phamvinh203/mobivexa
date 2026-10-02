@@ -1,5 +1,5 @@
 import prisma from '../config/db'
-import { Prisma, OrderStatus, PaymentMethod, PaymentStatus, type OrderItem } from '../generated/prisma/client'
+import { Prisma, OrderStatus, PaymentMethod, PaymentStatus, type Coupon, type OrderItem } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
@@ -179,25 +179,35 @@ export async function resolveItems(userId: string, itemsInput?: OrderItemInput[]
   return cart.items.map((i) => ({ variantId: i.variantId, quantity: i.quantity }))
 }
 
-export async function createOrder(userId: string, body: CreateOrderBody) {
-  const { addressId, paymentMethod = 'COD', note, items: itemsInput, couponCode } = body
+// ─── Các bước của createOrder ─────────────────────────────────────────────────
+//
+// createOrder chỉ điều phối; từng bước tách ra hàm riêng để đọc tuần tự theo thứ tự
+// chạy: dựng dòng đơn → định giá mã → (trong transaction) ghi đơn, giữ kho, ghi nhận
+// mã, dọn giỏ.
 
-  const [address, resolvedItems] = await Promise.all([
-    prisma.address.findFirst({ where: { id: addressId, userId } }),
-    resolveItems(userId, itemsInput),
-  ])
+// Một dòng của đơn: snapshot giá/tên/SKU tại lúc mua, không đọc lại từ variant về sau.
+type OrderLine = {
+  variantId: string
+  productName: string
+  sku: string
+  color: string | undefined
+  storage: string | undefined
+  ram: string | undefined
+  unitPrice: number
+  quantity: number
+  subtotal: number
+}
 
-  if (!address) throw new AppError(404, 'Địa chỉ không tồn tại')
-
-  const variantIds = resolvedItems.map((i) => i.variantId)
+// Biến từng dòng mua thành dòng đơn; ném 400 ở dòng ĐẦU TIÊN không mua được.
+async function buildOrderLines(items: OrderItemInput[]): Promise<OrderLine[]> {
   const variants = await prisma.productVariant.findMany({
-    where: { id: { in: variantIds } },
+    where: { id: { in: items.map((i) => i.variantId) } },
     include: { product: { select: { name: true, isActive: true } } },
   })
+  const variantById = new Map(variants.map((v) => [v.id, v]))
 
-  const variantMap = new Map(variants.map((v) => [v.id, v]))
-  for (const { variantId } of resolvedItems) {
-    const v = variantMap.get(variantId)
+  return items.map(({ variantId, quantity }) => {
+    const v = variantById.get(variantId)
     if (!v) throw new AppError(400, `Sản phẩm không tồn tại: ${variantId}`)
     // Ẩn ở cấp product hay cấp variant đều là ngừng bán: product ẩn thì mọi
     // variant của nó không được mua nữa, variant ẩn chỉ chặn riêng nó.
@@ -205,13 +215,10 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
     // salePrice = 0 là quy ước "chưa có giá bán" (validator admin vẫn chấp nhận):
     // để lọt thì unitPrice = 0 → total = 0 → đơn tự động PAID mà không thu được
     // đồng nào. Chặn ở biên mua hàng, KHÔNG fallback về originalPrice.
-    if (Number(v.salePrice) <= 0) throw new AppError(400, `Sản phẩm chưa có giá bán: ${v.product.name}`)
-    // Stock sẽ được kiểm tra atomic bên trong transaction — không check ở đây để tránh race condition
-  }
-
-  const orderItems = resolvedItems.map(({ variantId, quantity }) => {
-    const v = variantMap.get(variantId)!
     const unitPrice = Number(v.salePrice)
+    if (unitPrice <= 0) throw new AppError(400, `Sản phẩm chưa có giá bán: ${v.product.name}`)
+    // Stock sẽ được kiểm tra atomic bên trong transaction — không check ở đây để tránh race condition
+
     return {
       variantId,
       productName: v.product.name,
@@ -224,32 +231,100 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
       subtotal:    unitPrice * quantity,
     }
   })
+}
 
-  const subtotal    = orderItems.reduce((sum, i) => sum + i.subtotal, 0)
-  const shippingFee = 0
+// Kiểm tra mã NGOÀI transaction: hỏng ở đây thì chưa ghi gì, và thông điệp lỗi đủ
+// cụ thể để khách sửa. Trong transaction chỉ còn phần chống đua (redeemCoupon).
+async function priceCoupon(userId: string, couponCode: string | undefined, subtotal: number) {
+  if (!couponCode) return { coupon: null, discount: 0 }
 
-  // Kiểm tra mã NGOÀI transaction: hỏng ở đây thì chưa ghi gì, và thông điệp lỗi
-  // đủ cụ thể để khách sửa. Trong transaction chỉ còn phần chống đua.
-  let coupon: Awaited<ReturnType<typeof prisma.coupon.findUnique>> = null
-  let discount = 0
+  const normalized = normalizeCode(couponCode)
 
-  if (couponCode) {
-    const normalized = normalizeCode(couponCode)
+  const [found, usage] = await Promise.all([
+    prisma.coupon.findUnique({ where: { code: normalized } }),
+    prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
+  ])
 
-    const [found, usage] = await Promise.all([
-      prisma.coupon.findUnique({ where: { code: normalized } }),
-      prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
-    ])
+  // evaluateCoupon dùng CHUNG với previewCoupon, không chép lại: preview và đặt
+  // hàng phải ra cùng một con số cho cùng một giỏ, đúng lý do resolveItems được
+  // export.
+  const evaluation = evaluateCoupon(found, usage !== null, subtotal)
+  if (!evaluation.ok) throw new AppError(400, evaluation.reason)
 
-    // evaluateCoupon dùng CHUNG với previewCoupon, không chép lại: preview và đặt
-    // hàng phải ra cùng một con số cho cùng một giỏ, đúng lý do resolveItems được
-    // export.
-    const evaluation = evaluateCoupon(found, usage !== null, subtotal)
-    if (!evaluation.ok) throw new AppError(400, evaluation.reason)
+  return { coupon: found, discount: evaluation.discount }
+}
 
-    coupon = found
-    discount = evaluation.discount
+// orderCode có đuôi random 6 ký tự hex — trùng là hiếm nhưng có thật khi ngày đó
+// có nhiều đơn. P2002 ở đây là xui, không phải lỗi nghiệp vụ: regenerate và thử
+// lại, tối đa 3 lần. Hết lượt vẫn trùng (hay lỗi khác) thì thả gốc bay lên như
+// mọi lỗi hệ thống khác.
+async function insertOrder(tx: Prisma.TransactionClient, data: Omit<Prisma.OrderUncheckedCreateInput, 'orderCode'>) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await tx.order.create({ data: { ...data, orderCode: generateOrderCode() }, include: ORDER_INCLUDE })
+    } catch (err) {
+      if (!isPrismaError(err, 'P2002') || attempt >= 3) throw err
+    }
   }
+}
+
+// Atomic check-and-decrement: updateMany với WHERE stock >= quantity
+// Nếu count === 0 → stock vừa bị lấy bởi request song song → rollback
+async function reserveStock(tx: Prisma.TransactionClient, lines: OrderLine[]) {
+  await Promise.all(
+    lines.map(async ({ variantId, quantity, sku }) => {
+      const result = await tx.productVariant.updateMany({
+        where: { id: variantId, stock: { gte: quantity } },
+        data:  { stock: { decrement: quantity } },
+      })
+      if (result.count === 0) throw new AppError(400, `Sản phẩm "${sku}" không đủ hàng`)
+    })
+  )
+}
+
+// Ghi nhận việc dùng mã trong transaction: tăng usedCount + tạo CouponUsage.
+async function redeemCoupon(tx: Prisma.TransactionClient, coupon: Coupon, userId: string, orderId: string) {
+  // Guard usedCount < usageLimit là chốt chống vượt hạn: usageLimit đọc được
+  // ở bước kiểm tra, nên nếu một transaction khác vừa tăng usedCount chạm trần
+  // thì WHERE không khớp và count === 0. Đúng khuôn đang dùng cho tồn kho.
+  if (coupon.usageLimit !== null) {
+    const { count } = await tx.coupon.updateMany({
+      where: { id: coupon.id, usedCount: { lt: coupon.usageLimit } },
+      data:  { usedCount: { increment: 1 } },
+    })
+    if (count === 0) throw new AppError(409, 'Mã giảm giá vừa hết lượt sử dụng')
+  } else {
+    // updateMany chứ không update, cùng lý do như nhánh trên: mã bị admin xoá
+    // xen vào giữa lúc kiểm và lúc ghi thì update ném P2025 không ai bắt và
+    // hoá thành 500. Nhánh này không có trần để chặn nên count = 0 là chuyện
+    // bình thường, không cần đọc.
+    await tx.coupon.updateMany({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
+  }
+
+  // P2002 nghĩa là chính khách này vừa đặt một đơn khác cùng mã ở request song
+  // song. Khoá chính (couponId, userId) là thứ chặn, không phải logic ứng dụng.
+  try {
+    await tx.couponUsage.create({ data: { couponId: coupon.id, userId, orderId } })
+  } catch (err) {
+    if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Bạn đã sử dụng mã này rồi')
+    throw err
+  }
+}
+
+export async function createOrder(userId: string, body: CreateOrderBody) {
+  const { addressId, paymentMethod = 'COD', note, items: itemsInput, couponCode } = body
+
+  const [address, resolvedItems] = await Promise.all([
+    prisma.address.findFirst({ where: { id: addressId, userId } }),
+    resolveItems(userId, itemsInput),
+  ])
+
+  if (!address) throw new AppError(404, 'Địa chỉ không tồn tại')
+
+  const lines       = await buildOrderLines(resolvedItems)
+  const subtotal    = lines.reduce((sum, l) => sum + l.subtotal, 0)
+  const shippingFee = 0
+  const { coupon, discount } = await priceCoupon(userId, couponCode, subtotal)
 
   const total = subtotal + shippingFee - discount
 
@@ -268,90 +343,34 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   const settled = total === 0
 
   const created = await prisma.$transaction(async (tx) => {
-    // orderCode có đuôi random 6 ký tự hex — trùng là hiếm nhưng có thật khi ngày
-    // đó có nhiều đơn. P2002 ở đây là xui, không phải lỗi nghiệp vụ: regenerate
-    // và thử lại, tối đa 3 lần. Hết lượt vẫn trùng (hay lỗi khác) thì thả gốc bay
-    // lên như mọi lỗi hệ thống khác.
-    let order
-    for (let attempt = 1; ; attempt++) {
-      try {
-        order = await tx.order.create({
-          data: {
-            ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
-            orderCode:        generateOrderCode(),
-            userId,
-            shippingName:     address.fullName,
-            shippingPhone:    address.phone,
-            shippingProvince: address.province,
-            shippingDistrict: address.district,
-            shippingWard:     address.ward,
-            shippingDetail:   address.streetDetail,
-            subtotal,
-            shippingFee,
-            discount,
-            total,
-            paymentMethod,
-            note,
-            couponCode: coupon?.code ?? null,
-            items: { create: orderItems },
-          },
-          include: ORDER_INCLUDE,
-        })
-        break
-      } catch (err) {
-        if (!isPrismaError(err, 'P2002') || attempt >= 3) throw err
-      }
-    }
+    const order = await insertOrder(tx, {
+      ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
+      userId,
+      shippingName:     address.fullName,
+      shippingPhone:    address.phone,
+      shippingProvince: address.province,
+      shippingDistrict: address.district,
+      shippingWard:     address.ward,
+      shippingDetail:   address.streetDetail,
+      subtotal,
+      shippingFee,
+      discount,
+      total,
+      paymentMethod,
+      note,
+      couponCode: coupon?.code ?? null,
+      items: { create: lines },
+    })
 
-    // Atomic check-and-decrement: updateMany với WHERE stock >= quantity
-    // Nếu count === 0 → stock vừa bị lấy bởi request song song → rollback
-    await Promise.all(
-      resolvedItems.map(async ({ variantId, quantity }) => {
-        const result = await tx.productVariant.updateMany({
-          where: { id: variantId, stock: { gte: quantity } },
-          data:  { stock: { decrement: quantity } },
-        })
-        if (result.count === 0) {
-          const v = variantMap.get(variantId)
-          throw new AppError(400, `Sản phẩm "${v?.sku ?? variantId}" không đủ hàng`)
-        }
-      })
-    )
-
-    if (coupon) {
-      // Guard usedCount < usageLimit là chốt chống vượt hạn: usageLimit đọc được
-      // ở bước kiểm tra, nên nếu một transaction khác vừa tăng usedCount chạm trần
-      // thì WHERE không khớp và count === 0. Đúng khuôn đang dùng cho tồn kho.
-      if (coupon.usageLimit !== null) {
-        const { count } = await tx.coupon.updateMany({
-          where: { id: coupon.id, usedCount: { lt: coupon.usageLimit } },
-          data:  { usedCount: { increment: 1 } },
-        })
-        if (count === 0) throw new AppError(409, 'Mã giảm giá vừa hết lượt sử dụng')
-      } else {
-        // updateMany chứ không update, cùng lý do như nhánh trên: mã bị admin xoá
-        // xen vào giữa lúc kiểm và lúc ghi thì update ném P2025 không ai bắt và
-        // hoá thành 500. Nhánh này không có trần để chặn nên count = 0 là chuyện
-        // bình thường, không cần đọc.
-        await tx.coupon.updateMany({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
-      }
-
-      // P2002 nghĩa là chính khách này vừa đặt một đơn khác cùng mã ở request song
-      // song. Khoá chính (couponId, userId) là thứ chặn, không phải logic ứng dụng.
-      try {
-        await tx.couponUsage.create({ data: { couponId: coupon.id, userId, orderId: order.id } })
-      } catch (err) {
-        if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Bạn đã sử dụng mã này rồi')
-        throw err
-      }
-    }
+    await reserveStock(tx, lines)
+    if (coupon) await redeemCoupon(tx, coupon, userId, order.id)
 
     if (!itemsInput || itemsInput.length === 0) {
       // Chỉ xoá đúng những item đã vào đơn: đặt "mua ngay" một món từ giỏ (hoặc
       // giỏ có món hết hàng bị chặn ở bước validate) thì các món còn lại trong
       // giỏ phải nguyên vẹn, không bị cuốn theo mất hết.
       await tx.cartItem.deleteMany({
-        where: { cart: { userId }, variantId: { in: resolvedItems.map((i) => i.variantId) } },
+        where: { cart: { userId }, variantId: { in: lines.map((l) => l.variantId) } },
       })
     }
 
@@ -390,7 +409,13 @@ export function getMyOrder(userId: string, orderId: string) {
 }
 
 export async function cancelMyOrder(userId: string, orderId: string, reason?: string) {
-  const order = await findOwnedOrderOrThrow(userId, orderId)
+  // Chỉ đọc đúng phần cancelAndRestoreStock cần (CancellableOrder): bản đầy đủ kèm
+  // ORDER_INCLUDE do chính lệnh update trong transaction trả về, đọc thêm ở đây là phí.
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, userId },
+    select: { id: true, status: true, items: { select: { variantId: true, quantity: true } } },
+  })
+  if (!order) throw new AppError(404, 'Đơn hàng không tồn tại')
 
   if (!VALID_TRANSITIONS[order.status].includes(OrderStatus.CANCELLED)) {
     throw new AppError(400, 'Không thể hủy đơn hàng ở trạng thái hiện tại')
