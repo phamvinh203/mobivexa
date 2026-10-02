@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
+import { checkName } from './common.validator'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -16,10 +17,7 @@ export function validateRegister(req: Request, res: Response, next: NextFunction
   const { email, fullName, password } = req.body
 
   if (!checkEmail(res, email)) return
-  if (!fullName || String(fullName).trim().length < 2) {
-    sendError(res, 400, 'Họ tên phải có ít nhất 2 ký tự')
-    return
-  }
+  if (!checkName(res, fullName, 'Họ tên')) return
   if (!password || String(password).length < 8) {
     sendError(res, 400, 'Mật khẩu phải có ít nhất 8 ký tự')
     return

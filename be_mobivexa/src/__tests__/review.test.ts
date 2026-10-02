@@ -73,14 +73,39 @@ describe('GET /api/products/:slug/reviews/summary', () => {
     expect(res.status).toBe(200)
     expect(res.body.averageRating).toBe(4.5)
     expect(res.body.totalCount).toBe(10)
+    // Lọc thẳng theo quan hệ product.slug; có review thì không cần tra sản phẩm riêng
+    expect(mockPrisma.review.aggregate.mock.calls[0][0].where).toEqual({ product: { slug: 'iphone-15' }, status: 'APPROVED' })
+    expect(mockPrisma.reviewPhoto.count.mock.calls[0][0].where).toEqual({
+      review: { product: { slug: 'iphone-15' }, status: 'APPROVED' },
+    })
+    expect(mockPrisma.product.findUnique).not.toHaveBeenCalled()
   })
 
   it('404 - sản phẩm không tồn tại', async () => {
+    // Slug không có thật → không có review nào khớp → tra sản phẩm mới ra 404
+    mockPrisma.review.aggregate.mockResolvedValue({ _avg: { rating: null }, _count: { id: 0 } })
+    mockPrisma.review.groupBy.mockResolvedValue([])
+    mockPrisma.reviewPhoto.count.mockResolvedValue(0)
     mockPrisma.product.findUnique.mockResolvedValue(null)
 
     const res = await request(app).get('/api/products/khong-ton-tai/reviews/summary')
 
     expect(res.status).toBe(404)
+    expect(res.body.message).toBe('Sản phẩm không tồn tại')
+  })
+
+  it('200 - sản phẩm có thật nhưng chưa có đánh giá → tổng hợp rỗng, không 404', async () => {
+    mockPrisma.review.aggregate.mockResolvedValue({ _avg: { rating: null }, _count: { id: 0 } })
+    mockPrisma.review.groupBy.mockResolvedValue([])
+    mockPrisma.reviewPhoto.count.mockResolvedValue(0)
+    mockPrisma.product.findUnique.mockResolvedValue(BASE_PRODUCT)
+
+    const res = await request(app).get('/api/products/iphone-15/reviews/summary')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      averageRating: 0, totalCount: 0, breakdown: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, withPhotoCount: 0,
+    })
   })
 })
 
@@ -98,6 +123,32 @@ describe('GET /api/products/:slug/reviews', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.reviews).toHaveLength(1)
+    // Lọc theo product.slug; có kết quả thì không cần tra sản phẩm riêng
+    expect(mockPrisma.review.findMany.mock.calls[0][0].where).toMatchObject({ product: { slug: 'iphone-15' }, status: 'APPROVED' })
+    expect(mockPrisma.product.findUnique).not.toHaveBeenCalled()
+  })
+
+  it('404 - slug không tồn tại (không có review nào khớp)', async () => {
+    mockPrisma.review.findMany.mockResolvedValue([])
+    mockPrisma.review.count.mockResolvedValue(0)
+    mockPrisma.product.findUnique.mockResolvedValue(null)
+
+    const res = await request(app).get('/api/products/khong-ton-tai/reviews')
+
+    expect(res.status).toBe(404)
+    expect(res.body.message).toBe('Sản phẩm không tồn tại')
+  })
+
+  it('200 - sản phẩm có thật nhưng chưa có đánh giá (hoặc bộ lọc không khớp) → danh sách rỗng', async () => {
+    mockPrisma.review.findMany.mockResolvedValue([])
+    mockPrisma.review.count.mockResolvedValue(0)
+    mockPrisma.product.findUnique.mockResolvedValue(BASE_PRODUCT)
+
+    const res = await request(app).get('/api/products/iphone-15/reviews?rating=1&hasPhoto=true')
+
+    expect(res.status).toBe(200)
+    expect(res.body.reviews).toEqual([])
+    expect(res.body.pagination.total).toBe(0)
   })
 })
 

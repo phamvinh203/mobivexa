@@ -3,7 +3,7 @@ import { Prisma, CouponType } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
-import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
+import { evaluateCoupon, normalizeCode } from '../utils/discount'
 import { resolveItems } from './order.service'
 import type { CreateCouponBody, UpdateCouponBody, AdminCouponListQuery } from '../types/coupon.type'
 import type { OrderItemInput } from '../types/order.type'
@@ -363,12 +363,12 @@ export async function previewCoupon(userId: string, code: string, items?: OrderI
     }
   }
 
-  const check = checkCouponUsable(coupon && toCheckInput(coupon), usage !== null, subtotal)
+  const evaluation = evaluateCoupon(coupon, usage !== null, subtotal)
 
-  if (!check.ok) {
-    return { valid: false, subtotal, discount: 0, total: subtotal, reason: check.reason }
+  if (!evaluation.ok) {
+    return { valid: false, subtotal, discount: 0, total: subtotal, reason: evaluation.reason }
   }
 
-  const discount = computeDiscount(toRule(coupon!), subtotal)
+  const { discount } = evaluation
   return { valid: true, subtotal, discount, total: subtotal - discount }
 }

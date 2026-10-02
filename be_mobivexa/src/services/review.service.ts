@@ -3,7 +3,7 @@ import { Prisma, OrderStatus, ReviewStatus } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
-import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
+import { parsePagination, paginationMeta } from '../utils/pagination'
 import type {
   CreateReviewBody,
   UpdateReviewBody,
@@ -39,12 +39,6 @@ async function findOwnedReview(userId: string, reviewId: string) {
   return review
 }
 
-async function findReviewOrThrow(reviewId: string) {
-  const review = await prisma.review.findUnique({ where: { id: reviewId }, select: { id: true } })
-  if (!review) throw new AppError(404, 'Đánh giá không tồn tại')
-  return review
-}
-
 const REVIEW_PUBLIC_SELECT = {
   id: true,
   rating: true,
@@ -61,23 +55,26 @@ const REVIEW_PUBLIC_SELECT = {
 // ─── Public ───────────────────────────────────────────────────────────────────
 
 export async function getReviewSummary(slug: string) {
-  const { id: productId } = await findProductBySlug(slug)
+  // Lọc theo quan hệ product.slug (slug unique) để gộp bước tra id vào query thật —
+  // 1 round-trip thay vì 2 tuần tự. Slug không có thật chỉ lộ ra khi kết quả rỗng.
+  const where: Prisma.ReviewWhereInput = { product: { slug }, status: ReviewStatus.APPROVED }
 
   const [aggregate, breakdown, withPhoto] = await Promise.all([
     prisma.review.aggregate({
-      where: { productId, status: ReviewStatus.APPROVED },
+      where,
       _avg:   { rating: true },
       _count: { id: true },
     }),
     prisma.review.groupBy({
       by: ['rating'],
-      where: { productId, status: ReviewStatus.APPROVED },
+      where,
       _count: { id: true },
     }),
-    prisma.reviewPhoto.count({
-      where: { review: { productId, status: ReviewStatus.APPROVED } },
-    }),
+    prisma.reviewPhoto.count({ where: { review: where } }),
   ])
+
+  // Rỗng: phân biệt "slug không tồn tại" (404) với "sản phẩm chưa có review" (summary 0).
+  if (aggregate._count.id === 0) await findProductBySlug(slug)
 
   const breakdown5: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   breakdown.forEach((b) => { breakdown5[b.rating] = b._count.id })
@@ -91,10 +88,10 @@ export async function getReviewSummary(slug: string) {
 }
 
 export async function listReviews(slug: string, query: ReviewListQuery) {
-  const { id: productId } = await findProductBySlug(slug)
   const { page, limit } = parsePagination(query)
 
-  const where: Prisma.ReviewWhereInput = { productId, status: ReviewStatus.APPROVED }
+  // Lọc theo product.slug thay vì tra productId trước (xem getReviewSummary).
+  const where: Prisma.ReviewWhereInput = { product: { slug }, status: ReviewStatus.APPROVED }
 
   if (query.rating) {
     const r = Number(query.rating)
@@ -109,6 +106,9 @@ export async function listReviews(slug: string, query: ReviewListQuery) {
     prisma.review.findMany({ where, orderBy, skip: (page - 1) * limit, take: limit, select: REVIEW_PUBLIC_SELECT }),
     prisma.review.count({ where }),
   ])
+
+  // total = 0 có thể do slug sai hoặc do bộ lọc/chưa có review — chỉ slug sai mới 404.
+  if (total === 0) await findProductBySlug(slug)
 
   return { reviews, pagination: paginationMeta(page, limit, total) }
 }

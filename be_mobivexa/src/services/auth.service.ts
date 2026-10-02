@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import prisma from '../config/db'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
+import { revokeRefreshTokens } from '../helpers/refresh_token'
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/token_manager'
 import { hashPassword, verifyPassword } from '../utils/password'
 import { sendResetPasswordEmail } from '../utils/mailer'
@@ -14,14 +15,14 @@ const REFRESH_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000 // 7 ngày
 // Dùng để so khi user không tồn tại, cân bằng thời gian phản hồi chống user enumeration.
 const DUMMY_PASSWORD_HASH = '$2b$10$GUAyGGNGesBDUdElBSCjdu8jxJUjtW4ItGrVgtFApRAIgCmo5NkpW'
 
-function hashResetToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex')
+// OTP đặt lại mật khẩu và refresh token đều lưu DB dạng SHA-256 hash, không lưu bản
+// gốc. Với refresh token, DB bị dump/backup lộ cũng không dùng được token (OTP chỉ
+// 6 chữ số nên hash không cản được brute-force offline — nó an toàn nhờ hạn dùng
+// ngắn). Lưu ý: đổi cách lưu làm chết các phiên đăng nhập cũ trong DB dev (dự án
+// dùng `prisma db push`, không có migration — người dùng chỉ cần đăng nhập lại).
+function sha256Hex(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex')
 }
-
-// Refresh token lưu DB dạng SHA-256 hash — DB bị dump/backup lộ cũng không dùng
-// được token. Lưu ý: đổi cách lưu làm chết các phiên đăng nhập cũ trong DB dev
-// (dự án dùng `prisma db push`, không có migration — người dùng chỉ cần đăng nhập lại).
-const hashToken = hashResetToken
 
 function refreshExpiry(): Date {
   return new Date(Date.now() + REFRESH_TOKEN_EXPIRES_MS)
@@ -64,7 +65,7 @@ export async function loginService(body: LoginBody) {
   const refreshToken = signRefreshToken(payload)
 
   await prisma.refreshToken.create({
-    data: { token: hashToken(refreshToken), userId: user.id, expiresAt: refreshExpiry() },
+    data: { token: sha256Hex(refreshToken), userId: user.id, expiresAt: refreshExpiry() },
   })
 
   const { passwordHash: _, resetPasswordToken: __, resetPasswordExpires: ___, ...safeUser } = user
@@ -80,23 +81,21 @@ export async function refreshTokenService(token: string) {
     throw new AppError(401, 'Refresh token không hợp lệ hoặc đã hết hạn')
   }
 
-  const stored = await prisma.refreshToken.findUnique({ where: { token: hashToken(token) } })
+  // Role/isActive phải đọc lại từ DB: JWT cũ có thể đã lỗi thời (user bị khóa,
+  // bị hạ role) — copy từ JWT thì user bị khóa vẫn refresh vô hạn với quyền cũ.
+  // Lấy luôn user bằng include để 1 round-trip thay vì 2 tuần tự.
+  const stored = await prisma.refreshToken.findUnique({
+    where: { token: sha256Hex(token) },
+    include: { user: { select: { id: true, email: true, role: true, isActive: true } } },
+  })
   if (!stored || stored.isRevoked || stored.expiresAt < new Date()) {
     throw new AppError(401, 'Refresh token không hợp lệ')
   }
 
-  // Role/isActive phải đọc lại từ DB: JWT cũ có thể đã lỗi thời (user bị khóa,
-  // bị hạ role) — copy từ JWT thì user bị khóa vẫn refresh vô hạn với quyền cũ.
-  const user = await prisma.user.findUnique({
-    where: { id: stored.userId },
-    select: { id: true, email: true, role: true, isActive: true },
-  })
+  const { user } = stored
   if (!user || !user.isActive) {
     // Tài khoản không còn khả dụng — thu hồi luôn token đang cầm
-    await prisma.refreshToken.updateMany({
-      where: { id: stored.id, isRevoked: false },
-      data: { isRevoked: true },
-    })
+    await revokeRefreshTokens({ id: stored.id })
     throw new AppError(401, 'Tài khoản không khả dụng hoặc đã bị khóa')
   }
 
@@ -107,20 +106,14 @@ export async function refreshTokenService(token: string) {
   // Rotate có điều kiện: chỉ revoke nếu token VẪN chưa thu hồi. Hai request
   // refresh song song cùng dùng 1 token thì đúng 1 request thắng — request thua
   // (count === 0) là dấu hiệu token reuse → thu hồi toàn bộ phiên của user.
-  const { count } = await prisma.refreshToken.updateMany({
-    where: { id: stored.id, isRevoked: false },
-    data: { isRevoked: true },
-  })
+  const { count } = await revokeRefreshTokens({ id: stored.id })
   if (count === 0) {
-    await prisma.refreshToken.updateMany({
-      where: { userId: stored.userId, isRevoked: false },
-      data: { isRevoked: true },
-    })
+    await revokeRefreshTokens({ userId: stored.userId })
     throw new AppError(401, 'Refresh token đã bị sử dụng lại, vui lòng đăng nhập lại')
   }
 
   await prisma.refreshToken.create({
-    data: { token: hashToken(newRefreshToken), userId: stored.userId, expiresAt: refreshExpiry() },
+    data: { token: sha256Hex(newRefreshToken), userId: stored.userId, expiresAt: refreshExpiry() },
   })
 
   return { accessToken, refreshToken: newRefreshToken }
@@ -134,7 +127,7 @@ export async function forgotPasswordService(email: string) {
   // OTP 6 chữ số — crypto.randomInt (an toàn mật mã, không dùng Math.random);
   // hash trước khi lưu DB, chỉ gửi bản gốc qua email
   const otp = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0')
-  const hashedOtp = hashResetToken(otp)
+  const hashedOtp = sha256Hex(otp)
   const expires = new Date(Date.now() + RESET_TOKEN_EXPIRES_MS)
 
   await prisma.user.update({
@@ -146,7 +139,7 @@ export async function forgotPasswordService(email: string) {
 }
 
 export async function resetPasswordService(otp: string, newPassword: string) {
-  const hashedToken = hashResetToken(otp)
+  const hashedToken = sha256Hex(otp)
 
   const user = await prisma.user.findFirst({
     where: {
@@ -165,19 +158,13 @@ export async function resetPasswordService(otp: string, newPassword: string) {
       where: { id: user.id },
       data: { passwordHash, resetPasswordToken: null, resetPasswordExpires: null },
     }),
-    prisma.refreshToken.updateMany({
-      where: { userId: user.id, isRevoked: false },
-      data: { isRevoked: true },
-    }),
+    revokeRefreshTokens({ userId: user.id }),
   ])
 }
 
 export function logoutService(token: string) {
   // DB lưu hash nên tra cứu theo hash của token nhận được
-  return prisma.refreshToken.updateMany({
-    where: { token: hashToken(token), isRevoked: false },
-    data: { isRevoked: true },
-  })
+  return revokeRefreshTokens({ token: sha256Hex(token) })
 }
 
 // Xóa token đã hết hạn hoặc bị thu hồi quá 7 ngày — chạy định kỳ để giữ bảng gọn

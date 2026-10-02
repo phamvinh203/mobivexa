@@ -2,6 +2,7 @@ import prisma from '../config/db'
 import { Prisma, UserRole } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
+import { revokeRefreshTokens } from '../helpers/refresh_token'
 import { USER_PUBLIC_SELECT } from './user.service'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
 import type { AdminUserListQuery } from '../types/admin.type'
@@ -10,10 +11,8 @@ import { parseSearch } from '../utils/search'
 // Set cho O(1) lookup — không tái tính mỗi request
 const VALID_ROLES = new Set(Object.values(UserRole))
 
-// List: không cần _count (tránh 2 COUNT subquery/row trên danh sách lớn)
-const ADMIN_USER_LIST_SELECT = USER_PUBLIC_SELECT
-
-// Detail: kèm thêm count để admin xem tổng địa chỉ, token
+// List dùng thẳng USER_PUBLIC_SELECT (không _count: tránh 2 COUNT subquery/row
+// trên danh sách lớn). Detail: kèm thêm count để admin xem tổng địa chỉ, token
 const ADMIN_USER_DETAIL_SELECT = {
   ...USER_PUBLIC_SELECT,
   _count: { select: { addresses: true, refreshTokens: true } },
@@ -62,7 +61,7 @@ export async function listUsers(query: AdminUserListQuery) {
   const [users, total] = await Promise.all([
     prisma.user.findMany({
       where,
-      select: ADMIN_USER_LIST_SELECT,
+      select: USER_PUBLIC_SELECT,
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -83,10 +82,7 @@ export async function updateUserRole(actorId: string, targetId: string, role: st
   // Đổi role phải revoke hết refresh token: access token cũ vẫn mang quyền cũ
   // đến khi hết hạn, không revoke thì user bị hạ role vẫn refresh tiếp quyền cũ.
   const [, updated] = await prisma.$transaction([
-    prisma.refreshToken.updateMany({
-      where: { userId: targetId, isRevoked: false },
-      data: { isRevoked: true },
-    }),
+    revokeRefreshTokens({ userId: targetId }),
     prisma.user.update({
       where: { id: targetId },
       data: { role: role as UserRole },
@@ -113,10 +109,7 @@ export async function toggleUserStatus(actorId: string, targetId: string) {
   // Khóa tài khoản phải đá hết phiên: nếu chỉ đổi cờ, refresh token còn hiệu lực
   // vẫn cấp access token mới (dù refresh kiểm tra isActive, chặn ở nguồn vẫn chắc hơn).
   const [, updated] = await prisma.$transaction([
-    prisma.refreshToken.updateMany({
-      where: { userId: targetId, isRevoked: false },
-      data: { isRevoked: true },
-    }),
+    revokeRefreshTokens({ userId: targetId }),
     prisma.user.update({
       where: { id: targetId },
       data: { isActive: false },

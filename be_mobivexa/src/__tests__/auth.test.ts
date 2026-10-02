@@ -202,16 +202,15 @@ describe('POST /api/auth/refresh', () => {
   it('200 - cấp token mới thành công, role lấy từ DB chứ không từ JWT cũ', async () => {
     const token = signRefreshToken({ userId: 'user-1', email: 'test@example.com', role: 'CUSTOMER' })
 
+    // DB cho thấy user đã được nâng role STAFF — JWT cũ vẫn là CUSTOMER
+    // (user đi kèm refresh token qua include — không còn query user riêng)
     mockPrisma.refreshToken.findUnique.mockResolvedValue({
       id: 'rt-1',
       token,
       userId: 'user-1',
       isRevoked: false,
       expiresAt: new Date(Date.now() + 86400_000),
-    })
-    // DB cho thấy user đã được nâng role STAFF — JWT cũ vẫn là CUSTOMER
-    mockPrisma.user.findUnique.mockResolvedValue({
-      id: 'user-1', email: 'test@example.com', role: 'STAFF', isActive: true,
+      user: { id: 'user-1', email: 'test@example.com', role: 'STAFF', isActive: true },
     })
     mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
     mockPrisma.refreshToken.create.mockResolvedValue({})
@@ -226,6 +225,10 @@ describe('POST /api/auth/refresh', () => {
     // Token mới lưu DB dạng hash
     const storedToken = mockPrisma.refreshToken.create.mock.calls[0][0].data.token
     expect(storedToken).not.toBe(res.body.refreshToken)
+    // User lấy cùng query với refresh token (include) — không round-trip riêng
+    expect(mockPrisma.user.findUnique).not.toHaveBeenCalled()
+    expect(mockPrisma.refreshToken.findUnique.mock.calls[0][0].include.user.select)
+      .toEqual({ id: true, email: true, role: true, isActive: true })
   })
 
   it('401 - user bị khóa thì không refresh được, token cũ bị thu hồi', async () => {
@@ -234,9 +237,27 @@ describe('POST /api/auth/refresh', () => {
     mockPrisma.refreshToken.findUnique.mockResolvedValue({
       id: 'rt-1', token, userId: 'user-1', isRevoked: false,
       expiresAt: new Date(Date.now() + 86400_000),
+      user: { id: 'user-1', email: 'test@example.com', role: 'CUSTOMER', isActive: false },
     })
-    mockPrisma.user.findUnique.mockResolvedValue({
-      id: 'user-1', email: 'test@example.com', role: 'CUSTOMER', isActive: false,
+    mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
+
+    const res = await request(app).post('/api/auth/refresh').send({ refreshToken: token })
+
+    expect(res.status).toBe(401)
+    expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { id: 'rt-1', isRevoked: false },
+      data: { isRevoked: true },
+    })
+    expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled()
+  })
+
+  it('401 - user không còn tồn tại thì không refresh được, token cũ bị thu hồi', async () => {
+    const token = signRefreshToken({ userId: 'user-1', email: 'test@example.com', role: 'CUSTOMER' })
+
+    mockPrisma.refreshToken.findUnique.mockResolvedValue({
+      id: 'rt-1', token, userId: 'user-1', isRevoked: false,
+      expiresAt: new Date(Date.now() + 86400_000),
+      user: null,
     })
     mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 })
 
@@ -256,9 +277,7 @@ describe('POST /api/auth/refresh', () => {
     mockPrisma.refreshToken.findUnique.mockResolvedValue({
       id: 'rt-1', token, userId: 'user-1', isRevoked: false,
       expiresAt: new Date(Date.now() + 86400_000),
-    })
-    mockPrisma.user.findUnique.mockResolvedValue({
-      id: 'user-1', email: 'test@example.com', role: 'CUSTOMER', isActive: true,
+      user: { id: 'user-1', email: 'test@example.com', role: 'CUSTOMER', isActive: true },
     })
     // Revoke có điều kiện thất bại — token đã bị dùng lại trước đó
     mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 })

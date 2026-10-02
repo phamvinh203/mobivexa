@@ -4,6 +4,9 @@ import { isPrismaError } from '../helpers/prisma_error'
 import { Prisma, PaymentStatus, OrderStatus, PaymentMethod, SePayTxStatus } from '../generated/prisma/client'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { ORDER_CODE_RE } from '../utils/order_code'
+import { inBackground } from '../utils/background'
+import { isRevenueOrder } from '../utils/revenue'
+import { sendOrderPaidEmail } from './order_email.service'
 import { dateRange } from '../utils/date_range'
 import type {
   SePayWebhookPayload,
@@ -167,7 +170,7 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
     )
   }
 
-  return prisma.$transaction(async (t) => {
+  const result = await prisma.$transaction(async (t) => {
     const { count } = await markOrderPaid(t, order, tx.transactionDate)
 
     if (count === 0) {
@@ -187,9 +190,26 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
     })
     return { handled: true, status: SePayTxStatus.MATCHED, orderCode }
   })
+
+  // Mail "đã thanh toán" — fire-and-forget SAU khi transaction commit. `handled`
+  // chỉ true khi markOrderPaid đếm count === 1, tức guard chống double-pay đã qua:
+  // webhook retry, giao dịch trùng hay đơn vừa bị hủy đều không chạm được tới đây.
+  if (result.handled) {
+    inBackground(sendOrderPaidEmail(order.id), '[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng webhook):')
+  }
+
+  return result
 }
 
-async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
+// Giao dịch đã ghi nhận — đúng 2 cột ingestTransaction cần để trả kết quả duplicate.
+type KnownTx = { status: SePayTxStatus; orderCode: string | null }
+
+// `known`: sync đã prefetch cả lô bằng 1 findMany nên truyền Map vào để khỏi findUnique
+// từng giao dịch; webhook đơn lẻ không truyền → vẫn findUnique như cũ.
+async function ingestTransaction(
+  tx: NormalizedSePayTx,
+  known?: Map<number, KnownTx>
+): Promise<IngestResult> {
   if (!Number.isFinite(tx.sepayId)) {
     return { handled: false, reason: 'Payload thiếu id giao dịch' }
   }
@@ -198,10 +218,12 @@ async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
   }
 
   // SePay retry webhook khi nhận non-2xx → cùng một giao dịch có thể tới nhiều lần
-  const existing = await prisma.sePayTransaction.findUnique({
-    where:  { sepayId: tx.sepayId },
-    select: { status: true, orderCode: true },
-  })
+  const existing = known
+    ? known.get(tx.sepayId)
+    : await prisma.sePayTransaction.findUnique({
+        where:  { sepayId: tx.sepayId },
+        select: { status: true, orderCode: true },
+      })
   if (existing) {
     return { handled: false, duplicate: true, status: existing.status, orderCode: existing.orderCode ?? undefined }
   }
@@ -209,7 +231,8 @@ async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
   try {
     return await resolveAndRecord(tx)
   } catch (err) {
-    // Hai webhook trùng bắn song song lọt qua findUnique ở trên → unique index chặn
+    // Hai webhook trùng bắn song song lọt qua bước dedupe ở trên (hoặc trùng sepayId
+    // ngay trong 1 lô sync) → unique index chặn
     if (isPrismaError(err, 'P2002')) {
       return { handled: false, duplicate: true }
     }
@@ -326,7 +349,7 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
     )
   }
 
-  return prisma.$transaction(async (t) => {
+  const matched = await prisma.$transaction(async (t) => {
     const { count } = await markOrderPaid(t, order, tx.transactionDate)
     if (count === 0) throw new AppError(409, 'Đơn hàng vừa được thanh toán hoặc bị hủy, vui lòng tải lại')
 
@@ -345,6 +368,13 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
 
     return serializeTx(updated)
   })
+
+  // Mail "đã thanh toán" — cùng cơ chế với resolveAndRecord: chỉ đặt SAU commit,
+  // và transaction ở trên đã qua guard count === 1 của markOrderPaid nên đây là
+  // đường transition THẬT SỰ, gán tay lặp lại không thể tới được.
+  inBackground(sendOrderPaidEmail(order.id), '[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng gán giao dịch):')
+
+  return matched
 }
 
 // Kéo lại giao dịch từ SePay UserAPI — dùng khi nghi ngờ webhook bị rớt.
@@ -377,9 +407,23 @@ export async function syncFromSePay(opts: { limit?: number; from?: string; to?: 
 
   const summary = { fetched: list.length, matched: 0, unmatched: 0, ignored: 0, duplicate: 0 }
 
+  const txs = list.map(normalizeApiTx)
+
+  // Dedupe cả lô bằng 1 query thay vì 1 findUnique/giao dịch. id không hữu hạn bị
+  // ingestTransaction loại sớm nên không đưa vào `in` (Prisma sẽ reject NaN).
+  const ids = txs.map((t) => t.sepayId).filter(Number.isFinite)
+  const known = new Map<number, KnownTx>()
+  if (ids.length) {
+    const rows = await prisma.sePayTransaction.findMany({
+      where:  { sepayId: { in: ids } },
+      select: { sepayId: true, status: true, orderCode: true },
+    })
+    for (const r of rows) known.set(r.sepayId, r)
+  }
+
   // Tuần tự chứ không Promise.all — tránh hai giao dịch cùng gán một đơn song song
-  for (const item of list) {
-    const result = await ingestTransaction(normalizeApiTx(item))
+  for (const tx of txs) {
+    const result = await ingestTransaction(tx, known)
     if (result.duplicate)                            summary.duplicate++
     else if (result.status === SePayTxStatus.MATCHED)  summary.matched++
     else if (result.status === SePayTxStatus.IGNORED)  summary.ignored++
@@ -392,32 +436,37 @@ export async function syncFromSePay(opts: { limit?: number; from?: string; to?: 
 // ─── Admin: thống kê thanh toán ──────────────────────────────────────────────
 
 // Tổng hợp số liệu thanh toán cho dashboard admin:
-// - revenue: tổng tiền đã thu (PAID)
+// - revenue: tổng tiền đã thu (PAID, không tính đơn đã hủy — xem utils/revenue)
 // - pending: chưa thanh toán (count + amount)
 // - refunded: đã hoàn tiền (count + amount)
 // - awaitingBankTransfer: chờ đối soát CK (BANK_TRANSFER + UNPAID — chờ webhook SePay)
 // - unmatchedTransactions: tiền đã về nhưng chưa gán được đơn — cần admin xử lý
 export async function getPaymentStats() {
-  const [paidAgg, unpaidAgg, refundedAgg, awaitingAgg, unmatchedAgg] = await Promise.all([
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.PAID }, _sum: { total: true }, _count: true }),
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.UNPAID }, _sum: { total: true }, _count: true }),
-    prisma.order.aggregate({ where: { paymentStatus: PaymentStatus.REFUNDED }, _sum: { total: true }, _count: true }),
-    prisma.order.aggregate(
-      { where: { paymentStatus: PaymentStatus.UNPAID, paymentMethod: PaymentMethod.BANK_TRANSFER }, _sum: { total: true }, _count: true },
-    ),
+  // 1 groupBy thay cho 4 aggregate chỉ khác điều kiện paymentStatus/paymentMethod;
+  // các chỉ số suy ra bằng JS. Cộng bằng Decimal để tổng khớp y hệt SUM ở DB.
+  const [byStatusMethod, unmatchedAgg] = await Promise.all([
+    prisma.order.groupBy({ by: ['paymentStatus', 'paymentMethod', 'status'], _sum: { total: true }, _count: true }),
     prisma.sePayTransaction.aggregate(
       { where: { status: SePayTxStatus.UNMATCHED }, _sum: { transferAmount: true }, _count: true },
     ),
   ])
 
-  // _sum.total là Prisma.Decimal (Money) → convert sang number.
-  const toAmount = (agg: { _sum: { total: unknown } }) => Number(agg._sum.total ?? 0)
+  const sumWhere = (match: (g: (typeof byStatusMethod)[number]) => boolean) => {
+    const rows = byStatusMethod.filter(match)
+    return {
+      count:  rows.reduce((n, g) => n + g._count, 0),
+      amount: Number(rows.reduce((sum, g) => sum.plus(g._sum.total ?? 0), new Prisma.Decimal(0))),
+    }
+  }
 
   return {
-    revenue: toAmount(paidAgg),
-    pending: { count: unpaidAgg._count, amount: toAmount(unpaidAgg) },
-    refunded: { count: refundedAgg._count, amount: toAmount(refundedAgg) },
-    awaitingBankTransfer: { count: awaitingAgg._count, amount: toAmount(awaitingAgg) },
+    // Cùng định nghĩa với dashboard (utils/revenue): PAID và chưa CANCELLED
+    revenue: sumWhere(isRevenueOrder).amount,
+    pending: sumWhere((g) => g.paymentStatus === PaymentStatus.UNPAID),
+    refunded: sumWhere((g) => g.paymentStatus === PaymentStatus.REFUNDED),
+    awaitingBankTransfer: sumWhere(
+      (g) => g.paymentStatus === PaymentStatus.UNPAID && g.paymentMethod === PaymentMethod.BANK_TRANSFER,
+    ),
     unmatchedTransactions: {
       count:  unmatchedAgg._count,
       amount: Number(unmatchedAgg._sum.transferAmount ?? 0),

@@ -100,12 +100,8 @@ function checkFaqs(res: Response, value: unknown): boolean {
 function checkPostBody(req: Request, res: Response, { requireTitle }: { requireTitle: boolean }): boolean {
   const b = req.body ?? {}
 
-  if (requireTitle) {
-    if (typeof b.title !== 'string' || b.title.trim().length < 1 || b.title.trim().length > 200) {
-      sendError(res, 400, 'Tiêu đề phải từ 1 đến 200 ký tự')
-      return false
-    }
-  } else if (b.title !== undefined) {
+  // Tạo bài: bắt buộc có title. Sửa bài: chỉ kiểm khi title được gửi lên.
+  if (requireTitle || b.title !== undefined) {
     if (typeof b.title !== 'string' || b.title.trim().length < 1 || b.title.trim().length > 200) {
       sendError(res, 400, 'Tiêu đề phải từ 1 đến 200 ký tự')
       return false

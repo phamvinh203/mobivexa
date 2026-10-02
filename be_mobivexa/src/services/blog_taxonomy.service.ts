@@ -4,6 +4,8 @@ import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { resolveUniqueSlug } from '../utils/slug'
 import { parseSearch } from '../utils/search'
+import { parsePagination } from '../utils/pagination'
+import { formBool } from '../utils/form_fields'
 import type {
   CreateBlogCategoryBody,
   UpdateBlogCategoryBody,
@@ -40,6 +42,18 @@ async function assertValidParent(tx: Prisma.TransactionClient, parentId: string,
     const childCount = await tx.blogCategory.count({ where: { parentId: selfId } })
     if (childCount > 0) throw new AppError(400, 'Danh mục chỉ hỗ trợ tối đa 2 cấp')
   }
+}
+
+// Lỗi ghi danh mục (tạo/sửa) do race với request khác — các bước kiểm tra trước
+// (assertCategoryNameFree, resolveUniqueSlug, assertValidParent) chỉ ĐỌC nên không
+// chặn được, DB mới là chốt cuối.
+function handleCategoryWriteError(err: unknown): never {
+  // RVW-004: 2 request cùng tên/slug lọt qua kiểm tra trước thì unique constraint chặn ở đây.
+  if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Tên hoặc slug danh mục đã tồn tại')
+  // Cha vừa bị xoá đồng thời sau lúc assertValidParent kiểm tra (QA-A-002, api-contract 4.1).
+  if (isPrismaError(err, 'P2003')) throw new AppError(400, 'Danh mục cha không tồn tại')
+  if (isPrismaError(err, 'P2034')) throw new AppError(409, 'Cây danh mục vừa được thay đổi, vui lòng tải lại và thử lại')
+  throw err
 }
 
 // ─── Category: public ─────────────────────────────────────────────────────────
@@ -92,18 +106,12 @@ export async function createBlogCategory(body: CreateBlogCategoryBody) {
           description: body.description?.trim() || null,
           parentId: body.parentId || null,
           sortOrder: body.sortOrder != null ? Number(body.sortOrder) : 0,
-          isActive: body.isActive != null ? String(body.isActive) !== 'false' : true,
+          isActive: formBool(body.isActive ?? true),
         },
       })
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
   } catch (err) {
-    // RVW-004: race giữa assertCategoryNameFree/resolveUniqueSlug (đọc) và create (ghi) —
-    // 2 request cùng tên/slug lọt qua kiểm tra trước thì unique constraint chặn ở đây.
-    if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Tên hoặc slug danh mục đã tồn tại')
-    // Cha vừa bị xoá đồng thời sau lúc assertValidParent kiểm tra (api-contract 4.1).
-    if (isPrismaError(err, 'P2003')) throw new AppError(400, 'Danh mục cha không tồn tại')
-    if (isPrismaError(err, 'P2034')) throw new AppError(409, 'Cây danh mục vừa được thay đổi, vui lòng tải lại và thử lại')
-    throw err
+    handleCategoryWriteError(err)
   }
 }
 
@@ -136,7 +144,7 @@ export async function updateBlogCategory(id: string, body: UpdateBlogCategoryBod
 
   if (body.description !== undefined) data.description = body.description?.trim() || null
   if (body.sortOrder !== undefined) data.sortOrder = Number(body.sortOrder)
-  if (body.isActive !== undefined) data.isActive = String(body.isActive) !== 'false'
+  if (body.isActive !== undefined) data.isActive = formBool(body.isActive)
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -144,12 +152,7 @@ export async function updateBlogCategory(id: string, body: UpdateBlogCategoryBod
       return tx.blogCategory.update({ where: { id }, data })
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
   } catch (err) {
-    // RVW-004: race giữa assertCategoryNameFree/resolveUniqueSlug (đọc) và update (ghi)
-    if (isPrismaError(err, 'P2002')) throw new AppError(409, 'Tên hoặc slug danh mục đã tồn tại')
-    // Cha vừa bị xoá đồng thời sau lúc assertValidParent kiểm tra (QA-A-002, api-contract 4.1)
-    if (isPrismaError(err, 'P2003')) throw new AppError(400, 'Danh mục cha không tồn tại')
-    if (isPrismaError(err, 'P2034')) throw new AppError(409, 'Cây danh mục vừa được thay đổi, vui lòng tải lại và thử lại')
-    throw err
+    handleCategoryWriteError(err)
   }
 }
 
@@ -195,7 +198,7 @@ async function assertTagNameFree(name: string, excludeId?: string) {
 }
 
 export function getBlogTags(query: BlogTagListQuery) {
-  const limit = Math.min(100, Math.max(1, Number(query.limit) || 100))
+  const { limit } = parsePagination(query, 100, 100)
   // RVW-001: query key lặp (?search=a&search=b) trả mảng ở Express 5 — chuẩn hoá trước
   // khi đưa vào Prisma `contains`, không thì PrismaClientValidationError → 500.
   const search = parseSearch(query.search)

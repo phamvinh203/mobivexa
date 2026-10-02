@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
 import { CouponType } from '../generated/prisma/client'
-import { checkId, checkQuantity } from './common.validator'
+import { checkId, checkOrderItems } from './common.validator'
 
 // Export để validateCreateOrder dùng đúng bộ luật này, không dựng literal thứ hai.
 // Trần độ dài và hình thức mã phải là MỘT nguồn sự thật: ba cổng (tạo mã, preview,
@@ -169,25 +169,8 @@ export function validatePreviewCoupon(req: Request, res: Response, next: NextFun
     return
   }
 
-  // Cùng bộ luật items với validateCreateOrder: preview và đặt hàng phải từ chối
-  // đúng những payload như nhau, nếu không preview báo giảm được rồi đặt hàng ăn 400.
-  //
-  // Quan trọng hơn: thiếu `quantity` cho ra salePrice * undefined = NaN, mà
-  // `NaN < minOrderValue` là FALSE nên nhánh đơn tối thiểu không bao giờ chạy —
-  // cổng sàn đơn biến mất, đúng thứ mà "server tự tính subtotal" sinh ra để chặn.
-  // Forged subtotal còn so sánh được, NaN thì làm phép so sánh thành vô nghĩa.
-  if (items !== undefined) {
-    if (!Array.isArray(items) || items.length === 0) {
-      sendError(res, 400, 'Danh sách sản phẩm không hợp lệ')
-      return
-    }
-    for (const item of items) {
-      // `item?.` chứ không `item.`: phần tử null trong mảng sẽ ném TypeError thành
-      // 500, mà preview là endpoint KIỂM TRA — payload rác phải ra 400.
-      if (!checkId(res, item?.variantId, 'variantId không hợp lệ')) return
-      if (!checkQuantity(res, Number(item?.quantity))) return
-    }
-  }
+  // Cùng bộ luật items với validateCreateOrder (xem checkOrderItems).
+  if (items !== undefined && !checkOrderItems(res, items)) return
 
   next()
 }

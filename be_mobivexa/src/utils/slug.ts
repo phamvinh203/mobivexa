@@ -47,6 +47,22 @@ export function slugTaken(
   }
 }
 
+// Slug khi SỬA bản ghi catalog (brand / category / product). Slug rỗng = yêu cầu sinh lại
+// từ tên, đúng như placeholder ở form đang hứa — không có nhánh này thì
+// generateUniqueSlug('') sẽ tạo ra slug rỗng. `name` là tên mới (nếu đang sửa tên),
+// `currentName` là tên hiện có để làm nguồn cuối cùng.
+export function regenerateSlug(opts: {
+  slug: string
+  name: string | undefined
+  currentName: string
+  findBySlug: (slug: string) => Promise<{ id: string } | null>
+  excludeId: string
+}): Promise<string> {
+  const { slug, name, currentName, findBySlug, excludeId } = opts
+  const base = slug.trim() || name?.trim() || currentName
+  return generateUniqueSlug(base, slugTaken(findBySlug, excludeId))
+}
+
 // Slug rỗng/không gửi → tự sinh (thêm hậu tố -1, -2… nếu đụng, như generateUniqueSlug).
 // Slug có gửi tường minh → slugify rồi kiểm tồn tại, đụng thì báo lỗi ngay (409) thay vì
 // tự đổi hậu tố — admin đã chọn một slug cụ thể, tự động đổi sang giá trị khác sẽ gây

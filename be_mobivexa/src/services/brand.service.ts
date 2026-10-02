@@ -1,7 +1,8 @@
 import prisma from '../config/db'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import { AppError } from '../helpers/app_error'
-import { generateUniqueSlug, slugTaken } from '../utils/slug'
+import { generateUniqueSlug, regenerateSlug, slugTaken } from '../utils/slug'
+import { formBool } from '../utils/form_fields'
 import type { CreateBrandBody, UpdateBrandBody } from '../types/brand.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ export async function createBrand(body: CreateBrandBody, file?: Express.Multer.F
       name: trimmedName,
       slug: finalSlug,
       description,
-      isActive: isActive != null ? String(isActive) !== 'false' : true,
+      isActive: formBool(isActive ?? true),
       logoUrl: logo?.url,
       logoPublicId: logo?.publicId,
     },
@@ -77,15 +78,12 @@ export async function updateBrand(id: string, body: UpdateBrandBody, file?: Expr
     await assertNameAvailable(trimmedName, id)
     data.name = trimmedName
   }
-  // Slug rỗng = yêu cầu sinh lại từ tên, đúng như placeholder ở form đang hứa.
-  // Không có nhánh này thì generateUniqueSlug('') sẽ tạo ra slug rỗng.
   if (slug !== undefined) {
-    const base = slug.trim() || name?.trim() || brand.name
-    data.slug = await generateUniqueSlug(base, slugTaken(findBySlug, id))
+    data.slug = await regenerateSlug({ slug, name, currentName: brand.name, findBySlug, excludeId: id })
   }
   // Chuỗi rỗng nghĩa là admin đã xoá trắng ô mô tả → lưu NULL thay vì ''.
   if (description !== undefined) data.description = description || null
-  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
+  if (isActive !== undefined) data.isActive = formBool(isActive)
 
   if (file) {
     const logo = await uploadEntityImage(file.buffer, 'brands')

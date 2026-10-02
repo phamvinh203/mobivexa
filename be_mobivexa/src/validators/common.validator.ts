@@ -9,6 +9,27 @@ export function checkQuantity(res: Response, qty: number, max?: number): boolean
   return true
 }
 
+// Kiểm tra mảng items [{ variantId, quantity }] — dùng chung cho đặt hàng
+// (validateCreateOrder) và preview coupon (validatePreviewCoupon): hai cổng phải
+// từ chối đúng những payload như nhau, nếu không preview báo giảm được rồi đặt
+// hàng ăn 400.
+//
+// Quan trọng hơn: thiếu `quantity` cho ra salePrice * undefined = NaN, mà
+// `NaN < minOrderValue` là FALSE nên nhánh đơn tối thiểu không bao giờ chạy —
+// cổng sàn đơn biến mất, đúng thứ mà "server tự tính subtotal" sinh ra để chặn.
+//
+// `item?.` chứ không `item.`: phần tử null/số trong mảng sẽ ném TypeError ngay
+// trong middleware đồng bộ và Express đổi thành 500 — payload rác phải ra 400.
+export function checkOrderItems(res: Response, items: unknown): boolean {
+  if (!Array.isArray(items) || items.length === 0) {
+    sendError(res, 400, 'Danh sách sản phẩm không hợp lệ')
+    return false
+  }
+  return items.every(
+    (item) => checkId(res, item?.variantId, 'variantId không hợp lệ') && checkQuantity(res, Number(item.quantity)),
+  )
+}
+
 // Parse 1 field từ JSON string (multipart/form-data gửi array/object dạng chuỗi).
 // Trả về true nếu OK (hoặc field không phải string), false (và đã gửi lỗi) nếu parse fail.
 export function parseJsonField(res: Response, body: Record<string, unknown>, key: string): boolean {

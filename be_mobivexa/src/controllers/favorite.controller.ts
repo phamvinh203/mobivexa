@@ -1,4 +1,3 @@
-import { Request, Response } from 'express'
 import { asyncHandler } from '../helpers/async_handler'
 import { sendSuccess } from '../helpers/response'
 import {
@@ -8,17 +7,17 @@ import {
   removeFavorite,
 } from '../services/favorite.service'
 
-export const list = asyncHandler(async (req: Request, res: Response) => {
+export const list = asyncHandler(async (req, res) => {
   const result = await listFavorites(req.user!.userId, req.query)
   sendSuccess(res, result)
 })
 
-export const ids = asyncHandler(async (req: Request, res: Response) => {
+export const ids = asyncHandler(async (req, res) => {
   const productIds = await listFavoriteIds(req.user!.userId)
   sendSuccess(res, { productIds })
 })
 
-export const add = asyncHandler(async (req: Request, res: Response) => {
+export const add = asyncHandler(async (req, res) => {
   const { created } = await addFavorite(req.user!.userId, req.body.productId)
   // 201 khi vừa tạo, 200 khi đã có sẵn — FE phân biệt được bằng status mà không
   // phải đọc body. Cả hai đều mang favorited: true vì trạng thái cuối như nhau.
@@ -29,7 +28,7 @@ export const add = asyncHandler(async (req: Request, res: Response) => {
   )
 })
 
-export const remove = asyncHandler(async (req: Request, res: Response) => {
-  await removeFavorite(req.user!.userId, req.params.productId as string)
+export const remove = asyncHandler(async (req, res) => {
+  await removeFavorite(req.user!.userId, req.params.productId)
   sendSuccess(res, { message: 'Đã bỏ khỏi yêu thích', favorited: false })
 })

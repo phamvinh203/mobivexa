@@ -70,6 +70,19 @@ describe('GET /api/admin/inventory', () => {
     expect(res.status).toBe(200)
   })
 
+  // Không gửi lowThreshold thì "sắp hết" theo LOW_STOCK_THRESHOLD = 10 — cùng con số
+  // với cảnh báo tồn kho ở dashboard.
+  it('200 - không gửi lowThreshold thì ngưỡng sắp hết mặc định là 10', async () => {
+    setupInventoryMocks()
+
+    const res = await request(app)
+      .get('/api/admin/inventory?stockStatus=low_stock')
+      .set('Authorization', ADMIN_TOKEN)
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.productVariant.findMany.mock.calls[0][0].where.stock).toEqual({ gt: 0, lte: 10 })
+  })
+
   // Express 5 trả MẢNG khi key lặp (?search=a&search=b) — ném mảng vào toTsQuery
   // là TypeError thành 500. Lấy phần tử đầu là đủ.
   it('200 - search lặp key vẫn chạy, không phải 500', async () => {

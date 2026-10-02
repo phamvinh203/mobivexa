@@ -82,6 +82,7 @@ model User {
   blogPostsAuthored BlogPost[] @relation("BlogPostAuthor")
   blogPostsUpdated  BlogPost[] @relation("BlogPostUpdater")
   chatSessions      ChatSession[]
+  supportTickets    SupportTicket[]
 
   @@index([role])
   @@index([isActive])
@@ -780,4 +781,65 @@ model ChatMessage {
   // Context = N tin nhắn cuối của session: luôn đọc theo session rồi sort thời gian
   @@index([sessionId, createdAt])
   @@map("chat_messages")
+}
+
+// ─── Live chat "Kết nối nhân viên" ────────────────────────────────────────────
+// Module song song với chatbot (ChatSession/ChatMessage không đụng tới): khách
+// bấm kết nối trong widget → ticket vào queue → staff nhận rồi trả lời (polling).
+enum SupportTicketStatus {
+  OPEN        // chờ staff nhận
+  IN_PROGRESS // đã có staff nhận, đang trò chuyện
+  CLOSED      // kết thúc (staff đóng)
+}
+
+enum SupportSender {
+  CUSTOMER
+  STAFF
+  SYSTEM // tin hệ thống (staff tham gia / phiên kết thúc)
+}
+
+model SupportTicket {
+  id           String   @id @default(uuid())
+  // null = guest. Cascade: xoá user thì dọn ticket của user (giống ChatSession).
+  userId       String?
+  // Tên hiển thị khách đã khai lúc tạo (snapshot) — admin nhìn list không phải join user.
+  customerName String
+  // Mã truy cập chỉ trả về MỘT lần lúc tạo ticket: guest không có JWT nên giữ code
+  // này để tiếp tục phiên sau khi reload (FE lưu localStorage, gửi qua X-Ticket-Code).
+  accessCode   String?
+  status       SupportTicketStatus @default(OPEN)
+  // Không khai relation tới User (chỉ so sánh id trong code): chủ ý giữ đơn giản,
+  // xoá staff thì snapshot claimedByName vẫn còn để list đọc được. Relation đầy đủ
+  // chỉ cần khi dự án thêm tính năng "đếm số phiên staff đang phụ trách".
+  claimedById   String? // staff đã nhận phiên
+  claimedByName String? // snapshot tên staff lúc nhận — list không phải join user
+  closedAt     DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user     User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages SupportMessage[]
+
+  // Queue admin: lọc theo trạng thái + mới nhất lên đầu; khách đang mở của mình
+  // cũng tra theo userId + status để chặn "1 ticket mở/khách".
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id         String        @id @default(uuid())
+  ticketId   String
+  sender     SupportSender
+  // Snapshot tên người gửi (khách hoặc staff) — tin nhắn tự đọc được khi list.
+  senderName String
+  content    String
+  createdAt  DateTime      @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  // Đọc hội thoại: tin của 1 ticket theo thứ tự thời gian — cùng mối quan tâm
+  // với (sessionId, createdAt) của ChatMessage.
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
 }

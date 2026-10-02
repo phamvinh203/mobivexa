@@ -1,4 +1,3 @@
-import { Request, Response } from 'express'
 import { asyncHandler } from '../helpers/async_handler'
 import { sendSuccess } from '../helpers/response'
 import {
@@ -14,48 +13,48 @@ import {
 
 // ─── Customer ─────────────────────────────────────────────────────────────────
 
-export const create = asyncHandler(async (req: Request, res: Response) => {
+export const create = asyncHandler(async (req, res) => {
   const order = await createOrder(req.user!.userId, req.body)
   sendSuccess(res, { message: 'Đặt hàng thành công', order }, 201)
 })
 
-export const listMine = asyncHandler(async (req: Request, res: Response) => {
+export const listMine = asyncHandler(async (req, res) => {
   const result = await listMyOrders(req.user!.userId, req.query)
   sendSuccess(res, result)
 })
 
-export const getMine = asyncHandler(async (req: Request, res: Response) => {
-  const order = await getMyOrder(req.user!.userId, req.params.id as string)
+export const getMine = asyncHandler(async (req, res) => {
+  const order = await getMyOrder(req.user!.userId, req.params.id)
   sendSuccess(res, { order })
 })
 
-export const cancel = asyncHandler(async (req: Request, res: Response) => {
+export const cancel = asyncHandler(async (req, res) => {
   // req.body có thể không tồn tại (Express 5 không parse body khi không phải JSON)
   // — optional chaining thay vì req.body.reason là TypeError tiềm ẩn thành 500.
-  const order = await cancelMyOrder(req.user!.userId, req.params.id as string, req.body?.reason)
+  const order = await cancelMyOrder(req.user!.userId, req.params.id, req.body?.reason)
   sendSuccess(res, { message: 'Hủy đơn hàng thành công', order })
 })
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
-export const list = asyncHandler(async (req: Request, res: Response) => {
+export const list = asyncHandler(async (req, res) => {
   const result = await listOrders(req.query)
   sendSuccess(res, result)
 })
 
-export const get = asyncHandler(async (req: Request, res: Response) => {
-  const order = await getOrder(req.params.id as string)
+export const get = asyncHandler(async (req, res) => {
+  const order = await getOrder(req.params.id)
   sendSuccess(res, { order })
 })
 
-export const updateStatus = asyncHandler(async (req: Request, res: Response) => {
+export const updateStatus = asyncHandler(async (req, res) => {
   const { status, cancelReason } = req.body
-  const order = await updateOrderStatus(req.params.id as string, { status, cancelReason })
+  const order = await updateOrderStatus(req.params.id, { status, cancelReason })
   sendSuccess(res, { message: 'Cập nhật trạng thái thành công', order })
 })
 
-export const updatePayment = asyncHandler(async (req: Request, res: Response) => {
+export const updatePayment = asyncHandler(async (req, res) => {
   const { paymentStatus } = req.body
-  const order = await updatePaymentStatus(req.params.id as string, { paymentStatus })
+  const order = await updatePaymentStatus(req.params.id, { paymentStatus })
   sendSuccess(res, { message: 'Cập nhật thanh toán thành công', order })
 })

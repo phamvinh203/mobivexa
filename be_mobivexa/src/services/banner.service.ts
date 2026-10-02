@@ -1,6 +1,7 @@
 import prisma from '../config/db'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import { AppError } from '../helpers/app_error'
+import { formBool } from '../utils/form_fields'
 import type { BannerPosition, CreateBannerBody, UpdateBannerBody } from '../types/banner.type'
 
 async function findBannerOrThrow(id: string) {
@@ -34,7 +35,7 @@ export async function createBanner(body: CreateBannerBody, file: Express.Multer.
         href: href?.trim() ?? '/products',
         description,
         position: position ?? 'HERO',
-        isActive: isActive != null ? String(isActive) !== 'false' : true,
+        isActive: formBool(isActive ?? true),
         sortOrder: sortOrder != null ? Number(sortOrder) : 0,
       },
     })
@@ -53,7 +54,7 @@ export async function updateBanner(id: string, body: UpdateBannerBody, file?: Ex
   if (href !== undefined) data.href = href.trim() || '/products'
   if (description !== undefined) data.description = description
   if (position !== undefined) data.position = position
-  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
+  if (isActive !== undefined) data.isActive = formBool(isActive)
   if (sortOrder !== undefined) data.sortOrder = Number(sortOrder)
 
   if (file) {

@@ -2,6 +2,7 @@ import prisma from '../config/db'
 import { uploadBuffer } from '../config/cloudinary'
 import { Prisma } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
+import { revokeRefreshTokens } from '../helpers/refresh_token'
 import { hashPassword, verifyPassword } from '../utils/password'
 import type { UpdateProfileBody, ChangePasswordBody, AddressBody, UpdateAddressBody } from '../types/user.type'
 
@@ -75,10 +76,7 @@ export async function changePassword(userId: string, body: ChangePasswordBody) {
   // phiên đăng nhập trên thiết bị khác không được còn hiệu lực sau khi mật khẩu đổi.
   await prisma.$transaction([
     prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
-    prisma.refreshToken.updateMany({
-      where: { userId, isRevoked: false },
-      data: { isRevoked: true },
-    }),
+    revokeRefreshTokens({ userId }),
   ])
 }
 

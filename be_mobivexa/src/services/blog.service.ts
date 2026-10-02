@@ -392,23 +392,24 @@ export async function listPublicPosts(query: PublicPostListQuery) {
       where: { slug: categorySlug, isActive: true },
       include: {
         parent: { select: { name: true, slug: true, isActive: true } },
-        // RVW-002: contract 2.1 chỉ liệt kê danh mục con ĐANG active — con đã tắt vẫn có
-        // trang riêng bị 404 (findFirst ở trên lọc isActive:true), nên không được phép lộ
-        // trong menu/breadcrumb ở đây (không ảnh hưởng việc bài của nó vẫn hiện — xem childIds).
-        children: { where: { isActive: true }, select: { name: true, slug: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] },
+        // Lấy MỌI con (kèm isActive) trong cùng 1 query: id của tất cả con dùng cho childIds
+        // (bài của con đã tắt vẫn hiện), còn payload children bên dưới chỉ giữ con đang active.
+        children: { select: { id: true, name: true, slug: true, isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] },
       },
     })
     if (!category) throw new AppError(404, 'Danh mục không tồn tại')
 
-    const childIds = await prisma.blogCategory.findMany({ where: { parentId: category.id }, select: { id: true } })
-    where.categoryId = { in: [category.id, ...childIds.map((c) => c.id)] }
+    where.categoryId = { in: [category.id, ...category.children.map((c) => c.id)] }
     categoryPayload = {
       id: category.id,
       name: category.name,
       slug: category.slug,
       description: category.description,
       parent: category.parent,
-      children: category.children,
+      // RVW-002: contract 2.1 chỉ liệt kê danh mục con ĐANG active — con đã tắt vẫn có
+      // trang riêng bị 404 (findFirst ở trên lọc isActive:true), nên không được phép lộ
+      // trong menu/breadcrumb (không ảnh hưởng việc bài của nó vẫn hiện — xem childIds).
+      children: category.children.filter((c) => c.isActive).map(({ name, slug }) => ({ name, slug })),
     }
   }
 
@@ -516,7 +517,7 @@ export async function getBlogProductOptions(query: ProductOptionsQuery) {
   const q = parseSearch(query.q)
   if (!q) throw new AppError(400, 'Vui lòng nhập từ khoá tìm kiếm')
   if (q.length > 100) throw new AppError(400, 'Từ khoá tối đa 100 ký tự')
-  const limit = Math.min(20, Math.max(1, Number(query.limit) || 10))
+  const { limit } = parsePagination(query, 10, 20)
 
   const products = await prisma.product.findMany({
     where: {
@@ -811,8 +812,7 @@ export async function createPost(body: CreatePostBody, callerId: string) {
 }
 
 export async function updatePost(id: string, body: UpdatePostBody, callerId: string) {
-  const post = await prisma.blogPost.findFirst({ where: { id, deletedAt: null } })
-  if (!post) throw new AppError(404, 'Bài viết không tồn tại')
+  const post = await findAdminPostOrThrow(id)
 
   let tagIds: string[] | undefined
   let productIds: string[] | undefined
@@ -945,8 +945,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<BlogPostStatus, BlogPostStatus[]> = {
 export async function updatePostStatus(id: string, body: UpdatePostStatusBody, updatedById: string) {
   await publishDueScheduledPosts()
 
-  const post = await prisma.blogPost.findFirst({ where: { id, deletedAt: null } })
-  if (!post) throw new AppError(404, 'Bài viết không tồn tại')
+  const post = await findAdminPostOrThrow(id)
 
   const nextStatus = body.status
   if (!Object.values(BlogPostStatus).includes(nextStatus)) throw new AppError(400, 'Trạng thái không hợp lệ')

@@ -1,6 +1,4 @@
 import { Router } from 'express'
-import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { blogSearchLimiter, viewLimiter } from '../middlewares/rate_limit.middleware'
 import * as validator from '../validators/blog.validator'
@@ -20,7 +18,6 @@ publicRouter.get('/rss.xml', controller.rss)
 
 // ─── Admin routes: /api/admin/blog ─────────────────────────────────────────────
 const adminRouter: Router = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 
 // Posts
 adminRouter.get('/posts', controller.listPostsAdmin)

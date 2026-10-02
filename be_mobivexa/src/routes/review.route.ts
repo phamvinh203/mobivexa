@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import {
   validateCreateReview,
@@ -34,7 +33,6 @@ reviewRouter.post(  '/:id/helpful',                                             
 
 // ─── Admin: /api/admin/reviews ────────────────────────────────────────────────
 const adminRouter: Router = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 adminRouter.get(   '/',                                            controller.adminList)
 adminRouter.post(  '/:id/reply',  validateReplyReview,             controller.adminReply)
 adminRouter.delete('/:id',                                         controller.adminDelete)

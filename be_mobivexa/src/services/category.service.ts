@@ -1,7 +1,8 @@
 import prisma from '../config/db'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import { AppError } from '../helpers/app_error'
-import { generateUniqueSlug, slugTaken } from '../utils/slug'
+import { generateUniqueSlug, regenerateSlug, slugTaken } from '../utils/slug'
+import { formBool } from '../utils/form_fields'
 import type { CreateCategoryBody, UpdateCategoryBody } from '../types/category.type'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -81,7 +82,7 @@ export async function createCategory(body: CreateCategoryBody, file?: Express.Mu
       description,
       parentId: parentId || null,
       sortOrder: sortOrder != null ? Number(sortOrder) : 0,
-      isActive: isActive != null ? String(isActive) !== 'false' : true,
+      isActive: formBool(isActive ?? true),
       imageUrl: image?.url,
       imagePublicId: image?.publicId,
     },
@@ -97,17 +98,14 @@ export async function updateCategory(id: string, body: UpdateCategoryBody, file?
 
   const data: Record<string, unknown> = {}
   if (name !== undefined) data.name = name.trim()
-  // Slug rỗng = yêu cầu sinh lại từ tên, đúng như placeholder ở form đang hứa.
-  // Không có nhánh này thì generateUniqueSlug('') sẽ tạo ra slug rỗng.
   if (slug !== undefined) {
-    const base = slug.trim() || name?.trim() || category.name
-    data.slug = await generateUniqueSlug(base, slugTaken(findBySlug, id))
+    data.slug = await regenerateSlug({ slug, name, currentName: category.name, findBySlug, excludeId: id })
   }
   // Chuỗi rỗng nghĩa là admin đã xoá trắng ô mô tả → lưu NULL thay vì ''.
   if (description !== undefined) data.description = description || null
   if (parentId !== undefined) data.parentId = parentId || null
   if (sortOrder !== undefined) data.sortOrder = Number(sortOrder)
-  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
+  if (isActive !== undefined) data.isActive = formBool(isActive)
 
   if (file) {
     const image = await uploadEntityImage(file.buffer, 'categories')

@@ -1064,8 +1064,14 @@ describe('GET /api/blog/posts — danh sách công khai (TC-blog-059..062, 070, 
 
   it('TC-blog-060 — lọc theo category gồm cả bài của category con', async () => {
     mockNoDue()
-    mockPrisma.blogCategory.findFirst.mockResolvedValueOnce({ id: 'cat-cha', name: 'Cha', slug: 'cha-slug', description: null, parent: null, children: [] })
-    mockPrisma.blogCategory.findMany.mockResolvedValueOnce([{ id: 'cat-con' }])
+    // 1 query trả cả con đang bật lẫn con đã tắt (kèm id + isActive) — service tự tách
+    mockPrisma.blogCategory.findFirst.mockResolvedValueOnce({
+      id: 'cat-cha', name: 'Cha', slug: 'cha-slug', description: null, parent: null,
+      children: [
+        { id: 'cat-con', name: 'Con', slug: 'con', isActive: true },
+        { id: 'cat-con-tat', name: 'Con tắt', slug: 'con-tat', isActive: false },
+      ],
+    })
     mockPrisma.blogPost.findMany.mockResolvedValueOnce([postCard(), postCard(), postCard()])
     mockPrisma.blogPost.count.mockResolvedValueOnce(3)
 
@@ -1074,16 +1080,19 @@ describe('GET /api/blog/posts — danh sách công khai (TC-blog-059..062, 070, 
     expect(res.status).toBe(200)
     expect(res.body.posts.length).toBe(3)
     expect(res.body.category.slug).toBe('cha-slug')
-    // RVW-002: children trả về CHỈ được lọc isActive:true — danh mục con đã tắt không
-    // được lộ trong menu/breadcrumb dù bài của nó vẫn hiện (childIds không lọc active).
-    const categoryCall = mockPrisma.blogCategory.findFirst.mock.calls[0][0]
-    expect(categoryCall.include.children.where).toEqual({ isActive: true })
+    // Bài của MỌI danh mục con (kể cả con đã tắt) vẫn hiện cùng bài của cha
+    const postWhere = mockPrisma.blogPost.findMany.mock.calls[0][0].where
+    expect(postWhere.categoryId).toEqual({ in: ['cat-cha', 'cat-con', 'cat-con-tat'] })
+    // RVW-002: children trả về CHỈ gồm con isActive:true (và chỉ name/slug) — danh mục con
+    // đã tắt không được lộ trong menu/breadcrumb dù bài của nó vẫn hiện.
+    expect(res.body.category.children).toEqual([{ name: 'Con', slug: 'con' }])
+    // Không còn query thứ 2 lấy childIds
+    expect(mockPrisma.blogCategory.findMany).not.toHaveBeenCalled()
   })
 
   it('RVW-001 — query key lặp (?category=a&category=b) không 500, lấy phần tử đầu', async () => {
     mockNoDue()
     mockPrisma.blogCategory.findFirst.mockResolvedValueOnce({ id: 'cat-a', name: 'A', slug: 'a', description: null, parent: null, children: [] })
-    mockPrisma.blogCategory.findMany.mockResolvedValueOnce([])
     mockPrisma.blogPost.findMany.mockResolvedValueOnce([])
     mockPrisma.blogPost.count.mockResolvedValueOnce(0)
 
@@ -1119,7 +1128,6 @@ describe('GET /api/blog/posts — danh sách công khai (TC-blog-059..062, 070, 
   it('TC-blog-070 — category rỗng bài → 200, posts:[], total:0 (không lỗi)', async () => {
     mockNoDue()
     mockPrisma.blogCategory.findFirst.mockResolvedValueOnce({ id: 'cat-moi', name: 'Mới', slug: 'moi', description: null, parent: null, children: [] })
-    mockPrisma.blogCategory.findMany.mockResolvedValueOnce([])
     mockPrisma.blogPost.findMany.mockResolvedValueOnce([])
     mockPrisma.blogPost.count.mockResolvedValueOnce(0)
 

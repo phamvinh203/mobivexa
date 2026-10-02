@@ -65,7 +65,7 @@ export type CouponCheck = { ok: true } | { ok: false; reason: string }
 
 // Tự định dạng thay vì toLocaleString: kết quả không phụ thuộc ICU của môi trường,
 // nên test cho ra cùng chuỗi ở mọi máy.
-function formatVnd(amount: number): string {
+export function formatVnd(amount: number): string {
   return String(Math.round(amount)).replace(/\B(?=(\d{3})+(?!\d))/g, '.')
 }
 
@@ -105,7 +105,8 @@ export function checkCouponUsable(
 
 // ─── Đổi bản ghi Prisma sang input thuần ──────────────────────────────────────
 
-// Hai hàm này SỐNG CHUNG với computeDiscount/checkCouponUsable một cách cố ý.
+// Hai hàm này SỐNG CHUNG với computeDiscount/checkCouponUsable một cách cố ý, và chỉ
+// dùng nội bộ qua evaluateCoupon (cuối file) — nơi gọi đừng tự ráp lại.
 //
 // Trước đây chúng nằm trong coupon.service còn order.service tự chép lại một bản
 // y hệt. Hai bản giống nhau từng byte nên không hỏng gì, nhưng đó đúng là thứ mà
@@ -129,13 +130,13 @@ export type CouponRow = {
   minOrderValue: Prisma.Decimal
 }
 
-export const toRule = (c: CouponRow): DiscountRule => ({
+const toRule = (c: CouponRow): DiscountRule => ({
   type:        c.type,
   value:       Number(c.value),
   maxDiscount: c.maxDiscount === null ? null : Number(c.maxDiscount),
 })
 
-export const toCheckInput = (c: CouponRow): CouponCheckInput => ({
+const toCheckInput = (c: CouponRow): CouponCheckInput => ({
   isActive:      c.isActive,
   startsAt:      c.startsAt,
   endsAt:        c.endsAt,
@@ -143,3 +144,19 @@ export const toCheckInput = (c: CouponRow): CouponCheckInput => ({
   usedCount:     c.usedCount,
   minOrderValue: Number(c.minOrderValue),
 })
+
+// ─── Gộp kiểm tra + tính tiền ─────────────────────────────────────────────────
+
+export type CouponEvaluation = { ok: true; discount: number } | { ok: false; reason: string }
+
+// MỘT lời gọi cho cả "mã dùng được không" lẫn "giảm bao nhiêu" — preview
+// (previewCoupon) và đặt hàng (createOrder) cùng đi qua đây nên không thể ra hai
+// con số khác nhau cho cùng một giỏ. Nơi gọi chỉ việc tra DB lấy `coupon` và
+// `alreadyUsed`, rồi quyết định ném lỗi hay trả 200 kèm lý do.
+export function evaluateCoupon(coupon: CouponRow | null, alreadyUsed: boolean, subtotal: number): CouponEvaluation {
+  const check = checkCouponUsable(coupon && toCheckInput(coupon), alreadyUsed, subtotal)
+  if (!check.ok) return check
+
+  // check.ok ⇒ coupon khác null (checkCouponUsable đã loại ca "không tồn tại").
+  return { ok: true, discount: computeDiscount(toRule(coupon!), subtotal) }
+}

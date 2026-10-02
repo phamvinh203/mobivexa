@@ -110,3 +110,16 @@ export const chatLimiter: RequestHandler[] = [
     ),
   ),
 ]
+
+// ─── Live chat "Kết nối nhân viên" ────────────────────────────────────────────
+//
+// Tạo ticket là hành động spam giá trị cao (mỗi ticket một hàng đợi staff phải
+// xử lý): guest không có JWT nên biện pháp chính là sàn 5 lượt/giờ theo IP —
+// đủ cho người thật bấm nhầm vài lần, không đủ nuôi bot. Gửi tin nhắn thoải mái
+// hơn (30/phút) vì polling staff/khách đều chạm GET chứ không phải POST.
+export const supportTicketLimiter = rateLimit(
+  makeLimiter(5, 60 * 60_000, 'Bạn đã tạo quá nhiều yêu cầu hỗ trợ, vui lòng thử lại sau 1 giờ', keyByUserOrIp),
+)
+export const supportMessageLimiter = rateLimit(
+  makeLimiter(30, 60_000, 'Bạn nhắn tin quá nhanh, vui lòng chờ một lát', keyByUserOrIp),
+)

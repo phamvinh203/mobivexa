@@ -3,10 +3,10 @@ dotenv.config({ path: '.env.local' })
 
 import { Pool } from 'pg'
 import { PrismaPg } from '@prisma/adapter-pg'
-import { readFileSync, existsSync } from 'fs'
+import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
 import { join } from 'path'
 import { PrismaClient } from '../src/generated/prisma/client'
-import { OrderStatus, PaymentMethod, PaymentStatus, ReviewStatus } from '../src/generated/prisma/enums'
+import { CouponType, UserRole } from '../src/generated/prisma/enums'
 import bcrypt from 'bcrypt'
 import { slugify } from '../src/utils/slug'
 
@@ -21,703 +21,599 @@ const sslConfig =
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: sslConfig })
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) })
 
-// ─── Đọc dữ liệu crawl từ data/products.json ──────────────────────────────────
-type CrawlImage = { url: string; local: string; isCover: boolean }
-type CrawlProduct = {
-  name: string; slug: string; brandSlug: string; categorySlug: string
-  sourceUrl: string; description: string; price: number
-  specs: Record<string, string>; images: CrawlImage[]
-}
-type CrawlData = {
-  source: string; crawledAt: string; perBrand: number
-  brands: { name: string; slug: string; color: string }[]
-  products: CrawlProduct[]
+// ─── Thiết kế chung ───────────────────────────────────────────────────────────
+//
+// Seed này TÁI LẬP dữ liệu demo của Mobivexa và được chạy NHIỀU LẦN trên cả DB
+// trắng lẫn DB demo đang có khách dùng, nên khác seed cũ ở ba điểm sống còn:
+//
+// 1. KHÔNG deleteMany — dữ liệu thật (đơn hàng, đánh giá, ảnh Cloudinary đã
+//    upload...) không bao giờ bị xoá. Mọi bảng chỉ upsert theo khoá duy nhất
+//    của nó: user theo email, brand/category/tag theo slug, product theo slug,
+//    variant theo sku, coupon theo code.
+// 2. 199 sản phẩm Cellphones đọc từ JSON crawler (data/cellphones/raw/*.json —
+//    đúng nguồn đã import vào DB demo ngày 25/09). Ảnh chỉ tạo khi sản phẩm
+//    chưa có: DB demo dùng ảnh Cloudinary đã upload, chạy lại seed phải giữ
+//    nguyên thay vì thay bằng URL CDN nguồn.
+// 3. Coupon ghi NGÀY ĐỘNG theo thời điểm chạy (bài học time-bomb 01/10: ghi
+//    cứng endsAt thì demo tự chết khi lịch trôi). Cuối seed quét mã đã hết hạn
+//    và tắt isActive để dashboard không còn mã chết treo trên "đang chạy".
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// ─── Dữ liệu crawl: dạng file đơn của crawler cellphones ─────────────────────
+type CellphoneSpec = { label: string; value: string }
+
+type CellphoneRaw = {
+  name: string
+  sku: string
+  price: number
+  originalPrice?: number
+  brand?: string
+  description?: string
+  images?: string[] | { url?: string; local?: string }[]
+  specs?: CellphoneSpec[] | Record<string, string>
+  sourceUrl?: string
+  crawledAt?: string
 }
 
-function loadCrawl(): CrawlData {
-  // Hai đường đầu là vị trí HIỆN TẠI của file (data/ nằm trong be_mobivexa),
-  // tính cả khi chạy từ gốc backend lẫn từ trong prisma/. Hai đường sau giữ lại
-  // cho bố cục cũ khi data/ nằm ngang hàng với be_mobivexa.
-  const candidates = [
-    join(process.cwd(), 'data', 'products.json'),
-    join(__dirname, '..', 'data', 'products.json'),
-    join(process.cwd(), '..', 'data', 'products.json'),
-    join(__dirname, '..', '..', 'data', 'products.json'),
-  ]
-  const path = candidates.find(existsSync)
-  if (!path) {
-    console.error('❌  Không tìm thấy data/products.json')
-    console.error('    Hãy chạy crawler trước:  cd ../data && node crawl.mjs')
+type SeedProduct = {
+  sku: string
+  name: string
+  slugBase: string
+  price: number
+  description: string | null
+  images: string[]
+  specs: CellphoneSpec[]
+}
+
+// Trang brand/series của cellphones lẫn phụ kiện, máy tính bảng, đồ gia dụng —
+// backend chỉ bán điện thoại. Copy nguyên bộ lọc của crawler (data/cellphones/
+// crawl.mjs) để seed chắt được đúng 199 sản phẩm đã import, không rò thêm
+// món lẻ kiểu apple-airpods-5 còn sót trong thư mục raw.
+const SKIP_PATTERN =
+  /airpods|tai nghe|sạc dự phòng|ốp lưng|bao da|củ sạc|cáp sạc|ipad|macbook|laptop|tablet|máy tính bảng|watch|đồng hồ|buds|smart ?band|mi band|airtag|apple pencil|tivi|tủ lạnh|tủ đông|máy giặt|máy lạnh|điều hòa|lò vi sóng|nồi chiên|máy hút bụi|smart ?speaker|loa/i
+
+// Khớp sản phẩm về brand DB — copy từ crawler. Tên brand PHẢI khớp brand có
+// sẵn trong DB (seed không tự đẻ brand lạ): brand "iphone" trong DB ứng với
+// Apple trên trang nguồn, "techno" ứng với Tecno.
+const BRAND_MATCHERS: { db: string; re: RegExp; name: RegExp }[] = [
+  { db: 'iphone', re: /^(apple|iphone)$/i, name: /iphone/i },
+  { db: 'samsung', re: /^samsung$/i, name: /samsung|galaxy/i },
+  { db: 'xiaomi', re: /^(xiaomi|poco|redmi)$/i, name: /xiaomi|poco|redmi/i },
+  { db: 'oppo', re: /^oppo$/i, name: /oppo/i },
+  { db: 'honor', re: /^honor$/i, name: /honor/i },
+  { db: 'huawei', re: /^huawei$/i, name: /huawei/i },
+  { db: 'realme', re: /^realme$/i, name: /realme/i },
+  { db: 'techno', re: /^(tecno|techno)$/i, name: /tecno|techno|pova|camon/i },
+  { db: 'meizu', re: /^meizu$/i, name: /meizu/i },
+]
+
+// Nhận tối thiểu name + brand (tuỳ chọn) — gọi được với cả bản raw lẫn bản
+// đã chuẩn hoá (SeedProduct) mà không vướng kiểu null/undefined
+function matchDbBrand(p: { name: string; brand?: string }): string | null {
+  for (const m of BRAND_MATCHERS) {
+    if (m.re.test(p.brand ?? '') || m.name.test(p.name ?? '')) return m.db
+  }
+  return null
+}
+
+// Chuẩn hoá một bản ghi crawl về dạng seed dùng được: specs về mảng (file
+// products.json cũ dùng object), images về mảng URL trần.
+function normalizeRaw(p: CellphoneRaw): SeedProduct | null {
+  if (!p.name || !p.sku) return null
+
+  // Giá bán = giá cuối crawler công bố. Crawler chỉ lưu khi price > 0, nhưng
+  // giữ phòng thủ: price 0 thì đổ về originalPrice nếu có (đúng tinh thần
+  // backfill 28/09: salePrice không bao giờ được để 0), vẫn 0 thì bỏ.
+  const price = Number(p.price) > 0 ? Number(p.price) : Number(p.originalPrice ?? 0)
+  if (!(price > 0)) return null
+
+  const specs: CellphoneSpec[] = Array.isArray(p.specs)
+    ? p.specs.filter((s) => typeof s?.label === 'string' && typeof s?.value === 'string')
+    : Object.entries(p.specs ?? {}).map(([label, value]) => ({ label, value: String(value) }))
+
+  const images = (Array.isArray(p.images) ? p.images : [])
+    .map((im) => (typeof im === 'string' ? im : im?.url ?? ''))
+    .filter((u): u is string => Boolean(u))
+
+  return {
+    sku: p.sku,
+    name: p.name,
+    slugBase: slugify(p.name) || slugify(p.sku) || 'san-pham',
+    price,
+    description: p.description?.trim() || null,
+    images,
+    specs,
+  }
+}
+
+// Nguồn dữ liệu: thư mục raw của crawler (mặc định) hoặc file chỉ định qua
+// SEED_PRODUCTS_FILE (thư mục, mảng, { products: [...] } hay 1 object đều nhận).
+function resolveDataSource(): string {
+  const override = process.env.SEED_PRODUCTS_FILE?.trim()
+  const candidates = override
+    ? [override]
+    : [
+        // Bố cục hiện tại: data/ nằm ngang be_mobivexa trong repo
+        join(process.cwd(), '..', 'data', 'cellphones', 'raw'),
+        join(__dirname, '..', '..', 'data', 'cellphones', 'raw'),
+        // Dự phòng khi data/ được коп vào trong backend
+        join(process.cwd(), 'data', 'cellphones', 'raw'),
+      ]
+  const found = candidates.find((c) => existsSync(c))
+  if (!found) {
+    console.error('❌  Không tìm thấy dữ liệu crawl (data/cellphones/raw).')
+    console.error('    Chạy crawler trước:  cd ../data/cellphones && node crawl.mjs')
+    console.error('    Hoặc trỏ SEED_PRODUCTS_FILE đến file/thư mục JSON sản phẩm.')
     process.exit(1)
   }
-  return JSON.parse(readFileSync(path, 'utf-8')) as CrawlData
+  return found
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-const round0 = (n: number) => Math.round(n)
-const cleanSpec = (v?: string) => (v ? v.trim().replace(/\s+/g, ' ') : null)
-const firstColor = (v?: string) => (v ? v.split(/[,/]/)[0].trim() : null)
+function loadCrawlProducts(): { products: SeedProduct[]; skipped: string[] } {
+  const source = resolveDataSource()
+  console.log(`🌱  Seed Mobivexa — tái lập dữ liệu demo (idempotent)`)
+  console.log(`    Nguồn sản phẩm: ${source}`)
 
-// Thứ tự hiển thị thông số kỹ thuật.
-//
-// File crawl giữ thứ tự của trang nguồn, mà mỗi trang một kiểu — sản phẩm này
-// mở đầu bằng "Hệ điều hành", sản phẩm kia bằng "Camera sau". Xếp lại theo một
-// danh sách chung để mọi bảng thông số đọc cùng một mạch: cấu hình -> màn hình
-// -> camera -> pin -> kết nối.
-//
-// Khoá lạ (crawl về sau này có thêm) không bị bỏ: xếp xuống cuối, giữ nguyên thứ
-// tự vốn có của chúng.
-const SPEC_ORDER = [
-  'Hệ điều hành',
-  'Chipset',
-  'Loại CPU',
-  'GPU',
-  'Dung lượng RAM',
-  'Bộ nhớ trong',
-  'Kích thước màn hình',
-  'Công nghệ màn hình',
-  'Độ phân giải màn hình',
-  'Tính năng màn hình',
-  'Camera sau',
-  'Camera trước',
-  'Pin',
-  'Hỗ trợ mạng',
-  'Thẻ SIM',
-  'Công nghệ NFC',
-  'Cảm biến',
-  'Tương thích',
-  'Thời điểm ra mắt',
-]
-
-// Giá trị crawl còn sót thực thể HTML (&quot; trong '1/1.57&quot;', &amp; trong
-// tên công nghệ). FE hiển thị thông số dưới dạng TEXT nên không tự giải mã —
-// để nguyên thì khách đọc được đúng chữ "&quot;" trên bảng.
-//
-// &amp; phải thay CUỐI CÙNG, nếu không '&amp;quot;' sẽ thành '&quot;' rồi bị
-// vòng sau giải mã tiếp thành dấu nháy — sai với dữ liệu gốc.
-const decodeEntities = (v: string) =>
-  v
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-
-// Đổi object specs của bản crawl thành các dòng cho bảng product_specs.
-// sortOrder chính là vị trí sau khi sắp — backend đọc ra đã đúng thứ tự hiển thị.
-function buildSpecs(specs: Record<string, string>) {
-  const rank = (label: string) => {
-    const i = SPEC_ORDER.indexOf(label)
-    return i === -1 ? SPEC_ORDER.length : i
-  }
-
-  return Object.entries(specs)
-    .map(([label, value]) => ({ label: label.trim(), value: cleanSpec(decodeEntities(value)) }))
-    // Bỏ dòng rỗng: bảng thông số có một hàng trắng không nhãn trông như lỗi render
-    .filter((s): s is { label: string; value: string } => Boolean(s.label && s.value))
-    .sort((a, b) => rank(a.label) - rank(b.label))
-    .map((s, sortOrder) => ({ ...s, sortOrder }))
-}
-
-/**
- * SKU cho sản phẩm nhập từ file crawl.
- *
- * `MBV-<slug>` cắt thẳng ở 60 ký tự là SAI: slug của nguồn Shopee dài tới ~60 ký
- * tự và phần phân biệt (mã sản phẩm) nằm ở CUỐI, cắt đầu là hai sản phẩm khác
- * nhau ra cùng một SKU rồi vỡ unique constraint. Nên cắt ở GIỮA, giữ cả đầu lẫn
- * đuôi. Kèm bộ đếm chống trùng để không bao giờ phụ thuộc vào may rủi của dữ liệu.
- */
-function makeSku(slug: string, used: Set<string>): string {
-  const body = slug.toUpperCase()
-  let sku = `MBV-${body}`
-  if (sku.length > 60) sku = `MBV-${body.slice(0, 40)}-${body.slice(-15)}`
-
-  let candidate = sku
-  for (let n = 2; used.has(candidate); n++) candidate = `${sku.slice(0, 56)}-${n}`
-  used.add(candidate)
-  return candidate
-}
-
-/** Ba danh mục phụ kiện — dùng để biết file crawl đã có hàng thật hay chưa */
-const ACCESSORY_SLUGS = new Set(['bao-da-op-lung', 'sac-cap', 'tai-nghe'])
-
-/** Mỗi mẫu nhân ra bấy nhiêu sản phẩm: 10 mẫu × 3 = 30 sản phẩm mỗi danh mục */
-const ACCESSORY_COPIES_PER_TEMPLATE = 3
-
-// ─── Phụ kiện ─────────────────────────────────────────────────────────────────
-//
-// Điện thoại lấy từ file crawl, nhưng crawler chỉ quét máy nên ba danh mục phụ
-// kiện (ốp lưng, sạc cáp, tai nghe) rỗng trơn. Phần dưới sinh dữ liệu phụ kiện
-// từ các mẫu bên dưới — KHÔNG ngẫu nhiên: cùng một file crawl thì mỗi lần seed
-// ra đúng một bộ dữ liệu, để ảnh chụp màn hình và test không đổi sau mỗi lần chạy.
-//
-// Hãng lấy từ chính danh sách hãng đã có (Apple, Samsung, Xiaomi...) chứ không
-// đẻ thêm hãng phụ kiện mới: thêm hãng là đổi luôn lưới thương hiệu ở trang chủ.
-
-interface AccessoryTemplate {
-  /** `%s` thay bằng tên hãng hoặc tên máy, tuỳ danh mục */
-  name: string
-  /** Giá bán (VND) trước khi áp giảm giá */
-  price: number
-  specs: [string, string][]
-  /** Mỗi phần tử là một biến thể; nhãn hiện ở trang chi tiết */
-  variants: { color?: string; storage?: string }[]
-}
-
-const CASE_COLORS = [{ color: 'Đen' }, { color: 'Trong suốt' }, { color: 'Xanh navy' }]
-const CHARGER_COLORS = [{ color: 'Trắng' }, { color: 'Đen' }]
-const EARPHONE_COLORS = [{ color: 'Đen' }, { color: 'Trắng' }]
-
-// Ốp lưng / bao da — đặt tên theo MẪU MÁY vì phụ kiện loại này mua theo máy
-const CASE_TEMPLATES: AccessoryTemplate[] = [
-  { name: 'Ốp lưng silicon %s', price: 190_000, variants: CASE_COLORS,
-    specs: [['Chất liệu', 'Silicon dẻo phủ nhung bên trong'], ['Kiểu dáng', 'Ốp lưng ôm sát'], ['Chống sốc', 'Viền cao hơn mặt kính 1.2mm'], ['Trọng lượng', '32 g'], ['Bảo hành', '3 tháng']] },
-  { name: 'Ốp lưng trong suốt chống ố %s', price: 150_000, variants: [{ color: 'Trong suốt' }],
-    specs: [['Chất liệu', 'Nhựa TPU + PC chống ngả vàng'], ['Kiểu dáng', 'Trong suốt toàn phần'], ['Chống sốc', 'Đệm khí 4 góc'], ['Trọng lượng', '28 g'], ['Bảo hành', '3 tháng']] },
-  { name: 'Ốp lưng chống sốc quân đội %s', price: 320_000, variants: CASE_COLORS,
-    specs: [['Chất liệu', 'PC cứng + TPU dẻo hai lớp'], ['Tiêu chuẩn', 'MIL-STD-810G chống rơi 2m'], ['Chống sốc', 'Đệm khí 4 góc, viền nâng camera'], ['Trọng lượng', '58 g'], ['Bảo hành', '6 tháng']] },
-  { name: 'Ốp lưng da PU %s', price: 380_000, variants: [{ color: 'Nâu' }, { color: 'Đen' }],
-    specs: [['Chất liệu', 'Da PU cao cấp, lót nỉ'], ['Kiểu dáng', 'Ốp lưng liền khối'], ['Chống sốc', 'Viền TPU mềm'], ['Trọng lượng', '45 g'], ['Bảo hành', '6 tháng']] },
-  { name: 'Bao da gập có ngăn thẻ %s', price: 290_000, variants: [{ color: 'Đen' }, { color: 'Nâu' }],
-    specs: [['Chất liệu', 'Da PU, khung nhựa PC'], ['Kiểu dáng', 'Bao da gập ngang, 2 ngăn thẻ'], ['Tiện ích', 'Gập làm giá đỡ xem phim'], ['Trọng lượng', '76 g'], ['Bảo hành', '6 tháng']] },
-  { name: 'Ốp lưng MagSafe %s', price: 450_000, variants: [{ color: 'Đen' }, { color: 'Trong suốt' }],
-    specs: [['Chất liệu', 'TPU + vòng nam châm N52'], ['Tương thích', 'Sạc không dây MagSafe 15W'], ['Chống sốc', 'Viền nâng 1.5mm quanh camera'], ['Trọng lượng', '42 g'], ['Bảo hành', '12 tháng']] },
-  { name: 'Ốp lưng nhám chống vân tay %s', price: 170_000, variants: CASE_COLORS,
-    specs: [['Chất liệu', 'Nhựa PC phủ nhám'], ['Kiểu dáng', 'Siêu mỏng 0.8mm'], ['Ưu điểm', 'Bề mặt nhám không bám vân tay'], ['Trọng lượng', '24 g'], ['Bảo hành', '3 tháng']] },
-  { name: 'Ốp lưng viền kim loại %s', price: 260_000, variants: [{ color: 'Bạc' }, { color: 'Đen' }],
-    specs: [['Chất liệu', 'Viền nhôm CNC, lưng kính cường lực'], ['Kiểu dáng', 'Viền vuông'], ['Chống sốc', 'Đệm silicon bên trong'], ['Trọng lượng', '64 g'], ['Bảo hành', '6 tháng']] },
-  { name: 'Ốp lưng kèm dây đeo %s', price: 210_000, variants: [{ color: 'Đen' }, { color: 'Xanh navy' }],
-    specs: [['Chất liệu', 'TPU dẻo, dây dù'], ['Kiểu dáng', 'Ốp lưng kèm dây đeo chéo'], ['Tiện ích', 'Tháo rời dây bằng khoá xoay'], ['Trọng lượng', '68 g'], ['Bảo hành', '3 tháng']] },
-  { name: 'Bao da đứng %s', price: 240_000, variants: [{ color: 'Đen' }],
-    specs: [['Chất liệu', 'Da PU, lót nhung'], ['Kiểu dáng', 'Bao da đứng, nắp gập trên'], ['Tiện ích', 'Có móc treo thắt lưng'], ['Trọng lượng', '82 g'], ['Bảo hành', '6 tháng']] },
-]
-
-// Sạc / cáp — đặt tên theo HÃNG, vì mua theo chuẩn sạc chứ không theo mẫu máy
-const CHARGER_TEMPLATES: AccessoryTemplate[] = [
-  { name: 'Củ sạc nhanh %s 20W PD', price: 290_000, variants: CHARGER_COLORS,
-    specs: [['Công suất', '20W'], ['Cổng ra', '1 × USB-C'], ['Chuẩn sạc nhanh', 'Power Delivery 3.0'], ['Điện áp vào', '100–240V, 50/60Hz'], ['Bảo hành', '12 tháng']] },
-  { name: 'Củ sạc nhanh %s 33W', price: 390_000, variants: CHARGER_COLORS,
-    specs: [['Công suất', '33W'], ['Cổng ra', '1 × USB-A'], ['Chuẩn sạc nhanh', 'Quick Charge 4+'], ['Điện áp vào', '100–240V, 50/60Hz'], ['Bảo hành', '12 tháng']] },
-  { name: 'Củ sạc nhanh %s 67W hai cổng', price: 590_000, variants: CHARGER_COLORS,
-    specs: [['Công suất', '67W tổng'], ['Cổng ra', '1 × USB-C + 1 × USB-A'], ['Chuẩn sạc nhanh', 'PD 3.0 + QC 4+'], ['Công nghệ', 'GaN, thân nhỏ hơn 30%'], ['Bảo hành', '12 tháng']] },
-  { name: 'Cáp sạc %s USB-C to USB-C 1m', price: 190_000, variants: [{ color: 'Trắng' }, { color: 'Đen' }],
-    specs: [['Chiều dài', '1 m'], ['Đầu nối', 'USB-C sang USB-C'], ['Dòng tối đa', '5A / 100W'], ['Chất liệu', 'Dây dù bện chống đứt'], ['Bảo hành', '12 tháng']] },
-  { name: 'Cáp sạc %s USB-C to Lightning 1m', price: 250_000, variants: [{ color: 'Trắng' }],
-    specs: [['Chiều dài', '1 m'], ['Đầu nối', 'USB-C sang Lightning'], ['Chuẩn', 'MFi certified'], ['Dòng tối đa', '3A'], ['Bảo hành', '12 tháng']] },
-  { name: 'Cáp sạc %s USB-C 2m chống đứt', price: 260_000, variants: [{ color: 'Đen' }],
-    specs: [['Chiều dài', '2 m'], ['Đầu nối', 'USB-C sang USB-C'], ['Dòng tối đa', '5A / 100W'], ['Chất liệu', 'Vỏ dù bện, chịu 20.000 lần gập'], ['Bảo hành', '12 tháng']] },
-  { name: 'Sạc dự phòng %s 10.000mAh', price: 490_000, variants: [{ color: 'Đen', storage: '10.000mAh' }, { color: 'Trắng', storage: '10.000mAh' }],
-    specs: [['Dung lượng', '10.000 mAh'], ['Công suất', '22.5W'], ['Cổng ra', '1 × USB-C + 1 × USB-A'], ['Cổng vào', 'USB-C'], ['Bảo hành', '12 tháng']] },
-  { name: 'Sạc dự phòng %s 20.000mAh', price: 790_000, variants: [{ color: 'Đen', storage: '20.000mAh' }],
-    specs: [['Dung lượng', '20.000 mAh'], ['Công suất', '30W'], ['Cổng ra', '2 × USB-C + 1 × USB-A'], ['Tiện ích', 'Màn LED báo % pin'], ['Bảo hành', '12 tháng']] },
-  { name: 'Sạc không dây %s 15W', price: 450_000, variants: CHARGER_COLORS,
-    specs: [['Công suất', '15W'], ['Chuẩn', 'Qi2 / MagSafe'], ['Kiểu dáng', 'Đế đứng, góc nghiêng 60°'], ['Tiện ích', 'Vẫn sạc được khi đeo ốp dày 5mm'], ['Bảo hành', '12 tháng']] },
-  { name: 'Đế sạc %s 3 trong 1', price: 890_000, variants: [{ color: 'Đen' }],
-    specs: [['Công suất', '15W + 5W + 5W'], ['Chuẩn', 'Qi2, sạc đồng thời máy + tai nghe + đồng hồ'], ['Kiểu dáng', 'Đế gập gọn mang đi'], ['Phụ kiện kèm', 'Củ sạc 30W + cáp 1.5m'], ['Bảo hành', '12 tháng']] },
-]
-
-// Tai nghe — đặt tên theo HÃNG
-const EARPHONE_TEMPLATES: AccessoryTemplate[] = [
-  { name: 'Tai nghe Bluetooth %s TWS Air', price: 690_000, variants: EARPHONE_COLORS,
-    specs: [['Kiểu tai nghe', 'True Wireless nhét tai'], ['Kết nối', 'Bluetooth 5.3'], ['Thời lượng pin', '5 giờ, 24 giờ kèm hộp sạc'], ['Chống nước', 'IPX4'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe Bluetooth %s TWS Pro chống ồn', price: 1_490_000, variants: EARPHONE_COLORS,
-    specs: [['Kiểu tai nghe', 'True Wireless nhét tai'], ['Chống ồn', 'ANC chủ động tối đa 42dB'], ['Kết nối', 'Bluetooth 5.3, đa điểm 2 thiết bị'], ['Thời lượng pin', '6 giờ, 30 giờ kèm hộp sạc'], ['Chống nước', 'IPX5'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe chụp tai %s Studio', price: 2_890_000, variants: [{ color: 'Đen' }, { color: 'Xám' }],
-    specs: [['Kiểu tai nghe', 'Chụp tai over-ear'], ['Chống ồn', 'ANC lai 2 micro'], ['Kết nối', 'Bluetooth 5.2 + jack 3.5mm'], ['Thời lượng pin', '40 giờ (bật ANC 30 giờ)'], ['Trọng lượng', '268 g'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe nhét tai %s có dây', price: 190_000, variants: [{ color: 'Trắng' }],
-    specs: [['Kiểu tai nghe', 'Nhét tai có dây'], ['Đầu cắm', 'USB-C'], ['Điều khiển', 'Nút chỉnh âm lượng trên dây'], ['Chiều dài dây', '1.2 m'], ['Bảo hành', '6 tháng']] },
-  { name: 'Tai nghe thể thao %s móc vành tai', price: 890_000, variants: [{ color: 'Đen' }, { color: 'Xanh lá' }],
-    specs: [['Kiểu tai nghe', 'Móc vành tai, ôm chắc khi chạy'], ['Kết nối', 'Bluetooth 5.3'], ['Thời lượng pin', '8 giờ, 32 giờ kèm hộp sạc'], ['Chống nước', 'IPX7 chịu mưa và mồ hôi'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe gaming %s độ trễ thấp', price: 1_190_000, variants: [{ color: 'Đen' }],
-    specs: [['Kiểu tai nghe', 'True Wireless, chế độ game'], ['Độ trễ', '45ms ở chế độ game'], ['Kết nối', 'Bluetooth 5.3'], ['Thời lượng pin', '7 giờ, 28 giờ kèm hộp sạc'], ['Tiện ích', 'Đèn RGB trên hộp sạc'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe %s Lite bản tiêu chuẩn', price: 390_000, variants: EARPHONE_COLORS,
-    specs: [['Kiểu tai nghe', 'True Wireless nhét tai'], ['Kết nối', 'Bluetooth 5.2'], ['Thời lượng pin', '4 giờ, 18 giờ kèm hộp sạc'], ['Chống nước', 'IPX4'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe %s bán nhét tai', price: 590_000, variants: EARPHONE_COLORS,
-    specs: [['Kiểu tai nghe', 'Bán nhét tai, không bí tai'], ['Kết nối', 'Bluetooth 5.3'], ['Thời lượng pin', '5 giờ, 20 giờ kèm hộp sạc'], ['Micro', '2 micro khử ồn khi gọi'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe %s Max chống ồn cao cấp', price: 5_990_000, variants: [{ color: 'Đen' }, { color: 'Bạc' }],
-    specs: [['Kiểu tai nghe', 'Chụp tai over-ear'], ['Chống ồn', 'ANC thích ứng, 8 micro'], ['Kết nối', 'Bluetooth 5.3, LDAC'], ['Thời lượng pin', '30 giờ bật ANC'], ['Chất liệu', 'Khung nhôm, đệm da cừu'], ['Bảo hành', '12 tháng']] },
-  { name: 'Tai nghe kẹp vành tai %s open-ear', price: 1_690_000, variants: [{ color: 'Đen' }, { color: 'Be' }],
-    specs: [['Kiểu tai nghe', 'Kẹp vành tai, không bịt ống tai'], ['Ưu điểm', 'Vẫn nghe được tiếng xung quanh khi đi đường'], ['Kết nối', 'Bluetooth 5.3'], ['Thời lượng pin', '6 giờ, 24 giờ kèm hộp sạc'], ['Bảo hành', '12 tháng']] },
-]
-
-interface AccessoryGroup {
-  categoryId: string
-  templates: AccessoryTemplate[]
-  /** Ốp lưng đặt tên theo mẫu máy; sạc và tai nghe đặt theo hãng */
-  nameBy: 'model' | 'brand'
-}
-
-interface PhoneRef {
-  name: string
-  brandSlug: string
-}
-
-/**
- * Sinh toàn bộ dữ liệu phụ kiện — hàm THUẦN, không chạm database.
- *
- * Tách riêng để kiểm chứng được (đếm số lượng, kiểm slug/SKU trùng) mà không
- * phải chạy `npm run seed`, vốn xoá sạch mọi bảng trước khi dựng lại.
- */
-function buildAccessories(
-  groups: AccessoryGroup[],
-  phones: PhoneRef[],
-  brandBySlug: Record<string, { id: string; name: string }>,
-  copiesPerTemplate: number,
-) {
-  const rows = []
-  const usedSlugs = new Set<string>()
-  // Sạc và tai nghe đặt tên theo hãng, nên phải XOAY VÒNG QUA DANH SÁCH HÃNG.
-  // Lấy hãng của máy thứ 0,1,2 như nhóm ốp lưng thì ra ba lần cùng một hãng
-  // (file crawl gom máy theo hãng), tức ba sản phẩm trùng tên y hệt nhau.
-  const brandList = Object.values(brandBySlug)
-  let seq = 0
-
-  for (const group of groups) {
-    for (let ti = 0; ti < group.templates.length; ti++) {
-      const tpl = group.templates[ti]
-
-      for (let copy = 0; copy < copiesPerTemplate; copy++) {
-        seq++
-        // Lấy hãng và tên máy từ chính danh sách máy đang bán: ốp lưng phải hợp
-        // với máy có thật trong shop, và hãng thì khỏi phải bịa thêm
-        const idx = ti * copiesPerTemplate + copy
-        const phone = phones[idx % phones.length]
-        const owner =
-          group.nameBy === 'brand'
-            ? brandList[idx % brandList.length]
-            : brandBySlug[phone.brandSlug]
-        if (!owner) continue
-
-        // "Điện thoại iPhone 16 Pro Max" -> "iPhone 16 Pro Max": tên phụ kiện đã
-        // có sẵn loại hàng ở đầu ("Ốp lưng ..."), giữ chữ "Điện thoại" là thừa
-        const model = phone.name.replace(/^Điện thoại\s+/i, '').trim()
-        const name = tpl.name.replace('%s', group.nameBy === 'model' ? model : owner.name)
-
-        // Cùng luật giảm giá với điện thoại: cứ 3 sản phẩm có 1 cái giảm sâu
-        const deepSale = seq % 3 === 0
-        const salePrice = tpl.price
-        const originalPrice = deepSale ? round0(salePrice / 0.85) : round0(salePrice / 0.95)
-
-        const tagSlugs = [deepSale ? 'giam-gia' : 'ban-chay']
-        if (copy === 0) tagSlugs.push('moi-nhat')
-
-        // Slug sạch, chỉ thêm hậu tố khi thật sự đụng nhau — URL sản phẩm là thứ
-        // khách nhìn thấy, không nên dính đuôi kỹ thuật nếu không cần
-        let slug = slugify(name)
-        for (let n = 2; usedSlugs.has(slug); n++) slug = `${slugify(name)}-${n}`
-        usedSlugs.add(slug)
-
-        rows.push({
-          name,
-          slug,
-          description: `<p>${name} chính hãng, phân phối bởi Mobivexa. ${tpl.specs[0][0]}: ${tpl.specs[0][1]}.</p>`,
-          categoryId: group.categoryId,
-          brandId: owner.id,
-          // Phụ kiện KHÔNG bao giờ nổi bật: `/products/featured` sắp theo mới
-          // nhất mà phụ kiện tạo sau cùng, nên chỉ cần vài cái nổi bật là chúng
-          // chiếm hết đầu hàng — mà ảnh phụ kiện lại là ảnh dựng sẵn (khối màu
-          // phẳng), đứng cạnh ảnh máy chụp thật trông như lỗi tải ảnh.
-          isFeatured: false,
-          tagSlugs,
-          images: accessoryImages(name),
-          variants: tpl.variants.map((v, vi) => ({
-            sku: `MBV-PK${seq}-${vi + 1}`,
-            color: v.color ?? null,
-            storage: v.storage ?? null,
-            ram: null,
-            originalPrice,
-            salePrice,
-            // Tồn kho rải đều nhưng cố định theo seq -> chạy lại seed ra y hệt
-            stock: ((seq * 7 + vi * 3) % 40) + 5,
-            isActive: true,
-          })),
-          specs: tpl.specs.map(([label, value], i) => ({ label, value, sortOrder: i })),
-        })
+  let raws: CellphoneRaw[] = []
+  if (statSync(source).isDirectory()) {
+    // Bỏ file ẩn (.skipped-categories.json) và import-failures.json (sổ lỗi
+    // của crawler, không phải sản phẩm). Sắp theo tên file để mỗi lần chạy
+    // đọc cùng một thứ tự — thứ tự quyết định brandIdx nên phải cố định.
+    const files = readdirSync(source)
+      .filter((f) => f.endsWith('.json') && !f.startsWith('.') && f !== 'import-failures.json')
+      .sort()
+    for (const f of files) {
+      try {
+        const parsed = JSON.parse(readFileSync(join(source, f), 'utf8')) as CellphoneRaw
+        if (parsed?.name && parsed?.sku) raws.push(parsed)
+      } catch {
+        console.warn(`  ⚠  Bỏ qua file hỏng: ${f}`)
       }
     }
+  } else {
+    const parsed = JSON.parse(readFileSync(source, 'utf8'))
+    if (Array.isArray(parsed)) raws = parsed
+    else if (Array.isArray(parsed?.products)) raws = parsed.products
+    else raws = [parsed]
   }
 
-  return rows
+  const skipped: string[] = []
+  const products: SeedProduct[] = []
+  for (const raw of raws) {
+    // Lọc phụ kiện/máy tính bảng như crawler — airpods sót trong raw không
+    // được lọt vào DB (demo bán điện thoại)
+    if (SKIP_PATTERN.test(raw.name ?? '')) {
+      skipped.push(raw.sku ?? raw.name)
+      continue
+    }
+    const p = normalizeRaw(raw)
+    if (!p) {
+      skipped.push(raw.sku ?? raw.name ?? '(không tên)')
+      continue
+    }
+    products.push(p)
+  }
+
+  console.log(`    Đọc được ${products.length} sản phẩm hợp lệ, bỏ ${skipped.length} mục lọc ra`)
+  for (const s of skipped) console.log(`      - bỏ: ${s}`)
+  return { products, skipped }
 }
 
-/**
- * Ảnh phụ kiện là ảnh dựng sẵn — crawler không quét phụ kiện nên không có ảnh thật.
- *
- * Màu XÁM NHẠT, chữ xám, cố ý không dùng màu nền rực theo từng nhóm hàng: lưới
- * sản phẩm trộn lẫn máy (ảnh chụp thật) với phụ kiện, mà một ô tím/xanh lá đặc
- * đứng cạnh ảnh máy trông như lỗi tải ảnh chứ không như ảnh sản phẩm. Nền nhạt
- * đọc ra đúng nghĩa "chưa có ảnh" và không cướp mắt người xem.
- */
-function accessoryImages(label: string) {
-  const text = (s: string) => encodeURIComponent(s.slice(0, 26))
-  const publicId = slugify(label)
-  return [
-    { url: `https://placehold.co/800x800/EEF2F7/64748B?text=${text(label)}`, publicId: `mobivexa/phu-kien/${publicId}/0`, isCover: true, sortOrder: 0 },
-    { url: `https://placehold.co/800x800/E2E8F0/64748B?text=${text('Mặt sau')}`, publicId: `mobivexa/phu-kien/${publicId}/1`, isCover: false, sortOrder: 1 },
-  ]
-}
+// ─── Taxonomy chuẩn của demo ──────────────────────────────────────────────────
+//
+// Đúng bộ danh mục/thương hiệu DB demo đang dùng — KHÔNG dùng bộ của seed cũ
+// (gaming, pin trâu, brand "apple"...) vì DB thật có brand slug là "iphone"
+// và không có brand "apple". Logo trỏ thẳng CDN Cloudinary của dự án để DB
+// trắng cũng có logo y như demo.
 
-let _orderSeq = 0
-function makeOrderCode(): string {
-  _orderSeq++
-  return 'MBV' + Date.now().toString().slice(-7) + _orderSeq.toString().padStart(3, '0')
-}
+const BRAND_SEED = [
+  { slug: 'realme', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373377/brands/rmwvj9xkfl7fgox6mztr.webp' },
+  { slug: 'iphone', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373395/brands/yvjskzluzv6yg0eypsba.png' },
+  { slug: 'xiaomi', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373406/brands/wwxert27q3uywldgcbom.png' },
+  { slug: 'meizu', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373419/brands/zukhe0yebguppv8egpcz.webp' },
+  { slug: 'honor', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373442/brands/lv5cmmcwliwzfaobolmm.webp' },
+  { slug: 'huawei', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373455/brands/qltwan1ica1d6n1uvb6x.png' },
+  { slug: 'techno', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373466/brands/q77kdsvzqasyuq9aagoy.webp' },
+  { slug: 'oppo', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373514/brands/bsvnlbfgxqyxan9ealej.webp' },
+  { slug: 'samsung', logoUrl: 'https://res.cloudinary.com/duxck3juv/image/upload/v1787373549/brands/pkyvbn41v0ama9ijvw4g.png' },
+]
 
-// Tags suy ra theo vị trí trong brand + giá + danh mục — đảm bảo phủ đủ hot/giảm giá
-function computeTags(p: CrawlProduct, brandIdx: number, hasDiscount: boolean): string[] {
+const PARENT_CATEGORY_SEED = [
+  { name: 'Điện thoại', slug: 'dien-thoai', description: 'Tất cả các dòng điện thoại di động chính hãng' },
+  { name: 'Phụ kiện', slug: 'phu-kien', description: 'Phụ kiện điện thoại chính hãng' },
+  { name: 'Hàng cũ', slug: 'hang-cu', description: 'Điện thoại cũ đã qua sử dụng, kiểm định đầy đủ' },
+]
+
+const CHILD_CATEGORY_SEED = [
+  { name: 'iphone', slug: 'iphone', parentSlug: 'dien-thoai' },
+  { name: 'android', slug: 'android', parentSlug: 'dien-thoai' },
+]
+
+// Bộ tag chuẩn cho lưới lọc trang sản phẩm. Tag lạ có sẵn trong DB (vd
+// "giam-50") không bị đụng tới — chỉ thêm, không xoá.
+const TAG_SEED = [
+  { name: 'Hot', slug: 'hot' },
+  { name: 'Mới nhất', slug: 'moi-nhat' },
+  { name: 'Giảm giá', slug: 'giam-gia' },
+  { name: 'Flagship', slug: 'flagship' },
+  { name: 'Bán chạy', slug: 'ban-chay' },
+  { name: 'Gaming', slug: 'gaming' },
+  { name: '5G', slug: '5g' },
+  { name: 'Pin trâu', slug: 'pin-trau' },
+]
+
+// ─── Users mẫu ────────────────────────────────────────────────────────────────
+//
+// Đúng bộ tài khoản demo DB đang dùng (admin1 / user6 / user1-5). Đã tồn tại
+// thì KHÔNG đụng gì cả — password hash thật của demo phải giữ nguyên, seed
+// chỉ đặt Password123! khi tạo mới trên DB trắng.
+const USER_SEED = [
+  { email: 'admin1@admin.com', fullName: 'admin1', role: UserRole.ADMIN },
+  { email: 'user6@gmail.com', fullName: 'user6', role: UserRole.STAFF },
+  { email: 'user1@gmail.com', fullName: 'user1', role: UserRole.CUSTOMER },
+  { email: 'user2@gmail.com', fullName: 'user2', role: UserRole.CUSTOMER },
+  { email: 'user3@gmail.com', fullName: 'user3', role: UserRole.CUSTOMER },
+  { email: 'user4@gmail.com', fullName: 'user4', role: UserRole.CUSTOMER },
+  { email: 'user5@gmail.com', fullName: 'user5', role: UserRole.CUSTOMER },
+]
+
+// ─── Coupon demo ──────────────────────────────────────────────────────────────
+//
+// Ngày luôn tính theo thời điểm chạy seed: startsAt lùi 7 ngày (đã mở),
+// endsAt đẩy tới 30/45/60 ngày. usedCount KHÔNG nằm trong update — lượt dùng
+// thật của demo phải giữ nguyên sau mỗi lần seed.
+const COUPON_SEED = [
+  {
+    code: 'CHAOBAN10',
+    description: 'Giảm 10% cho khách mới, tối đa 300k',
+    type: CouponType.PERCENT,
+    value: 10,
+    maxDiscount: 300_000,
+    minOrderValue: 0,
+    usageLimit: null as number | null,
+    days: 30,
+  },
+  {
+    code: 'SALE15',
+    description: 'Giảm 15% cho đơn từ 5 triệu, tối đa 1 triệu',
+    type: CouponType.PERCENT,
+    value: 15,
+    maxDiscount: 1_000_000,
+    minOrderValue: 5_000_000,
+    usageLimit: 100,
+    days: 45,
+  },
+  {
+    code: 'GIAM200K',
+    description: 'Giảm thẳng 200k cho đơn từ 3 triệu',
+    type: CouponType.FIXED,
+    value: 200_000,
+    maxDiscount: null,
+    minOrderValue: 3_000_000,
+    usageLimit: 50,
+    days: 60,
+  },
+]
+
+// ─── Tags suy ra cho sản phẩm (giống tinh thần seed cũ) ───────────────────────
+function computeTags(p: SeedProduct, price: number, brandIdx: number, hasDiscount: boolean): string[] {
   const t = new Set<string>()
-  const specsText = Object.values(p.specs).join(' ').toLowerCase()
-  const is5G = /5g/.test(specsText) || /5g/i.test(p.name)
-  const isFeaturePhone = p.categorySlug === 'dien-thoai-pho-thong'
-
+  const specsText = p.specs.map((s) => `${s.label} ${s.value}`).join(' ').toLowerCase()
   if (brandIdx === 0) t.add('hot')
-  if (p.price >= 15_000_000) t.add('flagship')
-  if (p.categorySlug === 'dien-thoai-gaming') t.add('gaming')
-  if (is5G && !isFeaturePhone) t.add('5g')
+  if (price >= 15_000_000) t.add('flagship')
+  if (/5g/.test(specsText) || /5g/i.test(p.name)) t.add('5g')
+  if (/gaming|pova|rog/i.test(p.name)) t.add('gaming')
   if (hasDiscount) t.add('giam-gia')
   if (brandIdx <= 1) t.add('moi-nhat')
   if (brandIdx >= 2) t.add('ban-chay')
   return [...t]
 }
 
+// Sinh slug trống kế tiếp theo đúng luật generateUniqueSlug của backend
+// (root, root-1, root-2...) nhưng tra trong bộ nhớ — chạy seed nhiều lần trên
+// DB trắng vẫn ra cùng một slug cho cùng một sản phẩm.
+function pickFreeSlug(root: string, taken: Set<string>): string {
+  let slug = root
+  let counter = 1
+  while (taken.has(slug)) slug = `${root}-${counter++}`
+  taken.add(slug)
+  return slug
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
-  const data = loadCrawl()
-  // Tiền tố publicId của ảnh: lấy theo nguồn thật thay vì hardcode "cellphones",
-  // vì file crawl giờ có thể đến từ nguồn khác
-  const sourceKey = slugify(String(data.source || 'crawl').split(' ')[0]) || 'crawl'
-  console.log(`🌱  Seed Mobivexa từ ${data.source} (crawl ${data.crawledAt.slice(0, 10)})`)
-  console.log(`    ${data.products.length} sản phẩm, ${data.brands.length} brands\n`)
+  const { products } = loadCrawlProducts()
 
-  // ── Cleanup ────────────────────────────────────────────────────────────────
-  process.stdout.write('  🗑   Xóa dữ liệu cũ... ')
-  await prisma.reviewHelpful.deleteMany()
-  await prisma.reviewPhoto.deleteMany()
-  await prisma.review.deleteMany()
-  await prisma.orderItem.deleteMany()
-  await prisma.order.deleteMany()
-  await prisma.cartItem.deleteMany()
-  await prisma.cart.deleteMany()
-  await prisma.productTag.deleteMany()
-  await prisma.productImage.deleteMany()
-  await prisma.productSpec.deleteMany()
-  await prisma.productVariant.deleteMany()
-  await prisma.product.deleteMany()
-  await prisma.tag.deleteMany()
-  await prisma.brand.deleteMany()
-  await prisma.category.deleteMany({ where: { parentId: { not: null } } })
-  await prisma.category.deleteMany()
-  await prisma.address.deleteMany()
-  await prisma.refreshToken.deleteMany()
-  await prisma.oAuthAccount.deleteMany()
-  await prisma.user.deleteMany()
-  console.log('✓')
-
-  const passwordHash = await bcrypt.hash('Password123!', 10)
-
-  // ── Brands (chỉ tạo brand có ít nhất 1 sản phẩm) ─────────────────────────────
-  process.stdout.write('  📦  Tạo thương hiệu... ')
-  const brandLogo = (label: string, bg: string) =>
-    `https://placehold.co/300x300/${bg}/FFFFFF?text=${encodeURIComponent(label)}`
-  const activeBrandSlugs = new Set(data.products.map((p) => p.brandSlug))
-  const usedBrands = data.brands.filter((b) => activeBrandSlugs.has(b.slug))
-  const brands = await Promise.all(
-    usedBrands.map((b) =>
-      prisma.brand.create({
-        data: { name: b.name, slug: b.slug, description: `Điện thoại chính hãng ${b.name}`, logoUrl: brandLogo(b.name, b.color) },
-      }),
-    ),
-  )
-  const brand = Object.fromEntries(brands.map((b) => [b.slug, b]))
-  console.log(`✓  (${brands.length} brands)`)
-
-  // ── Categories (cây danh mục — slug khớp cellphones.com.vn) ───────────────────
-  process.stdout.write('  📂  Tạo danh mục... ')
-  const catPhone     = await prisma.category.create({ data: { name: 'Điện thoại', slug: 'dien-thoai', description: 'Tất cả các dòng điện thoại di động chính hãng', sortOrder: 1 } })
-  const catAccessory = await prisma.category.create({ data: { name: 'Phụ kiện',   slug: 'phu-kien',   description: 'Phụ kiện điện thoại chính hãng', sortOrder: 2 } })
-  const phoneChildren = await Promise.all([
-    prisma.category.create({ data: { name: 'iPhone',                slug: 'iphone',                        parentId: catPhone.id, sortOrder: 1 } }),
-    prisma.category.create({ data: { name: 'Điện thoại Android',    slug: 'dien-thoai-android',            parentId: catPhone.id, sortOrder: 2 } }),
-    prisma.category.create({ data: { name: 'Điện thoại Gaming',     slug: 'dien-thoai-gaming',             parentId: catPhone.id, sortOrder: 3 } }),
-    prisma.category.create({ data: { name: 'Điện thoại pin trâu',   slug: 'dien-thoai-pin-trau',           parentId: catPhone.id, sortOrder: 4 } }),
-    prisma.category.create({ data: { name: 'Điện thoại chụp ảnh',   slug: 'dien-thoai-chup-anh-quay-phim', parentId: catPhone.id, sortOrder: 5 } }),
-    prisma.category.create({ data: { name: 'Điện thoại phổ thông',  slug: 'dien-thoai-pho-thong',          parentId: catPhone.id, sortOrder: 6 } }),
-  ])
-  const [catCase, catCharger, catEarphone] = await Promise.all([
-    prisma.category.create({ data: { name: 'Ốp lưng - Bao da', slug: 'bao-da-op-lung', parentId: catAccessory.id, sortOrder: 1 } }),
-    prisma.category.create({ data: { name: 'Sạc - Cáp',        slug: 'sac-cap',        parentId: catAccessory.id, sortOrder: 2 } }),
-    prisma.category.create({ data: { name: 'Tai nghe',         slug: 'tai-nghe',       parentId: catAccessory.id, sortOrder: 3 } }),
-  ])
-  // Gồm CẢ danh mục phụ kiện: vòng tạo sản phẩm bỏ qua bản ghi nào không tìm
-  // thấy `cat[p.categorySlug]`, nên thiếu ở đây là toàn bộ ốp lưng / sạc cáp /
-  // tai nghe trong file crawl bị loại âm thầm, không một dòng cảnh báo.
-  const cat = Object.fromEntries(
-    [...phoneChildren, catCase, catCharger, catEarphone].map((c) => [c.slug, c]),
-  )
-  console.log('✓  (2 cha + 9 con)')
-
-  // ── Tags ───────────────────────────────────────────────────────────────────
-  process.stdout.write('  🏷   Tạo tags... ')
-  const tagSeed = [
-    { name: 'Hot', slug: 'hot' }, { name: 'Mới nhất', slug: 'moi-nhat' },
-    { name: 'Giảm giá', slug: 'giam-gia' }, { name: 'Flagship', slug: 'flagship' },
-    { name: 'Bán chạy', slug: 'ban-chay' }, { name: 'Gaming', slug: 'gaming' },
-    { name: '5G', slug: '5g' }, { name: 'Pin trâu', slug: 'pin-trau' },
-  ]
-  const tags = await Promise.all(tagSeed.map((t) => prisma.tag.create({ data: t })))
-  const tag = Object.fromEntries(tags.map((t) => [t.slug, t]))
-  console.log(`✓  (${tags.length} tags)`)
-
-  // ── Products (từ crawl JSON) ─────────────────────────────────────────────────
-  process.stdout.write('  📱  Tạo sản phẩm... ')
-  const brandCounter: Record<string, number> = {}
-  const createdProducts = []
-  let totalImages = 0
-  let totalSpecs = 0
-  const usedSkus = new Set<string>()
-
-  for (let i = 0; i < data.products.length; i++) {
-    const p = data.products[i]
-    if (!brand[p.brandSlug] || !cat[p.categorySlug]) continue
-    const brandIdx = brandCounter[p.brandSlug] ?? 0
-    brandCounter[p.brandSlug] = brandIdx + 1
-
-    // brand-idx 1 và mỗi sp thứ 3 → giảm sâu (flash sale); còn lại giảm nhẹ 5%
-    const deepSale = brandIdx === 1 || i % 3 === 0
-    const salePrice = p.price
-    const originalPrice = deepSale ? round0(salePrice / 0.85) : round0(salePrice / 0.95)
-    const tagSlugs = computeTags(p, brandIdx, true)
-    const isFeatured = brandIdx === 0
-
-    const storage = cleanSpec(p.specs['Bộ nhớ trong'])
-    const ram = cleanSpec(p.specs['Dung lượng RAM'])
-    const color = firstColor(p.specs['Màu sắc'])
-    const stock = ((i * 13) % 40) + 6
-
-    const images = p.images.map((im, idx) => ({
-      url: im.url, // URL CDN cellphones (đã thêm vào next.config remotePatterns)
-      publicId: `${sourceKey}/${p.slug}/${idx}`,
-      isCover: im.isCover,
-      sortOrder: idx,
-    }))
-    totalImages += images.length
-
-    // Thông số kỹ thuật lấy thẳng từ bản crawl — cùng nguồn với ảnh và mô tả,
-    // không phải số liệu tự nghĩ ra
-    const productSpecs = buildSpecs(p.specs)
-    totalSpecs += productSpecs.length
-
-    const created = await prisma.product.create({
-      data: {
-        name: p.name, slug: p.slug, description: p.description || p.name,
-        categoryId: cat[p.categorySlug].id, brandId: brand[p.brandSlug].id,
-        isFeatured, isActive: true,
-        images: { create: images },
-        variants: {
-          create: [{
-            sku: makeSku(p.slug, usedSkus),
-            color, storage, ram,
-            originalPrice, salePrice, stock, isActive: true,
-          }],
-        },
-        productTags: { create: tagSlugs.map((s) => ({ tagId: tag[s].id })) },
-        specs: productSpecs.length ? { create: productSpecs } : undefined,
-      },
-      include: { variants: true },
+  // ── Danh mục (cha trước — con cần parentId) ───────────────────────────────
+  process.stdout.write('  📂  Danh mục... ')
+  const categoryBySlug = new Map<string, { id: string; slug: string }>()
+  for (const c of PARENT_CATEGORY_SEED) {
+    const row = await prisma.category.upsert({
+      where: { slug: c.slug },
+      create: { name: c.name, slug: c.slug, description: c.description },
+      update: {},
     })
-    createdProducts.push(created)
+    categoryBySlug.set(c.slug, row)
   }
-  console.log(`✓  (${createdProducts.length} sp, ${createdProducts.length} variants, ${totalImages} ảnh, ${totalSpecs} thông số)`)
+  for (const c of CHILD_CATEGORY_SEED) {
+    const parent = categoryBySlug.get(c.parentSlug)
+    if (!parent) continue
+    const row = await prisma.category.upsert({
+      where: { slug: c.slug },
+      create: { name: c.name, slug: c.slug, parentId: parent.id },
+      update: {},
+    })
+    categoryBySlug.set(c.slug, row)
+  }
+  console.log(`✓  (${categoryBySlug.size} danh mục)`)
 
-  // ── Phụ kiện (sinh từ mẫu) ───────────────────────────────────────────────────
-  //
-  // CHỈ chạy khi file crawl không có phụ kiện. Trộn hàng thật với hàng dựng tay
-  // thì trong cùng một danh mục sẽ có sản phẩm ảnh thật đứng cạnh ảnh placeholder
-  // xám, giá thật cạnh giá bịa — nhìn là biết dữ liệu hỏng.
-  const crawlAccessoryCount = data.products.filter((p) => ACCESSORY_SLUGS.has(p.categorySlug)).length
+  // ── Thương hiệu ─────────────────────────────────────────────────────────────
+  process.stdout.write('  📦  Thương hiệu... ')
+  const brandBySlug = new Map<string, { id: string; slug: string }>()
+  for (const b of BRAND_SEED) {
+    const row = await prisma.brand.upsert({
+      where: { slug: b.slug },
+      // name duy nhất và demo đặt name === slug — tạo mới theo đúng quy ước đó
+      create: { name: b.slug, slug: b.slug, logoUrl: b.logoUrl, description: `Điện thoại chính hãng ${b.slug}` },
+      update: {},
+    })
+    brandBySlug.set(b.slug, row)
+  }
+  console.log(`✓  (${brandBySlug.size} brands)`)
 
-  const accessories = crawlAccessoryCount > 0 ? [] : buildAccessories(
-    [
-      { categoryId: catCase.id,     templates: CASE_TEMPLATES,     nameBy: 'model' },
-      { categoryId: catCharger.id,  templates: CHARGER_TEMPLATES,  nameBy: 'brand' },
-      { categoryId: catEarphone.id, templates: EARPHONE_TEMPLATES, nameBy: 'brand' },
-    ],
-    data.products,
-    brand,
-    ACCESSORY_COPIES_PER_TEMPLATE,
-  )
+  // ── Tags ────────────────────────────────────────────────────────────────────
+  process.stdout.write('  🏷   Tags... ')
+  const tagBySlug = new Map<string, { id: string; slug: string }>()
+  for (const t of TAG_SEED) {
+    const row = await prisma.tag.upsert({ where: { slug: t.slug }, create: t, update: {} })
+    tagBySlug.set(t.slug, row)
+  }
+  console.log(`✓  (${tagBySlug.size} tags chuẩn)`)
 
-  if (crawlAccessoryCount > 0) {
-    console.log(`  🎧  Phụ kiện: dùng ${crawlAccessoryCount} sp THẬT từ file crawl, bỏ qua phần dựng tay`)
-  } else {
-    process.stdout.write('  🎧  Tạo phụ kiện... ')
+  // ── Users mẫu (đã tồn tại thì giữ nguyên tuyệt đối) ────────────────────────
+  process.stdout.write('  👤  Người dùng mẫu... ')
+  const passwordHash = await bcrypt.hash('Password123!', 10)
+  for (const u of USER_SEED) {
+    await prisma.user.upsert({
+      where: { email: u.email },
+      create: { ...u, passwordHash, isActive: true, emailVerified: true },
+      // Không đụng gì vào user đã có: đổi hash/fullName ở đây là đổi mật khẩu
+      // đăng nhập demo của cả nhóm
+      update: {},
+    })
+  }
+  console.log(`✓  (${USER_SEED.length} tài khoản mẫu)`)
 
-    // Tạo theo lô chứ không await từng cái: mỗi sản phẩm kéo theo ảnh, variant,
-    // tag và thông số, nên tuần tự là ngần ấy transaction nối đuôi nhau.
-    // Lô 5 chứ không lớn hơn: pool của pg mặc định 10 connection, mỗi create là
-    // một transaction giữ trọn một connection — để dư một nửa cho chắc.
-    const BATCH_SIZE = 5
-    for (let i = 0; i < accessories.length; i += BATCH_SIZE) {
-      await Promise.all(
-        accessories.slice(i, i + BATCH_SIZE).map((a) =>
-          prisma.product.create({
-            data: {
-              name: a.name,
-              slug: a.slug,
-              description: a.description,
-              categoryId: a.categoryId,
-              brandId: a.brandId,
-              isFeatured: a.isFeatured,
-              isActive: true,
-              images: { create: a.images },
-              variants: { create: a.variants },
-              productTags: { create: a.tagSlugs.map((s) => ({ tagId: tag[s].id })) },
-              specs: { create: a.specs },
-            },
-          })
-        )
-      )
+  // ── Preload: tra slug/sku trong bộ nhớ để không query từng cái ─────────────
+  const [productRows, variantRows, imageIds, specIds] = await Promise.all([
+    prisma.product.findMany({ select: { id: true, slug: true } }),
+    prisma.productVariant.findMany({ select: { sku: true, productId: true } }),
+    prisma.productImage.findMany({ select: { productId: true }, distinct: ['productId'] }),
+    prisma.productSpec.findMany({ select: { productId: true }, distinct: ['productId'] }),
+  ])
+  const takenSlugs = new Set(productRows.map((p) => p.slug))
+  const productBySlug = new Map(productRows.map((p) => [p.slug, p.id]))
+  const variantOwner = new Map(variantRows.map((v) => [v.sku, v.productId]))
+  const hasImages = new Set(imageIds.map((r) => r.productId))
+  const hasSpecs = new Set(specIds.map((r) => r.productId))
+
+  // ── Sản phẩm + biến thể (upsert, KHÔNG BAO GIỜ delete) ─────────────────────
+  // Brand tra theo tên như crawler; danh mục: iPhone → "iphone", còn lại →
+  // "Điện thoại" — đúng mapping của lần import 199 máy vào DB demo.
+  const brandCounter: Record<string, number> = {}
+  let created = 0
+  let updated = 0
+  let failed = 0
+  const BATCH_SIZE = 5 // pg pool mặc định 10 connection — chừa nửa cho chắc
+
+  const writeProduct = async (p: SeedProduct): Promise<void> => {
+    const brandSlug = matchDbBrand(p)
+    if (!brandSlug) {
+      console.warn(`  ⚠  ${p.sku}: không khớp brand nào trong DB, bỏ qua`)
+      failed++
+      return
+    }
+    const brand = brandBySlug.get(brandSlug)
+    if (!brand) {
+      console.warn(`  ⚠  ${p.sku}: brand "${brandSlug}" chưa có trong DB, bỏ qua`)
+      failed++
+      return
     }
 
-    const accessoryVariants = accessories.reduce((n, a) => n + a.variants.length, 0)
-    console.log(`✓  (${accessories.length} sp, ${accessoryVariants} variants, 3 danh mục)`)
-  }
+    // iPhone vào danh mục riêng, máy Android về "Điện thoại" (slug DB thật)
+    const categorySlug = /iphone/i.test(p.name) ? 'iphone' : 'dien-thoai'
+    const category = categoryBySlug.get(categorySlug)
+    if (!category) {
+      console.warn(`  ⚠  ${p.sku}: thiếu danh mục "${categorySlug}", bỏ qua`)
+      failed++
+      return
+    }
 
-  // ── Users ──────────────────────────────────────────────────────────────────
-  process.stdout.write('  👤  Tạo người dùng... ')
-  await prisma.user.create({ data: { email: 'admin@mobivexa.com', fullName: 'Admin Mobivexa',     passwordHash, role: 'ADMIN', isActive: true, emailVerified: true } })
-  await prisma.user.create({ data: { email: 'staff@mobivexa.com', fullName: 'Nhân Viên Mobivexa', passwordHash, role: 'STAFF', isActive: true, emailVerified: true, phone: '0901234567' } })
-  const customers = await Promise.all([
-    prisma.user.create({ data: { email: 'nguyen.van.an@gmail.com', fullName: 'Nguyễn Văn An', passwordHash, phone: '0912345678', role: 'CUSTOMER', isActive: true, emailVerified: true } }),
-    prisma.user.create({ data: { email: 'tran.thi.binh@gmail.com', fullName: 'Trần Thị Bình', passwordHash, phone: '0923456789', role: 'CUSTOMER', isActive: true, emailVerified: true } }),
-    prisma.user.create({ data: { email: 'le.minh.cuong@gmail.com', fullName: 'Lê Minh Cường', passwordHash, phone: '0934567890', role: 'CUSTOMER', isActive: true, emailVerified: true } }),
-    prisma.user.create({ data: { email: 'pham.thi.dao@gmail.com',  fullName: 'Phạm Thị Đào',  passwordHash, phone: '0945678901', role: 'CUSTOMER', isActive: true, emailVerified: false } }),
-    prisma.user.create({ data: { email: 'hoang.van.em@gmail.com',  fullName: 'Hoàng Văn Em',  passwordHash, phone: '0956789012', role: 'CUSTOMER', isActive: true, emailVerified: true } }),
-  ])
-  console.log(`✓  (2 staff + ${customers.length} khách hàng)`)
+    const brandIdx = brandCounter[brandSlug] ?? 0
+    brandCounter[brandSlug] = brandIdx + 1
 
-  // ── Addresses ──────────────────────────────────────────────────────────────
-  process.stdout.write('  🏠  Tạo địa chỉ... ')
-  const provinces = ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng', 'Cần Thơ']
-  const districts = ['Đống Đa', 'Quận 1', 'Hải Châu', 'Lê Chân', 'Ninh Kiều']
-  const wards     = ['Phương Liên', 'Bến Nghé', 'Hải Châu I', 'An Biên', 'Tân An']
-  for (const [i, c] of customers.entries()) {
-    await prisma.address.createMany({
-      data: [
-        { userId: c.id, fullName: c.fullName, phone: c.phone!, province: provinces[i], district: districts[i], ward: wards[i], streetDetail: `${i + 10} Đường Láng`, isDefault: true },
-        { userId: c.id, fullName: c.fullName, phone: c.phone!, province: 'TP. Hồ Chí Minh', district: 'Quận 3', ward: 'Võ Thị Sáu', streetDetail: `${i + 20} Nguyễn Thị Minh Khai`, isDefault: false },
-      ],
-    })
-  }
-  console.log('✓')
+    // Xác định trước sản phẩm đích: nhận diện qua SKU biến thể — sku crawler
+    // là duy nhất và là dấu vết của lần import 25/09, nên slug bị đổi hậu tố
+    // (-1 vì trùng sản phẩm cũ) vẫn khớp đúng. Fallback theo slug cho DB
+    // trắng dở dang.
+    const existingId = variantOwner.get(p.sku) ?? productBySlug.get(p.slugBase)
+    let productId: string
 
-  // ── Carts (mỗi khách 1 sản phẩm khác nhau) ───────────────────────────────────
-  process.stdout.write('  🛒  Tạo giỏ hàng... ')
-  for (const [i, c] of customers.entries()) {
-    const prod = createdProducts[(i * 5) % createdProducts.length]
-    await prisma.cart.create({
-      data: { userId: c.id, items: { create: [{ variantId: prod.variants[0].id, quantity: 1 }] } },
-    })
-  }
-  console.log('✓')
+    // Ảnh CDN nguồn — chỉ dùng khi sản phẩm CHƯA có ảnh nào. DB demo đang có
+    // ảnh Cloudinary upload thật, thay bằng CDN là sụt cấp chất lượng ảnh.
+    const cdnImages = p.images.slice(0, 5).map((url, i) => ({
+      url,
+      publicId: `cellphones/${p.sku}/${i}`,
+      isCover: i === 0,
+      sortOrder: i,
+    }))
+    const specRows = p.specs
+      // Cùng giới hạn với validator sản phẩm: 60 dòng, label 100, value 500
+      .filter((s) => s.label.length <= 100 && s.value.length <= 500)
+      .slice(0, 60)
+      .map((s, i) => ({ label: s.label.trim(), value: s.value.trim(), sortOrder: i }))
 
-  // ── Orders ─────────────────────────────────────────────────────────────────
-  process.stdout.write('  📦  Tạo đơn hàng... ')
-  const pick = (n: number) => createdProducts[n % createdProducts.length]
-  const orderDefs = [
-    { userIdx: 0, prod: pick(0),  quantity: 1, status: OrderStatus.DELIVERED, paymentMethod: PaymentMethod.COD,           paymentStatus: PaymentStatus.PAID   },
-    { userIdx: 0, prod: pick(8),  quantity: 1, status: OrderStatus.DELIVERED, paymentMethod: PaymentMethod.BANK_TRANSFER, paymentStatus: PaymentStatus.PAID   },
-    { userIdx: 1, prod: pick(16), quantity: 1, status: OrderStatus.SHIPPING,  paymentMethod: PaymentMethod.COD,           paymentStatus: PaymentStatus.UNPAID },
-    { userIdx: 1, prod: pick(3),  quantity: 2, status: OrderStatus.DELIVERED, paymentMethod: PaymentMethod.BANK_TRANSFER, paymentStatus: PaymentStatus.PAID   },
-    { userIdx: 2, prod: pick(24), quantity: 1, status: OrderStatus.PENDING,   paymentMethod: PaymentMethod.COD,           paymentStatus: PaymentStatus.UNPAID },
-    { userIdx: 3, prod: pick(32), quantity: 1, status: OrderStatus.CANCELLED, paymentMethod: PaymentMethod.COD,           paymentStatus: PaymentStatus.UNPAID, cancelReason: 'Đặt nhầm sản phẩm' },
-    { userIdx: 4, prod: pick(40), quantity: 1, status: OrderStatus.DELIVERED, paymentMethod: PaymentMethod.BANK_TRANSFER, paymentStatus: PaymentStatus.PAID   },
-    { userIdx: 4, prod: pick(12), quantity: 1, status: OrderStatus.CONFIRMED, paymentMethod: PaymentMethod.COD,           paymentStatus: PaymentStatus.UNPAID },
-  ]
-
-  const createdOrders = []
-  for (const [idx, od] of orderDefs.entries()) {
-    const customer  = customers[od.userIdx]
-    const variant   = od.prod.variants[0]
-    const unitPrice = Number(variant.salePrice.toString())
-    const subtotal  = unitPrice * od.quantity
-    const shippingFee = subtotal >= 20_000_000 ? 0 : 30_000
-    const total     = subtotal + shippingFee
-
-    const order = await prisma.order.create({
-      data: {
-        orderCode: makeOrderCode(), userId: customer.id,
-        shippingName: customer.fullName, shippingPhone: customer.phone!,
-        shippingProvince: provinces[od.userIdx], shippingDistrict: districts[od.userIdx],
-        shippingWard: wards[od.userIdx], shippingDetail: `${idx + 1} Lê Lợi`,
-        subtotal, shippingFee, discount: 0, total,
-        status: od.status, paymentMethod: od.paymentMethod, paymentStatus: od.paymentStatus,
-        cancelReason: od.cancelReason ?? null,
-        paidAt: od.paymentStatus === PaymentStatus.PAID ? new Date() : null,
-        items: {
-          create: [{
-            variantId: variant.id, productName: od.prod.name, sku: variant.sku,
-            color: variant.color ?? '', storage: variant.storage ?? '', ram: variant.ram ?? '',
-            unitPrice, quantity: od.quantity, subtotal: unitPrice * od.quantity,
-          }],
+    if (existingId) {
+      await prisma.product.update({
+        where: { id: existingId },
+        // Chỉ đồng bộ phân loại — name/description là chỗ admin có thể đã
+        // chỉnh tay, seed không có quyền đè lên
+        data: { categoryId: category.id, brandId: brand.id },
+      })
+      await prisma.productVariant.upsert({
+        where: { sku: p.sku },
+        create: {
+          productId: existingId,
+          sku: p.sku,
+          originalPrice: p.price,
+          salePrice: p.price,
+          stock: 50,
+          isActive: true,
         },
-      },
-      include: { items: true },
-    })
-    createdOrders.push(order)
-  }
-  console.log(`✓  (${createdOrders.length} đơn hàng)`)
+        // Giá cập nhật theo nguồn; stock/color là số liệu vận hành — không đụng
+        update: { originalPrice: p.price, salePrice: p.price },
+      })
+      if (!hasImages.has(existingId) && cdnImages.length) {
+        await prisma.productImage.createMany({ data: cdnImages.map((im) => ({ ...im, productId: existingId })) })
+      }
+      if (!hasSpecs.has(existingId) && specRows.length) {
+        await prisma.productSpec.createMany({ data: specRows.map((s) => ({ ...s, productId: existingId })) })
+      }
+      updated++
+      productId = existingId
+    } else {
+      const slug = pickFreeSlug(p.slugBase, takenSlugs)
+      const createdProduct = await prisma.product.create({
+        data: {
+          name: p.name,
+          slug,
+          description: p.description,
+          categoryId: category.id,
+          brandId: brand.id,
+          // Máy đầu tiên của mỗi hãng lên trang chủ — như luật seed cũ
+          isFeatured: brandIdx === 0,
+          isActive: true,
+        },
+        select: { id: true },
+      })
+      await prisma.productVariant.create({
+        data: {
+          productId: createdProduct.id,
+          sku: p.sku,
+          originalPrice: p.price,
+          salePrice: p.price,
+          stock: 50,
+          isActive: true,
+        },
+      })
+      if (cdnImages.length) {
+        await prisma.productImage.createMany({ data: cdnImages.map((im) => ({ ...im, productId: createdProduct.id })) })
+      }
+      if (specRows.length) {
+        await prisma.productSpec.createMany({ data: specRows.map((s) => ({ ...s, productId: createdProduct.id })) })
+      }
+      created++
+      productId = createdProduct.id
+    }
 
-  // ── Reviews ────────────────────────────────────────────────────────────────
-  process.stdout.write('  ⭐  Tạo đánh giá... ')
-  const reviewTexts = [
-    { rating: 5, content: 'Sản phẩm tuyệt vời, đúng hàng chính hãng! Giao hàng nhanh, đóng gói cẩn thận. Màn hình đẹp, hiệu năng mạnh mẽ. Rất hài lòng!' },
-    { rating: 5, content: 'Điện thoại chất lượng vượt trội, camera chụp ảnh cực đẹp nhất là ban đêm. Shop tư vấn nhiệt tình, sẽ ủng hộ tiếp lần sau!' },
-    { rating: 4, content: 'Sản phẩm tốt, pin dùng thoải mái cả ngày. Camera sắc nét. Chỉ tiếc không kèm sạc, phải mua thêm. Nhìn chung hài lòng.' },
-    { rating: 5, content: 'Đặt chiều hôm trước, sáng hôm sau đã có hàng. Máy nguyên seal, hiệu năng mượt mà, pin rất bền. Sẽ mua thêm cho gia đình!' },
-  ]
-  const deliveredOrders = createdOrders.filter((o) => o.status === OrderStatus.DELIVERED)
-  for (let i = 0; i < Math.min(deliveredOrders.length, reviewTexts.length); i++) {
-    const order = deliveredOrders[i]
-    const orderItem = order.items[0]
-    const variant = await prisma.productVariant.findUnique({ where: { id: orderItem.variantId! }, select: { productId: true } })
-    if (!variant) continue
-    await prisma.review.create({
-      data: {
-        orderItemId: orderItem.id, userId: order.userId, productId: variant.productId,
-        variantId: orderItem.variantId, rating: reviewTexts[i].rating,
-        content: reviewTexts[i].content, status: ReviewStatus.APPROVED,
+    // Gắn tag theo lô skipDuplicates — chạy lại chỉ thêm cái thiếu, không đếm
+    // tăng, không đụng tag lạ có sẵn
+    const tagSlugs = computeTags(p, p.price, brandIdx, false)
+    const tagRows = tagSlugs
+      .map((s) => tagBySlug.get(s))
+      .filter((t): t is { id: string; slug: string } => Boolean(t))
+      .map((t) => ({ tagId: t.id, productId }))
+    if (tagRows.length) {
+      await prisma.productTag.createMany({ data: tagRows, skipDuplicates: true })
+    }
+  }
+
+  process.stdout.write(`  📱  Sản phẩm (${products.length} mục)... `)
+  for (let i = 0; i < products.length; i += BATCH_SIZE) {
+    await Promise.all(products.slice(i, i + BATCH_SIZE).map(writeProduct))
+  }
+  console.log(`✓  (tạo mới ${created}, cập nhật ${updated}, bỏ qua/lỗi ${failed})`)
+
+  // ── Coupon demo (ngày động) ─────────────────────────────────────────────────
+  process.stdout.write('  🎟   Coupon... ')
+  const now = Date.now()
+  for (const c of COUPON_SEED) {
+    await prisma.coupon.upsert({
+      where: { code: c.code },
+      create: {
+        code: c.code,
+        description: c.description,
+        type: c.type,
+        value: c.value,
+        maxDiscount: c.maxDiscount,
+        minOrderValue: c.minOrderValue,
+        usageLimit: c.usageLimit,
+        startsAt: new Date(now - 7 * DAY_MS),
+        endsAt: new Date(now + c.days * DAY_MS),
+        isActive: true,
+      },
+      // usedCount vắng mặt trong update — lượt dùng thật không bị reset
+      update: {
+        description: c.description,
+        type: c.type,
+        value: c.value,
+        maxDiscount: c.maxDiscount,
+        minOrderValue: c.minOrderValue,
+        usageLimit: c.usageLimit,
+        startsAt: new Date(now - 7 * DAY_MS),
+        endsAt: new Date(now + c.days * DAY_MS),
+        isActive: true,
       },
     })
   }
-  const reviewCount = Math.min(deliveredOrders.length, reviewTexts.length)
-  console.log(`✓  (${reviewCount} đánh giá)`)
+  console.log(`✓  (upsert ${COUPON_SEED.length} mã, hết hạn sau 30–60 ngày kể từ hôm nay)`)
 
-  // ── Summary ────────────────────────────────────────────────────────────────
-  const featuredCount = createdProducts.filter((p) => p.isFeatured).length
+  // ── Dọn mã hết hạn (bài học time-bomb 01/10) ────────────────────────────────
+  // Mã nào không được seed gia hạn mà đã qua endsAt thì tắt đi: dashboard hết
+  // treo "đang chạy" những mã khách bấm vào là báo lỗi.
+  process.stdout.write('  🧹  Tắt coupon hết hạn... ')
+  const sweep = await prisma.coupon.updateMany({
+    where: { endsAt: { lt: new Date() }, isActive: true },
+    data: { isActive: false },
+  })
+  console.log(`✓  (${sweep.count} mã bị tắt)`)
+  const expiringSoon = await prisma.coupon.findMany({
+    where: { isActive: true, endsAt: { lt: new Date(now + 7 * DAY_MS) } },
+    select: { code: true, endsAt: true },
+  })
+  for (const c of expiringSoon) {
+    console.log(`      ⚠  ${c.code} sắp hết hạn (${c.endsAt.toISOString().slice(0, 10)}) — nhớ chạy lại seed để gia hạn/tắt`)
+  }
+
+  // ── Summary ─────────────────────────────────────────────────────────────────
+  const [nUser, nCategory, nBrand, nTag, nProduct, nVariant, nCoupon, nCouponActive] = await Promise.all([
+    prisma.user.count(),
+    prisma.category.count(),
+    prisma.brand.count(),
+    prisma.tag.count(),
+    prisma.product.count(),
+    prisma.productVariant.count(),
+    prisma.coupon.count(),
+    prisma.coupon.count({ where: { isActive: true } }),
+  ])
   console.log('\n  ✅  Seed hoàn thành!\n')
-  console.log('  ┌──────────────────────────────────────────────┐')
-  console.log('  │              Tổng kết dữ liệu                 │')
-  console.log('  ├──────────────────────────────────────────────┤')
-  console.log(`  │  Nguồn         : cellphones.com.vn (crawl)    │`)
-  console.log(`  │  Thương hiệu   : ${String(brands.length).padEnd(28)}│`)
-  console.log(`  │  Danh mục      : 11 (2 cha + 9 con)${' '.repeat(11)}│`)
-  console.log(`  │  Tags          : ${String(tags.length).padEnd(28)}│`)
-  console.log(`  │  Điện thoại    : ${String(`${createdProducts.length} (${totalImages} ảnh, ${featuredCount} nổi bật)`).padEnd(28)}│`)
-  const accessorySummary = crawlAccessoryCount > 0
-    ? `${crawlAccessoryCount} (từ file crawl)`
-    : `${accessories.length} (dựng từ mẫu)`
-  console.log(`  │  Phụ kiện      : ${String(accessorySummary).padEnd(28)}│`)
-  console.log(`  │  Người dùng    : 7  (1 admin, 1 staff, 5)${' '.repeat(5)}│`)
-  console.log(`  │  Đơn hàng      : ${String(createdOrders.length).padEnd(28)}│`)
-  console.log(`  │  Đánh giá      : ${String(reviewCount).padEnd(28)}│`)
-  console.log('  ├──────────────────────────────────────────────┤')
-  console.log('  │  Tài khoản (Password123!)                     │')
-  console.log('  │  admin@mobivexa.com         → ADMIN           │')
-  console.log('  │  staff@mobivexa.com         → STAFF           │')
-  console.log('  │  nguyen.van.an@gmail.com    → CUSTOMER         │')
-  console.log('  └──────────────────────────────────────────────┘\n')
+  console.log('  ┌────────────────────────────────────────────────┐')
+  console.log('  │              Tổng kết dữ liệu                   │')
+  console.log('  ├────────────────────────────────────────────────┤')
+  console.log(`  │  Người dùng    : ${String(`${nUser} (${USER_SEED.length} mẫu)`).padEnd(30)}│`)
+  console.log(`  │  Danh mục      : ${String(nCategory).padEnd(30)}│`)
+  console.log(`  │  Thương hiệu   : ${String(nBrand).padEnd(30)}│`)
+  console.log(`  │  Tags          : ${String(nTag).padEnd(30)}│`)
+  console.log(`  │  Sản phẩm      : ${String(`${nProduct} (tạo ${created})`).padEnd(30)}│`)
+  console.log(`  │  Biến thể      : ${String(nVariant).padEnd(30)}│`)
+  console.log(`  │  Coupon        : ${String(`${nCoupon} (${nCouponActive} đang chạy)`).padEnd(30)}│`)
+  console.log('  ├────────────────────────────────────────────────┤')
+  console.log('  │  Tài khoản mẫu (chỉ áp dụng khi tạo mới)        │')
+  console.log('  │  admin1@admin.com  → ADMIN    (Password123!)    │')
+  console.log('  │  user6@gmail.com   → STAFF    (Password123!)    │')
+  console.log('  │  user1@gmail.com   → CUSTOMER (Password123!)    │')
+  console.log('  └────────────────────────────────────────────────┘\n')
 }
 
 main()

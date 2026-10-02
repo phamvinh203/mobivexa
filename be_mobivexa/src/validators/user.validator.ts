@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
+import { checkName } from './common.validator'
 
 const PHONE_RE = /^(0|\+84)[0-9]{8,10}$/
 
@@ -46,10 +47,7 @@ export function validateChangePassword(req: Request, res: Response, next: NextFu
 export function validateAddress(req: Request, res: Response, next: NextFunction): void {
   const { fullName, phone, province, district, ward, streetDetail } = req.body
 
-  if (!fullName || String(fullName).trim().length < 2) {
-    sendError(res, 400, 'Họ tên người nhận phải có ít nhất 2 ký tự')
-    return
-  }
+  if (!checkName(res, fullName, 'Họ tên người nhận')) return
   if (!phone || !PHONE_RE.test(phone)) {
     sendError(res, 400, 'Số điện thoại không hợp lệ')
     return
