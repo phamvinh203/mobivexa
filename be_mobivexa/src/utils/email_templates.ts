@@ -1,4 +1,5 @@
 import { OrderStatus, PaymentMethod, PaymentStatus } from '../generated/prisma/client'
+import { formatVnd } from './discount'
 
 // ─── Kiểu dữ liệu đầu vào ─────────────────────────────────────────────────────
 //
@@ -34,11 +35,7 @@ export type OrderEmailData = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Tự định dạng thay vì toLocaleString: kết quả không phụ thuộc ICU của môi trường
-// (cùng lý do với formatVnd trong utils/discount).
-function vnd(amount: number): string {
-  return String(Math.round(amount)).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '₫'
-}
+const vnd = (amount: number): string => formatVnd(amount) + '₫'
 
 function formatDateTime(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')

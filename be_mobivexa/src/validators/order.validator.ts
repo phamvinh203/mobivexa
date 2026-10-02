@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { sendError } from '../helpers/response'
-import { checkId, checkQuantity } from './common.validator'
+import { checkId, checkOrderItems } from './common.validator'
 import { CODE_RE, MAX_CODE_LENGTH } from './coupon.validator'
 import { PaymentMethod, OrderStatus, PaymentStatus } from '../generated/prisma/client'
 
@@ -41,20 +41,7 @@ export function validateCreateOrder(req: Request, res: Response, next: NextFunct
     }
   }
 
-  if (items !== undefined) {
-    if (!Array.isArray(items) || items.length === 0) {
-      sendError(res, 400, 'Danh sách sản phẩm không hợp lệ')
-      return
-    }
-    for (const item of items) {
-      // Optional chaining chứ không phải item.variantId: phần tử null/số trong
-      // mảng làm truy cập thuộc tính ném TypeError ngay trong middleware đồng bộ,
-      // và Express đổi nó thành 500. Cùng payload đó phải ra 400 như mọi input
-      // sai hình dạng khác — validatePreviewCoupon đã làm vậy từ trước.
-      if (!checkId(res, item?.variantId, 'variantId không hợp lệ')) return
-      if (!checkQuantity(res, Number(item.quantity))) return
-    }
-  }
+  if (items !== undefined && !checkOrderItems(res, items)) return
 
   next()
 }

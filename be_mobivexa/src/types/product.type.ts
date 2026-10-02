@@ -33,15 +33,7 @@ export interface CreateProductBody {
 // Cập nhật product: không đụng tới variants và specs ở đây (mỗi thứ có endpoint riêng)
 export type UpdateProductBody = Partial<Omit<CreateProductBody, 'variants' | 'specs'>>
 
-export interface ReplaceSpecsBody {
-  specs: SpecInput[]
-}
-
 export type UpdateVariantBody = Partial<VariantInput>
-
-export interface UpdateStockBody {
-  stock: number
-}
 
 export interface InventoryQuery {
   page?: string

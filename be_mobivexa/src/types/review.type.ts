@@ -25,11 +25,3 @@ export interface AdminReviewListQuery {
   page?: string
   limit?: string
 }
-
-export interface UpdateReviewStatusBody {
-  status: ReviewStatus
-}
-
-export interface ReplyReviewBody {
-  content: string
-}

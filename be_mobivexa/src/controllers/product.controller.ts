@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { asyncHandler } from '../helpers/async_handler'
+import { AppError } from '../helpers/app_error'
 import { sendSuccess } from '../helpers/response'
 import {
   listProducts,
@@ -80,10 +81,7 @@ export const toggleFeatured = asyncHandler(async (req: Request, res: Response) =
 
 export const uploadImages = asyncHandler(async (req: Request, res: Response) => {
   const files = req.files as Express.Multer.File[]
-  if (!files?.length) {
-    res.status(400).json({ message: 'Vui lòng chọn ít nhất 1 ảnh' })
-    return
-  }
+  if (!files?.length) throw new AppError(400, 'Vui lòng chọn ít nhất 1 ảnh')
   const result = await addProductImages(req.params.id as string, files)
   sendSuccess(res, { message: `Đã thêm ${result.count} ảnh`, count: result.count }, 201)
 })

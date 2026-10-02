@@ -4,6 +4,7 @@ import { isPrismaError } from '../helpers/prisma_error'
 import { Prisma, PaymentStatus, OrderStatus, PaymentMethod, SePayTxStatus } from '../generated/prisma/client'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { ORDER_CODE_RE } from '../utils/order_code'
+import { inBackground } from '../utils/background'
 import { sendOrderPaidEmail } from './order_email.service'
 import { dateRange } from '../utils/date_range'
 import type {
@@ -193,9 +194,7 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
   // chỉ true khi markOrderPaid đếm count === 1, tức guard chống double-pay đã qua:
   // webhook retry, giao dịch trùng hay đơn vừa bị hủy đều không chạm được tới đây.
   if (result.handled) {
-    void sendOrderPaidEmail(order.id).catch((err) => {
-      console.error('[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng webhook):', err)
-    })
+    inBackground(sendOrderPaidEmail(order.id), '[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng webhook):')
   }
 
   return result
@@ -361,9 +360,7 @@ export async function matchTransaction(txId: string, body: MatchTransactionBody,
   // Mail "đã thanh toán" — cùng cơ chế với resolveAndRecord: chỉ đặt SAU commit,
   // và transaction ở trên đã qua guard count === 1 của markOrderPaid nên đây là
   // đường transition THẬT SỰ, gán tay lặp lại không thể tới được.
-  void sendOrderPaidEmail(order.id).catch((err) => {
-    console.error('[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng gán giao dịch):', err)
-  })
+  inBackground(sendOrderPaidEmail(order.id), '[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng gán giao dịch):')
 
   return matched
 }

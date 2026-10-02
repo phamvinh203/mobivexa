@@ -1,10 +1,11 @@
 import prisma from '../config/db'
 import { Prisma } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
-import { generateUniqueSlug, slugTaken } from '../utils/slug'
+import { generateUniqueSlug, regenerateSlug, slugTaken } from '../utils/slug'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
 import { toTsQuery, parseSearch, firstQueryValue } from '../utils/search'
 import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
+import { formBool } from '../utils/form_fields'
 import type {
   CreateProductBody,
   UpdateProductBody,
@@ -107,6 +108,20 @@ function parsePriceParam(raw: unknown, label: string): number | undefined {
   return value
 }
 
+// Id các sản phẩm có tên khớp từ khoá, dùng GIN index (nhanh hơn ILIKE '%keyword%'
+// nhiều lần). Từ khoá không còn gì tìm được sau khi chuẩn hoá thì trả [] mà không
+// chạm DB — nơi gọi coi [] là "không có kết quả".
+async function findProductIdsByName(search: string): Promise<string[]> {
+  const tsQuery = toTsQuery(search)
+  if (!tsQuery) return []
+
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM products
+    WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
+  `
+  return rows.map((r) => r.id)
+}
+
 // ─── Public ─────────────────────────────────────────────────────────────────
 
 // Listing sản phẩm dùng chung cho public + admin (admin: thấy cả sản phẩm ẩn,
@@ -130,19 +145,11 @@ export async function listProducts(
 
   const search = parseSearch(query.search)
   if (search) {
-    const tsQuery = toTsQuery(search)
-    if (!tsQuery) {
+    const ids = await findProductIdsByName(search)
+    if (ids.length === 0) {
       return { products: [], pagination: paginationMeta(page, limit, 0) }
     }
-    // Dùng GIN index — nhanh hơn ILIKE '%keyword%' nhiều lần
-    const rows = await prisma.$queryRaw<{ id: string }[]>`
-      SELECT id FROM products
-      WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
-    `
-    if (rows.length === 0) {
-      return { products: [], pagination: paginationMeta(page, limit, 0) }
-    }
-    where.id = { in: rows.map((r) => r.id) }
+    where.id = { in: ids }
   }
 
   // Filter riêng từng mode
@@ -272,8 +279,8 @@ export async function createProduct(body: CreateProductBody, files?: Express.Mul
       description,
       categoryId,
       brandId,
-      isActive: isActive != null ? String(isActive) !== 'false' : true,
-      isFeatured: isFeatured != null ? String(isFeatured) !== 'false' : false,
+      isActive: formBool(isActive ?? true),
+      isFeatured: formBool(isFeatured ?? false),
       variants: { create: variants.map(variantCreateData) },
       specs: specs.length ? { create: specs.map(specCreateData) } : undefined,
       productTags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
@@ -298,17 +305,14 @@ export async function updateProduct(id: string, body: UpdateProductBody, files?:
 
   const data: Prisma.ProductUpdateInput = {}
   if (name !== undefined) data.name = name.trim()
-  // Slug rỗng = yêu cầu sinh lại từ tên, đúng như placeholder ở form hứa. Không có
-  // nhánh này thì generateUniqueSlug('') sẽ tạo ra slug rỗng.
   if (slug !== undefined) {
-    const base = slug.trim() || name?.trim() || product.name
-    data.slug = await generateUniqueSlug(base, slugTaken(findBySlug, id))
+    data.slug = await regenerateSlug({ slug, name, currentName: product.name, findBySlug, excludeId: id })
   }
   if (description !== undefined) data.description = description || null
   if (categoryId !== undefined) data.category = { connect: { id: categoryId } }
   if (brandId !== undefined) data.brand = { connect: { id: brandId } }
-  if (isActive !== undefined) data.isActive = String(isActive) !== 'false'
-  if (isFeatured !== undefined) data.isFeatured = String(isFeatured) !== 'false'
+  if (isActive !== undefined) data.isActive = formBool(isActive)
+  if (isFeatured !== undefined) data.isFeatured = formBool(isFeatured)
 
   if (files?.length) {
     const [uploadedImages, existingCount] = await Promise.all([
@@ -563,18 +567,11 @@ export async function getInventory(query: InventoryQuery) {
   // vào toTsQuery là TypeError thành 500.
   const search = parseSearch(query.search)
   if (search) {
-    const tsQuery = toTsQuery(search)
-    if (!tsQuery) {
+    const ids = await findProductIdsByName(search)
+    if (ids.length === 0) {
       return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
     }
-    const rows = await prisma.$queryRaw<{ id: string }[]>`
-      SELECT id FROM products
-      WHERE to_tsvector('simple', name) @@ to_tsquery('simple', ${tsQuery})
-    `
-    if (rows.length === 0) {
-      return { variants: [], summary: await summaryPromise, pagination: paginationMeta(page, limit, 0) }
-    }
-    where.productId = { in: rows.map((r) => r.id) }
+    where.productId = { in: ids }
   }
 
   const brandSlug = firstQueryValue(query.brandSlug)

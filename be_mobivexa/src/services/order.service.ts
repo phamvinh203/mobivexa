@@ -1,4 +1,3 @@
-import { randomBytes } from 'crypto'
 import prisma from '../config/db'
 import { Prisma, OrderStatus, PaymentMethod, PaymentStatus, type OrderItem } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
@@ -6,7 +5,9 @@ import { isPrismaError } from '../helpers/prisma_error'
 import { parsePagination, paginationMeta } from '../utils/pagination'
 import { dateRange } from '../utils/date_range'
 import { parseSearch, firstQueryValue } from '../utils/search'
-import { computeDiscount, checkCouponUsable, normalizeCode, toRule, toCheckInput } from '../utils/discount'
+import { evaluateCoupon, normalizeCode } from '../utils/discount'
+import { generateOrderCode } from '../utils/order_code'
+import { inBackground } from '../utils/background'
 import { sendOrderCancelledEmail, sendOrderCreatedEmail, sendOrderPaidEmail } from './order_email.service'
 import type {
   CreateOrderBody,
@@ -44,12 +45,6 @@ const ORDER_INCLUDE = {
     },
   },
 } satisfies Prisma.OrderInclude
-
-function generateOrderCode(): string {
-  const ymd  = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const rand = randomBytes(3).toString('hex').toUpperCase()
-  return `ORD-${ymd}-${rand}`
-}
 
 async function findOrderOrThrow(id: string) {
   const order = await prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE })
@@ -166,9 +161,7 @@ async function cancelAndRestoreStock(order: CancellableOrder, cancelReason?: str
   // lẫn admin qua updateOrderStatus) tự phủ ở đây; guard `status` trong WHERE của
   // lệnh update đảm bảo chỉ request hủy THẬT SỰ thành công mới tới được dòng này
   // (request đua sau nhận P2025 → asConflict ném ra trước khi tới hook).
-  void sendOrderCancelledEmail(updated.id).catch((err) => {
-    console.error('[Email] Gửi mail hủy đơn lỗi (không ảnh hưởng việc hủy đơn):', err)
-  })
+  inBackground(sendOrderCancelledEmail(updated.id), '[Email] Gửi mail hủy đơn lỗi (không ảnh hưởng việc hủy đơn):')
 
   return updated
 }
@@ -248,14 +241,14 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
       prisma.couponUsage.findFirst({ where: { userId, coupon: { code: normalized } } }),
     ])
 
-    // toCheckInput/toRule dùng CHUNG với previewCoupon, không chép lại: preview và
-    // đặt hàng phải ra cùng một con số cho cùng một giỏ, đúng lý do resolveItems
-    // được export.
-    const check = checkCouponUsable(found && toCheckInput(found), usage !== null, subtotal)
-    if (!check.ok) throw new AppError(400, check.reason)
+    // evaluateCoupon dùng CHUNG với previewCoupon, không chép lại: preview và đặt
+    // hàng phải ra cùng một con số cho cùng một giỏ, đúng lý do resolveItems được
+    // export.
+    const evaluation = evaluateCoupon(found, usage !== null, subtotal)
+    if (!evaluation.ok) throw new AppError(400, evaluation.reason)
 
     coupon = found
-    discount = computeDiscount(toRule(found!), subtotal)
+    discount = evaluation.discount
   }
 
   const total = subtotal + shippingFee - discount
@@ -370,9 +363,7 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   // Đơn 0đ tự động PAID ngay lúc sinh ra (settled) — mail này hiện sẵn trạng
   // thái "Đã thanh toán" nên KHÔNG phát thêm mail mốc 2, tránh khách nhận hai
   // mail cho một sự kiện.
-  void sendOrderCreatedEmail(created.id).catch((err) => {
-    console.error('[Email] Gửi mail đơn mới lỗi (không ảnh hưởng việc đặt hàng):', err)
-  })
+  inBackground(sendOrderCreatedEmail(created.id), '[Email] Gửi mail đơn mới lỗi (không ảnh hưởng việc đặt hàng):')
 
   return created
 }
@@ -494,9 +485,7 @@ export async function updatePaymentStatus(orderId: string, body: UpdatePaymentSt
   // vì đây là đường admin tần suất thấp và không có guard CAS — chấp nhận được,
   // hàm gửi mail tự kiểm lại trạng thái PAID trước khi gửi.
   if (body.paymentStatus === PaymentStatus.PAID && existing.paymentStatus !== PaymentStatus.PAID) {
-    void sendOrderPaidEmail(orderId).catch((err) => {
-      console.error('[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng cập nhật):', err)
-    })
+    inBackground(sendOrderPaidEmail(orderId), '[Email] Gửi mail đã thanh toán lỗi (không ảnh hưởng cập nhật):')
   }
 
   return updated

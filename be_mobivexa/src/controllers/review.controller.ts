@@ -10,7 +10,7 @@ export const getSummary = asyncHandler(async (req, res) => {
 })
 
 export const list = asyncHandler(async (req, res) => {
-  const data = await service.listReviews(req.params.slug as string, req.query as any)
+  const data = await service.listReviews(req.params.slug as string, req.query)
   sendSuccess(res, data)
 })
 
@@ -33,7 +33,7 @@ export const create = asyncHandler(async (req, res) => {
 })
 
 export const getMyReviews = asyncHandler(async (req, res) => {
-  const data = await service.getMyReviews(req.user!.userId, req.query as any)
+  const data = await service.getMyReviews(req.user!.userId, req.query)
   sendSuccess(res, data)
 })
 
@@ -56,7 +56,7 @@ export const helpful = asyncHandler(async (req, res) => {
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
 export const adminList = asyncHandler(async (req, res) => {
-  const data = await service.listReviewsAdmin(req.query as any)
+  const data = await service.listReviewsAdmin(req.query)
   sendSuccess(res, data)
 })
 

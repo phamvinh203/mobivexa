@@ -516,7 +516,7 @@ export async function getBlogProductOptions(query: ProductOptionsQuery) {
   const q = parseSearch(query.q)
   if (!q) throw new AppError(400, 'Vui lòng nhập từ khoá tìm kiếm')
   if (q.length > 100) throw new AppError(400, 'Từ khoá tối đa 100 ký tự')
-  const limit = Math.min(20, Math.max(1, Number(query.limit) || 10))
+  const { limit } = parsePagination(query, 10, 20)
 
   const products = await prisma.product.findMany({
     where: {
@@ -811,8 +811,7 @@ export async function createPost(body: CreatePostBody, callerId: string) {
 }
 
 export async function updatePost(id: string, body: UpdatePostBody, callerId: string) {
-  const post = await prisma.blogPost.findFirst({ where: { id, deletedAt: null } })
-  if (!post) throw new AppError(404, 'Bài viết không tồn tại')
+  const post = await findAdminPostOrThrow(id)
 
   let tagIds: string[] | undefined
   let productIds: string[] | undefined
@@ -945,8 +944,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<BlogPostStatus, BlogPostStatus[]> = {
 export async function updatePostStatus(id: string, body: UpdatePostStatusBody, updatedById: string) {
   await publishDueScheduledPosts()
 
-  const post = await prisma.blogPost.findFirst({ where: { id, deletedAt: null } })
-  if (!post) throw new AppError(404, 'Bài viết không tồn tại')
+  const post = await findAdminPostOrThrow(id)
 
   const nextStatus = body.status
   if (!Object.values(BlogPostStatus).includes(nextStatus)) throw new AppError(400, 'Trạng thái không hợp lệ')

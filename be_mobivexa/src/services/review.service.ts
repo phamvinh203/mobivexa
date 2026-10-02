@@ -3,7 +3,7 @@ import { Prisma, OrderStatus, ReviewStatus } from '../generated/prisma/client'
 import { AppError } from '../helpers/app_error'
 import { isPrismaError } from '../helpers/prisma_error'
 import { uploadEntityImage, destroyImage } from '../config/cloudinary'
-import { parsePagination, paginationMeta, LIMITS } from '../utils/pagination'
+import { parsePagination, paginationMeta } from '../utils/pagination'
 import type {
   CreateReviewBody,
   UpdateReviewBody,
@@ -35,12 +35,6 @@ async function findOwnedReview(userId: string, reviewId: string) {
     where: { id: reviewId, userId },
     include: { photos: true },
   })
-  if (!review) throw new AppError(404, 'Đánh giá không tồn tại')
-  return review
-}
-
-async function findReviewOrThrow(reviewId: string) {
-  const review = await prisma.review.findUnique({ where: { id: reviewId }, select: { id: true } })
   if (!review) throw new AppError(404, 'Đánh giá không tồn tại')
   return review
 }
