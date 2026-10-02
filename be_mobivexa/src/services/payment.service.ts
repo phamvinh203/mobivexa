@@ -201,7 +201,15 @@ async function resolveAndRecord(tx: NormalizedSePayTx): Promise<IngestResult> {
   return result
 }
 
-async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
+// Giao dịch đã ghi nhận — đúng 2 cột ingestTransaction cần để trả kết quả duplicate.
+type KnownTx = { status: SePayTxStatus; orderCode: string | null }
+
+// `known`: sync đã prefetch cả lô bằng 1 findMany nên truyền Map vào để khỏi findUnique
+// từng giao dịch; webhook đơn lẻ không truyền → vẫn findUnique như cũ.
+async function ingestTransaction(
+  tx: NormalizedSePayTx,
+  known?: Map<number, KnownTx>
+): Promise<IngestResult> {
   if (!Number.isFinite(tx.sepayId)) {
     return { handled: false, reason: 'Payload thiếu id giao dịch' }
   }
@@ -210,10 +218,12 @@ async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
   }
 
   // SePay retry webhook khi nhận non-2xx → cùng một giao dịch có thể tới nhiều lần
-  const existing = await prisma.sePayTransaction.findUnique({
-    where:  { sepayId: tx.sepayId },
-    select: { status: true, orderCode: true },
-  })
+  const existing = known
+    ? known.get(tx.sepayId)
+    : await prisma.sePayTransaction.findUnique({
+        where:  { sepayId: tx.sepayId },
+        select: { status: true, orderCode: true },
+      })
   if (existing) {
     return { handled: false, duplicate: true, status: existing.status, orderCode: existing.orderCode ?? undefined }
   }
@@ -221,7 +231,8 @@ async function ingestTransaction(tx: NormalizedSePayTx): Promise<IngestResult> {
   try {
     return await resolveAndRecord(tx)
   } catch (err) {
-    // Hai webhook trùng bắn song song lọt qua findUnique ở trên → unique index chặn
+    // Hai webhook trùng bắn song song lọt qua bước dedupe ở trên (hoặc trùng sepayId
+    // ngay trong 1 lô sync) → unique index chặn
     if (isPrismaError(err, 'P2002')) {
       return { handled: false, duplicate: true }
     }
@@ -396,9 +407,23 @@ export async function syncFromSePay(opts: { limit?: number; from?: string; to?: 
 
   const summary = { fetched: list.length, matched: 0, unmatched: 0, ignored: 0, duplicate: 0 }
 
+  const txs = list.map(normalizeApiTx)
+
+  // Dedupe cả lô bằng 1 query thay vì 1 findUnique/giao dịch. id không hữu hạn bị
+  // ingestTransaction loại sớm nên không đưa vào `in` (Prisma sẽ reject NaN).
+  const ids = txs.map((t) => t.sepayId).filter(Number.isFinite)
+  const known = new Map<number, KnownTx>()
+  if (ids.length) {
+    const rows = await prisma.sePayTransaction.findMany({
+      where:  { sepayId: { in: ids } },
+      select: { sepayId: true, status: true, orderCode: true },
+    })
+    for (const r of rows) known.set(r.sepayId, r)
+  }
+
   // Tuần tự chứ không Promise.all — tránh hai giao dịch cùng gán một đơn song song
-  for (const item of list) {
-    const result = await ingestTransaction(normalizeApiTx(item))
+  for (const tx of txs) {
+    const result = await ingestTransaction(tx, known)
     if (result.duplicate)                            summary.duplicate++
     else if (result.status === SePayTxStatus.MATCHED)  summary.matched++
     else if (result.status === SePayTxStatus.IGNORED)  summary.ignored++

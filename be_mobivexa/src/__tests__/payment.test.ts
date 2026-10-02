@@ -552,6 +552,11 @@ describe('POST /api/admin/payment/sync', () => {
   const sync = (token = ADMIN_TOKEN) =>
     request(app).post('/api/admin/payment/sync').set('Authorization', token)
 
+  // Sync prefetch dedupe cả lô bằng 1 findMany — mặc định: chưa giao dịch nào được ghi nhận
+  beforeEach(() => {
+    mockPrisma.sePayTransaction.findMany.mockResolvedValue([])
+  })
+
   it('200 - kéo giao dịch từ SePay và khớp đơn', async () => {
     const fetchFn = mockFetch({ transactions: [API_TX] })
     mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
@@ -572,13 +577,70 @@ describe('POST /api/admin/payment/sync', () => {
 
   it('200 - giao dịch đã ghi nhận trước đó được đếm là duplicate', async () => {
     mockFetch({ transactions: [API_TX] })
-    mockPrisma.sePayTransaction.findUnique.mockResolvedValue({ status: 'MATCHED', orderCode: 'ORD-20240101-AABBCC' })
+    mockPrisma.sePayTransaction.findMany.mockResolvedValue([
+      { sepayId: 789, status: 'MATCHED', orderCode: 'ORD-20240101-AABBCC' },
+    ])
 
     const res = await sync()
 
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({ fetched: 1, duplicate: 1, matched: 0 })
     expect(mockPrisma.sePayTransaction.create).not.toHaveBeenCalled()
+  })
+
+  it('200 - dedupe cả lô bằng 1 findMany (không findUnique từng giao dịch), chỉ giao dịch mới được ghi', async () => {
+    mockFetch({ transactions: [API_TX, { ...API_TX, id: '790' }, { ...API_TX, id: '791', amount_in: '0', amount_out: '5000' }] })
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    // 789 đã ghi nhận từ trước; 790 (khớp đơn) và 791 (tiền ra) là mới
+    mockPrisma.sePayTransaction.findMany.mockResolvedValue([
+      { sepayId: 789, status: 'MATCHED', orderCode: 'ORD-20240101-AABBCC' },
+    ])
+
+    const res = await sync()
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ fetched: 3, matched: 1, unmatched: 0, ignored: 1, duplicate: 1 })
+    expect(mockPrisma.sePayTransaction.findMany).toHaveBeenCalledTimes(1)
+    expect(mockPrisma.sePayTransaction.findMany).toHaveBeenCalledWith({
+      where:  { sepayId: { in: [789, 790, 791] } },
+      select: { sepayId: true, status: true, orderCode: true },
+    })
+    expect(mockPrisma.sePayTransaction.findUnique).not.toHaveBeenCalled()
+    expect(mockPrisma.sePayTransaction.create).toHaveBeenCalledTimes(2)
+  })
+
+  it('200 - trùng sepayId ngay trong 1 lô: unique index (P2002) chặn, đếm là duplicate', async () => {
+    mockFetch({ transactions: [API_TX, API_TX] })
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+    // Lần ghi thứ 2 cùng sepayId bị unique index từ chối
+    mockPrisma.sePayTransaction.create
+      .mockImplementationOnce(async ({ data }: { data: unknown }) => data)
+      .mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Unique', { code: 'P2002', clientVersion: 'x' }))
+
+    const res = await sync()
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ fetched: 2, matched: 1, duplicate: 1 })
+  })
+
+  it('200 - id giao dịch không hợp lệ (NaN) không đưa vào findMany, không làm đổ lô', async () => {
+    mockFetch({ transactions: [{ ...API_TX, id: 'abc' }, API_TX] })
+    mockPrisma.order.findUnique.mockResolvedValue(BASE_ORDER)
+
+    const res = await sync()
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.sePayTransaction.findMany.mock.calls[0][0].where).toEqual({ sepayId: { in: [789] } })
+    expect(res.body).toMatchObject({ fetched: 2, matched: 1 })
+  })
+
+  it('200 - lô rỗng thì không query prefetch', async () => {
+    mockFetch({ transactions: [] })
+
+    const res = await sync()
+
+    expect(res.status).toBe(200)
+    expect(mockPrisma.sePayTransaction.findMany).not.toHaveBeenCalled()
   })
 
   it('502 - SePay API trả lỗi', async () => {
