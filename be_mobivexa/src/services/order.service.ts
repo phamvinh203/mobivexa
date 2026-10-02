@@ -254,16 +254,29 @@ async function priceCoupon(userId: string, couponCode: string | undefined, subto
   return { coupon: found, discount: evaluation.discount }
 }
 
+// P2002 thoát ra khỏi transaction của createOrder chỉ có thể do orderCode: vi phạm
+// CouponUsage đã được redeemCoupon bắt riêng thành 409. Vẫn soi meta.target cho chắc —
+// driver/mock không trả meta thì coi là orderCode để giữ hành vi retry (RVW-010).
+function isOrderCodeConflict(err: unknown): boolean {
+  if (!isPrismaError(err, 'P2002')) return false
+  const target = (err as { meta?: { target?: unknown } }).meta?.target
+  if (target === undefined) return true
+  const t = Array.isArray(target) ? target.join(',') : String(target)
+  return t.toLowerCase().includes('ordercode')
+}
+
 // orderCode có đuôi random 6 ký tự hex — trùng là hiếm nhưng có thật khi ngày đó
-// có nhiều đơn. P2002 ở đây là xui, không phải lỗi nghiệp vụ: regenerate và thử
-// lại, tối đa 3 lần. Hết lượt vẫn trùng (hay lỗi khác) thì thả gốc bay lên như
-// mọi lỗi hệ thống khác.
-async function insertOrder(tx: Prisma.TransactionClient, data: Omit<Prisma.OrderUncheckedCreateInput, 'orderCode'>) {
+// có nhiều đơn. P2002 vì orderCode là xui, không phải lỗi nghiệp vụ: chạy lại TOÀN
+// BỘ transaction với mã mới, tối đa 3 lần. Retry PHẢI nằm NGOÀI $transaction: trên
+// Postgres, sau P2002 transaction đã ở trạng thái aborted nên mọi lệnh kế tiếp
+// trong cùng transaction đều bị từ chối — retry bên trong không bao giờ hồi phục
+// (RVW-010, lỗi có từ trước; mock không lộ vì mock chạy lại callback được).
+async function withOrderCodeRetry<T>(run: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await tx.order.create({ data: { ...data, orderCode: generateOrderCode() }, include: ORDER_INCLUDE })
+      return await run()
     } catch (err) {
-      if (!isPrismaError(err, 'P2002') || attempt >= 3) throw err
+      if (!isOrderCodeConflict(err) || attempt >= 3) throw err
     }
   }
 }
@@ -342,40 +355,46 @@ export async function createOrder(userId: string, body: CreateOrderBody) {
   // admin xác nhận như mọi đơn khác.
   const settled = total === 0
 
-  const created = await prisma.$transaction(async (tx) => {
-    const order = await insertOrder(tx, {
-      ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
-      userId,
-      shippingName:     address.fullName,
-      shippingPhone:    address.phone,
-      shippingProvince: address.province,
-      shippingDistrict: address.district,
-      shippingWard:     address.ward,
-      shippingDetail:   address.streetDetail,
-      subtotal,
-      shippingFee,
-      discount,
-      total,
-      paymentMethod,
-      note,
-      couponCode: coupon?.code ?? null,
-      items: { create: lines },
-    })
-
-    await reserveStock(tx, lines)
-    if (coupon) await redeemCoupon(tx, coupon, userId, order.id)
-
-    if (!itemsInput || itemsInput.length === 0) {
-      // Chỉ xoá đúng những item đã vào đơn: đặt "mua ngay" một món từ giỏ (hoặc
-      // giỏ có món hết hàng bị chặn ở bước validate) thì các món còn lại trong
-      // giỏ phải nguyên vẹn, không bị cuốn theo mất hết.
-      await tx.cartItem.deleteMany({
-        where: { cart: { userId }, variantId: { in: lines.map((l) => l.variantId) } },
+  const created = await withOrderCodeRetry(() =>
+    prisma.$transaction(async (tx) => {
+      const order = await tx.order.create({
+        data: {
+          orderCode: generateOrderCode(),
+          ...(settled && { paymentStatus: PaymentStatus.PAID, paidAt: new Date() }),
+          userId,
+          shippingName:     address.fullName,
+          shippingPhone:    address.phone,
+          shippingProvince: address.province,
+          shippingDistrict: address.district,
+          shippingWard:     address.ward,
+          shippingDetail:   address.streetDetail,
+          subtotal,
+          shippingFee,
+          discount,
+          total,
+          paymentMethod,
+          note,
+          couponCode: coupon?.code ?? null,
+          items: { create: lines },
+        },
+        include: ORDER_INCLUDE,
       })
-    }
 
-    return order
-  })
+      await reserveStock(tx, lines)
+      if (coupon) await redeemCoupon(tx, coupon, userId, order.id)
+
+      if (!itemsInput || itemsInput.length === 0) {
+        // Chỉ xoá đúng những item đã vào đơn: đặt "mua ngay" một món từ giỏ (hoặc
+        // giỏ có món hết hàng bị chặn ở bước validate) thì các món còn lại trong
+        // giỏ phải nguyên vẹn, không bị cuốn theo mất hết.
+        await tx.cartItem.deleteMany({
+          where: { cart: { userId }, variantId: { in: lines.map((l) => l.variantId) } },
+        })
+      }
+
+      return order
+    }),
+  )
 
   // Mail "đơn mới" — fire-and-forget SAU khi transaction đã commit: hỏng SMTP
   // hay timeout mailer chỉ log lỗi, không bao giờ được rollback đơn đã đặt.

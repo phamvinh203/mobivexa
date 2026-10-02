@@ -222,6 +222,52 @@ describe('POST /api/orders', () => {
     expect(mockPrisma.order.create).toHaveBeenCalledTimes(2)
   })
 
+  // Retry chạy NGOÀI transaction (RVW-010): trên Postgres thật, transaction sau
+  // P2002 đã aborted nên retry bên trong không thể hồi phục. Mock $transaction
+  // chạy lại callback mô phỏng đúng "mở transaction mới từ đầu". Trần 3 lượt.
+  it('201 - orderCode trùng có meta.target orderCode: regenerate tối đa 3 lượt', async () => {
+    mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
+    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+    const codeConflict = () =>
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002', clientVersion: 'test', meta: { target: 'Order_orderCode_key' },
+      })
+    mockPrisma.order.create
+      .mockRejectedValueOnce(codeConflict())
+      .mockRejectedValueOnce(codeConflict())
+      .mockResolvedValue(BASE_ORDER)
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(201)
+    expect(mockPrisma.order.create).toHaveBeenCalledTimes(3)
+  })
+
+  // P2002 do ràng buộc KHÁC (target chỉ rõ, không phải orderCode) là lỗi thật —
+  // không regenerate, thả nguyên trạng cho error middleware xử lý.
+  it('500 - P2002 target không phải orderCode thì không regenerate', async () => {
+    mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
+    mockPrisma.productVariant.findMany.mockResolvedValue([BASE_VARIANT])
+    mockPrisma.productVariant.updateMany.mockResolvedValue({ count: 1 })
+    mockPrisma.order.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002', clientVersion: 'test', meta: { target: 'Order_id_key' },
+      }),
+    )
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', USER_TOKEN)
+      .send({ addressId: 'addr-1', items: [{ variantId: 'var-1', quantity: 1 }] })
+
+    expect(res.status).toBe(500)
+    expect(mockPrisma.order.create).toHaveBeenCalledTimes(1)
+  })
+
   // Chỉ xoá đúng item đã vào đơn: các món còn lại trong giỏ phải nguyên vẹn.
   it('201 - đặt từ giỏ chỉ xoá đúng các item đã vào đơn', async () => {
     mockPrisma.address.findFirst.mockResolvedValue({ id: 'addr-1', userId: 'user-1', fullName: 'Test', phone: '0900000001', province: 'HCM', district: 'Q1', ward: 'P1', streetDetail: '123 ABC' })
