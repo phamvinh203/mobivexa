@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { validateCreateOrder, validateCancelOrder, validateUpdateStatus, validateUpdatePayment } from '../validators/order.validator'
 import * as controller from '../controllers/order.controller'
 
@@ -15,7 +14,6 @@ customerRouter.patch('/:id/cancel', validateCancelOrder,  controller.cancel)
 
 // ─── Admin routes: /api/admin/orders ──────────────────────────────────────────
 const adminRouter: Router = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 
 adminRouter.get('/',                                      controller.list)
 adminRouter.get('/:id',                                   controller.get)

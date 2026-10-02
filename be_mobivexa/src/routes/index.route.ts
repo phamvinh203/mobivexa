@@ -24,6 +24,8 @@ import { blogRoutes, blogAdminRoutes } from './blog.route'
 import { chatRoutes } from './chat.route'
 import { dashboardRoutes } from './dashboard.route'
 import { supportRoutes, supportAdminRoutes } from './support.route'
+import { authenticate } from '../middlewares/auth.middleware'
+import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 
 export function mountRoutes(app: Express): void {
   const v = '/api'
@@ -52,6 +54,10 @@ export function mountRoutes(app: Express): void {
   app.use(`${v}/reviews`,                         reviewRoutes)
 
   // Admin
+  // MỘT cổng cho cả /api/admin: phải đăng nhập và là STAFF/ADMIN. Router con không tự
+  // lặp guard — router admin mới quên guard cũng không thành API hở. Riêng /admin/users
+  // siết thêm ADMIN trong admin.route.ts.
+  app.use(`${v}/admin`, authenticate, authorize(...STAFF_ROLES))
   app.use(`${v}/admin/users`, adminUserRoutes)
   app.use(`${v}/admin/categories`, categoryAdminRoutes)
   app.use(`${v}/admin/brands`, brandAdminRoutes)

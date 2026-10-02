@@ -1,6 +1,4 @@
 import { Router } from 'express'
-import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { validateCreateProduct, validateUpdateProduct, validateVariant, validateUpdateVariant, validateUpdateStock, validateReplaceSpecs } from '../validators/product.validator'
 import * as controller from '../controllers/product.controller'
@@ -13,7 +11,6 @@ publicRouter.get('/:slug', controller.detail)
 
 // ─── Admin routes: /api/admin/products ────────────────────────────────────────
 const adminRouter: Router = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 
 adminRouter.get('/', controller.listAdmin)
 adminRouter.get('/:id', controller.getAdmin)

@@ -1,6 +1,4 @@
 import { Router } from 'express'
-import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { uploadImage } from '../middlewares/upload.middleware'
 import { validateCreateBanner, validateUpdateBanner } from '../validators/banner.validator'
 import * as controller from '../controllers/banner.controller'
@@ -12,7 +10,6 @@ publicRouter.get('/positions', controller.listBannerPositions) // danh sách v�
 
 // ─── Admin routes: /api/admin/banners ─────────────────────────────────────────
 const adminRouter: Router = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 adminRouter.get('/', controller.listBannersAdmin)              // ?position=...
 adminRouter.get('/positions', controller.listBannerPositions)
 adminRouter.post('/', uploadImage.single('image'), validateCreateBanner, controller.createBannerAdmin)

@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { webhookLimiter, qrLimiter, syncLimiter } from '../middlewares/rate_limit.middleware'
 import { verifySePaySecret } from '../middlewares/sepay_webhook.middleware'
 import {
@@ -29,7 +28,6 @@ router.post(
 
 // ─── Admin: /api/admin/payment (STAFF + ADMIN) ────────────────────────────────
 const adminRouter = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 
 // Số liệu tổng hợp cho dashboard
 adminRouter.get('/stats', controller.stats)

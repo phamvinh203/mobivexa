@@ -1,7 +1,5 @@
 import { Router } from 'express'
 import { optionalAuthenticate } from '../middlewares/optional_auth.middleware'
-import { authenticate } from '../middlewares/auth.middleware'
-import { authorize, STAFF_ROLES } from '../middlewares/authorize.middleware'
 import { supportMessageLimiter, supportTicketLimiter } from '../middlewares/rate_limit.middleware'
 import { validateCreateTicket, validateSupportMessage } from '../validators/support.validator'
 import * as controller from '../controllers/support.controller'
@@ -22,7 +20,6 @@ export const supportRoutes: Router = router
 // ─── Admin: /api/admin/support-tickets ────────────────────────────────────────
 // STAFF + ADMIN như các adminRouter khác — staff trực chat là STAFF.
 const adminRouter: Router = Router()
-adminRouter.use(authenticate, authorize(...STAFF_ROLES))
 
 adminRouter.get('/', controller.list)
 adminRouter.get('/:id', controller.getAdmin)
