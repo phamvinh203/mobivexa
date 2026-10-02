@@ -5,12 +5,12 @@ import * as service from '../services/review.service'
 // ─── Public ───────────────────────────────────────────────────────────────────
 
 export const getSummary = asyncHandler(async (req, res) => {
-  const data = await service.getReviewSummary(req.params.slug as string)
+  const data = await service.getReviewSummary(req.params.slug)
   sendSuccess(res, data)
 })
 
 export const list = asyncHandler(async (req, res) => {
-  const data = await service.listReviews(req.params.slug as string, req.query)
+  const data = await service.listReviews(req.params.slug, req.query)
   sendSuccess(res, data)
 })
 
@@ -25,7 +25,7 @@ export const create = asyncHandler(async (req, res) => {
   const files = req.files as Express.Multer.File[] | undefined
   const data = await service.createReview(
     req.user!.userId,
-    req.params.orderItemId as string,
+    req.params.orderItemId,
     req.body,
     files
   )
@@ -39,17 +39,17 @@ export const getMyReviews = asyncHandler(async (req, res) => {
 
 export const update = asyncHandler(async (req, res) => {
   const files = req.files as Express.Multer.File[] | undefined
-  const data = await service.updateReview(req.user!.userId, req.params.id as string, req.body, files)
+  const data = await service.updateReview(req.user!.userId, req.params.id, req.body, files)
   sendSuccess(res, data)
 })
 
 export const deleteOwn = asyncHandler(async (req, res) => {
-  await service.deleteMyReview(req.user!.userId, req.params.id as string)
+  await service.deleteMyReview(req.user!.userId, req.params.id)
   sendSuccess(res, null, 204)
 })
 
 export const helpful = asyncHandler(async (req, res) => {
-  const data = await service.toggleHelpful(req.user!.userId, req.params.id as string)
+  const data = await service.toggleHelpful(req.user!.userId, req.params.id)
   sendSuccess(res, data)
 })
 
@@ -61,11 +61,11 @@ export const adminList = asyncHandler(async (req, res) => {
 })
 
 export const adminReply = asyncHandler(async (req, res) => {
-  const data = await service.replyReview(req.params.id as string, req.body.content as string)
+  const data = await service.replyReview(req.params.id, req.body.content as string)
   sendSuccess(res, data)
 })
 
 export const adminDelete = asyncHandler(async (req, res) => {
-  await service.deleteReview(req.params.id as string)
+  await service.deleteReview(req.params.id)
   sendSuccess(res, null, 204)
 })
