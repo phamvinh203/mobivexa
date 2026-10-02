@@ -19,8 +19,30 @@ import type {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// items kèm ảnh của phiên bản đã mua — FE (web + admin) dựng ô thumb trong
+// lịch sử đơn: ưu tiên variant.imageUrl, rỗng/null thì rơi về ảnh bìa sản phẩm.
+// Chỉ select URL chứ không hydrate cả variant (giá, tồn kho...) vì mọi dữ liệu
+// còn lại của dòng hàng đã là snapshot trên OrderItem.
+// images sắp isCover desc, sortOrder asc để phần tử [0] luôn là ảnh bìa — khớp
+// cách getCoverImageUrl bên FE chọn ảnh (find(isCover) ?? images[0]).
 const ORDER_INCLUDE = {
-  items: true,
+  items: {
+    include: {
+      variant: {
+        select: {
+          imageUrl: true,
+          product: {
+            select: {
+              images: {
+                orderBy: [{ isCover: 'desc' }, { sortOrder: 'asc' }],
+                select: { url: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
 } satisfies Prisma.OrderInclude
 
 function generateOrderCode(): string {
