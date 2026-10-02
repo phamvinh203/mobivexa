@@ -132,6 +132,15 @@ function scriptedGemini(script: Script[]) {
   )
 }
 
+// get_reviews -> getReviewSummary lọc thẳng theo product.slug: slug không có thật <=> aggregate trả 0 review,
+// khi đó service mới tra product.findUnique để ra 404. Mock đủ 2 vế cho tình huống "sản phẩm không tồn tại".
+const mockUnknownProductForReviews = () => {
+  mockPrisma.review.aggregate.mockResolvedValue({ _avg: { rating: null }, _count: { id: 0 } })
+  mockPrisma.review.groupBy.mockResolvedValue([])
+  mockPrisma.reviewPhoto.count.mockResolvedValue(0)
+  mockPrisma.product.findUnique.mockResolvedValue(null)
+}
+
 const callArgs = (gen: ReturnType<typeof vi.fn>, i: number): AnyRec => gen.mock.calls[i][0] as AnyRec
 
 // functionResponse mà lượt gọi model thứ `callIndex` nhận được (parts của content cuối)
@@ -1273,11 +1282,13 @@ describe('QA/TOOL — get_reviews', () => {
     const { response } = await runTool('get_reviews', { slug: value })
 
     expect(response?.result).toBe('invalid_params')
+    // tham số hỏng bị chặn trước khi chạm service: không tra product, cũng không gom review
     expect(mockPrisma.product.findUnique).not.toHaveBeenCalled()
+    expect(mockPrisma.review.aggregate).not.toHaveBeenCalled()
   })
 
   it('[RV-02] sản phẩm không tồn tại → result:error (404 của service), stream vẫn done', async () => {
-    mockPrisma.product.findUnique.mockResolvedValue(null)
+    mockUnknownProductForReviews()
     const { response, events } = await runTool('get_reviews', { slug: 'khong-co' })
 
     expect(response?.result).toBe('error')
@@ -1550,7 +1561,6 @@ describe('QA/DSP — điều phối tool trong vòng agent', () => {
   })
 
   bug('BUG-chat-003b: 2 round × 2 call (4 lần thực thi) vẫn vượt cap 3 — cap đang đếm số CALL nhưng chỉ kiểm ở đầu round', async () => {
-    mockPrisma.product.findUnique.mockResolvedValue({ id: 'p-1' })
     mockPrisma.review.aggregate.mockResolvedValue({ _avg: { rating: 4 }, _count: { id: 1 } })
     mockPrisma.review.groupBy.mockResolvedValue([])
     mockPrisma.reviewPhoto.count.mockResolvedValue(0)
@@ -1562,7 +1572,8 @@ describe('QA/DSP — điều phối tool trong vòng agent', () => {
 
     await post({ message: 'đánh giá của 4 máy' })
 
-    expect(mockPrisma.product.findUnique.mock.calls.length).toBeLessThanOrEqual(3)
+    // mỗi lần thực thi get_reviews = đúng 1 review.aggregate (đã có review nên không tra product riêng)
+    expect(mockPrisma.review.aggregate.mock.calls.length).toBeLessThanOrEqual(3)
   })
 
   it('[DSP-03] [GHI NHẬN] các call trong 1 round chạy TUẦN TỰ (max đồng thời = 1) và functionResponse giữ đúng thứ tự call', async () => {
@@ -1609,7 +1620,6 @@ describe('QA/DSP — điều phối tool trong vòng agent', () => {
   })
 
   it('[DSP-06] sau 1 round đã chạm 3 lần thực thi, round kế tiếp bị ép trả chữ (không khai báo tool) — tool model đòi thêm không được chạy', async () => {
-    mockPrisma.product.findUnique.mockResolvedValue({ id: 'p-1' })
     mockPrisma.review.aggregate.mockResolvedValue({ _avg: { rating: 4 }, _count: { id: 1 } })
     mockPrisma.review.groupBy.mockResolvedValue([])
     mockPrisma.reviewPhoto.count.mockResolvedValue(0)
@@ -1621,7 +1631,7 @@ describe('QA/DSP — điều phối tool trong vòng agent', () => {
     await post({ message: 'đánh giá của 3 máy' })
 
     expect(callArgs(gen, 1).config.tools).toBeUndefined()
-    expect(mockPrisma.product.findUnique).toHaveBeenCalledTimes(3)
+    expect(mockPrisma.review.aggregate).toHaveBeenCalledTimes(3)
   })
 })
 
@@ -1682,7 +1692,7 @@ describe('QA/AGT — vòng agent Gemini', () => {
       { chunks: [[{ text: 'ý nghĩ riêng tư', thought: true }, { functionCall: { name: 'get_reviews', args: { slug: 'x' } }, thoughtSignature: 's' }]] },
       { chunks: [[{ text: 'nghĩ tiếp', thought: true }, { text: 'Dạ chào anh/chị' }]] },
     ])
-    mockPrisma.product.findUnique.mockResolvedValue(null)
+    mockUnknownProductForReviews()
 
     const res = await post({ message: 'xin chào' })
 
@@ -1805,7 +1815,7 @@ describe('QA/MODEL — chuỗi model dự phòng (gọi trực tiếp service + 
     vi.useFakeTimers()
     process.env.GEMINI_MODEL = 'm-primary'
     process.env.GEMINI_MODEL_FALLBACKS = 'm-fallback'
-    mockPrisma.product.findUnique.mockResolvedValue(null)
+    mockUnknownProductForReviews()
     const models: string[] = []
     const okStream = (parts: Part[]) =>
       Promise.resolve(
