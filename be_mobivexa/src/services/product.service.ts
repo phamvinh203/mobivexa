@@ -512,7 +512,9 @@ export async function replaceProductSpecs(productId: string, specs: SpecInput[])
 
 // ─── Admin: Inventory report ─────────────────────────────────────────────────
 
-const DEFAULT_LOW_THRESHOLD = 5
+// Ngưỡng "sắp hết hàng": biến thể còn <= giá trị này là cần nhập thêm. MỘT con số cho
+// cả trang kho (mặc định khi không gửi ?lowThreshold) lẫn cảnh báo ở dashboard.
+export const LOW_STOCK_THRESHOLD = 10
 
 // In-memory cache cho inventory summary — tính lại sau mỗi 60 giây.
 // Phải nhớ cả threshold: lowStock/inStock được đếm THEO ngưỡng, nên cache của
@@ -556,7 +558,7 @@ async function getInventorySummary(threshold: number): Promise<InventorySummary>
 
 export async function getInventory(query: InventoryQuery) {
   const { page, limit } = parsePagination(query, LIMITS.INVENTORY, LIMITS.MAX_INVENTORY)
-  const threshold = Math.max(1, Number(firstQueryValue(query.lowThreshold)) || DEFAULT_LOW_THRESHOLD)
+  const threshold = Math.max(1, Number(firstQueryValue(query.lowThreshold)) || LOW_STOCK_THRESHOLD)
 
   // Khởi động song song với FTS query — không cần chờ nhau
   const summaryPromise = getInventorySummary(threshold)

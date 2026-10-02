@@ -1,10 +1,8 @@
 import prisma from '../config/db'
 import { Prisma, OrderStatus, PaymentStatus } from '../generated/prisma/client'
+import { LOW_STOCK_THRESHOLD } from './product.service'
 
 // ─── Hằng số nghiệp vụ ────────────────────────────────────────────────────────
-
-// Ngưỡng cảnh báo tồn kho — biến thể còn <= giá trị này là cần nhập thêm hàng
-export const LOW_STOCK_THRESHOLD = 10
 
 const REVENUE_DAYS       = 30 // biểu đồ doanh thu: 29 ngày trước → hôm nay
 const TOP_PRODUCTS_LIMIT = 5
